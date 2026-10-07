@@ -1,0 +1,26 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.idea/
+.agents/
+artifacts/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+.nailong/settings.local.json
+.nailong/context.local.md
+.nailong/memory.local/
+.nailong/exports/
+.nailong/traces/
+
+# Retain local document authoring workspaces without publishing drafts.
+draft_*_folder/
