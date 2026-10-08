@@ -163,8 +163,10 @@ python -m pip wheel --no-deps --wheel-dir dist .
 python scripts/smoke_wheel.py dist/ignovate_harness-1.0.0-py3-none-any.whl
 ```
 
-测试使用假模型、临时项目和本地 MCP 服务，不调用真实模型 API。wheel smoke 从源码目录之外加载实际发行内容，验证 `--help`、JSON doctor 和依赖检查，避免仅验证 editable 安装。
+离线测试使用假模型、临时项目和本地 MCP 服务，不调用真实模型 API。wheel smoke 从源码目录之外加载实际发行内容，验证 `--help`、JSON doctor 和依赖检查，避免仅验证 editable 安装。
 
-GitHub Actions 的 Python 3.11/3.13 测试和 wheel smoke 模板保存在 docs/ci/github-actions-tests.yml。当前仓库凭据缺少 workflow 写权限，尚未启用远端 CI；获得相应权限后，将模板放入 .github/workflows/tests.yml 即可。真实提供商、第三方 MCP、Windows 实机以及不同终端剪贴板协议需要另行验证。本次审查记录以本地实际执行结果为准，详见审查报告。
+GitHub Actions 已启用，工作流位于 .github/workflows/tests.yml，参考副本位于 docs/ci/github-actions-tests.yml。每次 push、pull request 或手动触发都会在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试及 wheel smoke。实际运行结果以仓库对应提交的检查记录为准。
+
+真实模型验证通过本机手动执行 python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json。脚本使用已配置的模型连接和临时项目，限制调用次数、输出和 managed 预算，保存脱敏元数据。本次 deepseek-flash 的回答、读取、编辑后验证、只读审查、审批拒绝和无头 JSON 六类检查均获得通过结果；首次无头答案断言失败与成功补测保留在验证记录中。第三方 MCP、Windows 实机与不同终端剪贴板协议仍需另行验证。 详见 [CI 与真实 API 验证记录](reviews/2026-10-08-ci-real-api-verification.md)。
 
 项目采用 MIT License。对功能或权限行为作出修改时，应新增能够复现问题的回归测试，并更新 README、项目说明和验证记录。

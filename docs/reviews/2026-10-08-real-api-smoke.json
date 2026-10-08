@@ -1,0 +1,372 @@
+{
+  "provider_host": "api.deepseek.com",
+  "model": "deepseek-flash",
+  "attempts": [
+    {
+      "timestamp_utc": "2026-10-08T02:30:08.986688+00:00",
+      "provider_host": "api.deepseek.com",
+      "model": "deepseek-flash",
+      "managed_budget_usd": 0.15,
+      "estimated_managed_spend_usd": 0.00428852,
+      "note": "费用按本地单价估算；headless 单独限定1次模型调用，不纳入 managed 预算。",
+      "usage_events": 11,
+      "usage": [
+        {
+          "input_tokens": 1766,
+          "output_tokens": 1,
+          "cache_hit_tokens": 1408,
+          "total_tokens": 1767,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 2511,
+          "output_tokens": 45,
+          "cache_hit_tokens": 1408,
+          "total_tokens": 2556,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 2703,
+          "output_tokens": 7,
+          "cache_hit_tokens": 2432,
+          "total_tokens": 2710,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 3570,
+          "output_tokens": 38,
+          "cache_hit_tokens": 1664,
+          "total_tokens": 3608,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 3880,
+          "output_tokens": 80,
+          "cache_hit_tokens": 2816,
+          "total_tokens": 3960,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 4195,
+          "output_tokens": 62,
+          "cache_hit_tokens": 3072,
+          "total_tokens": 4257,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 3761,
+          "output_tokens": 127,
+          "cache_hit_tokens": 1664,
+          "total_tokens": 3888,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 4161,
+          "output_tokens": 192,
+          "cache_hit_tokens": 3200,
+          "total_tokens": 4353,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 2822,
+          "output_tokens": 61,
+          "cache_hit_tokens": 1664,
+          "total_tokens": 2883,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 3064,
+          "output_tokens": 121,
+          "cache_hit_tokens": 2176,
+          "total_tokens": 3185,
+          "model": "deepseek-flash",
+          "requested_model": "deepseek-flash",
+          "provider_host": "api.deepseek.com",
+          "price_snapshot": {
+            "model": "deepseek-flash",
+            "source": "builtin",
+            "input_per_million": 0.3,
+            "cache_hit_per_million": 0.006,
+            "output_per_million": 1.2
+          }
+        },
+        {
+          "input_tokens": 6156,
+          "output_tokens": 1,
+          "cache_hit_tokens": 1664,
+          "total_tokens": 6157
+        }
+      ],
+      "results": [
+        {
+          "scenario": "plain_answer_no_tools",
+          "ok": true,
+          "model_calls": 1,
+          "tools": []
+        },
+        {
+          "scenario": "read_with_reasoning",
+          "ok": true,
+          "reasoning_effort": "low",
+          "model_calls": 2,
+          "tools": [
+            "read_file"
+          ]
+        },
+        {
+          "scenario": "edit_and_bound_verification",
+          "ok": true,
+          "file_changed": true,
+          "verification": "passed",
+          "delivery": "verified",
+          "approvals": [
+            {
+              "name": "edit_file",
+              "allowed": true
+            },
+            {
+              "name": "run_command",
+              "allowed": true
+            }
+          ],
+          "model_calls": 3
+        },
+        {
+          "scenario": "readonly_review_coverage",
+          "ok": true,
+          "delivery": "reviewed",
+          "model_calls": 2
+        },
+        {
+          "scenario": "approval_denial_zero_write",
+          "ok": true,
+          "approvals": 1,
+          "file_exists": false,
+          "model_calls": 2
+        },
+        {
+          "scenario": "headless_json",
+          "ok": false,
+          "exit_code": 0,
+          "status": "success",
+          "usage": {
+            "input_tokens": 6156,
+            "output_tokens": 1,
+            "cache_hit_tokens": 1664,
+            "total_tokens": 6157
+          }
+        },
+        {
+          "scenario": "credential_not_persisted",
+          "ok": true
+        }
+      ],
+      "ok": false
+    },
+    {
+      "timestamp_utc": "2026-10-08T02:36:53.378801+00:00",
+      "provider_host": "api.deepseek.com",
+      "model": "deepseek-flash",
+      "managed_budget_usd": 0.15,
+      "estimated_managed_spend_usd": 0.0,
+      "note": "费用按本地单价估算；headless 单独限定1次模型调用，不纳入 managed 预算。",
+      "usage_events": 1,
+      "usage": [
+        {
+          "input_tokens": 6157,
+          "output_tokens": 1,
+          "cache_hit_tokens": 1664,
+          "total_tokens": 6158
+        }
+      ],
+      "results": [
+        {
+          "scenario": "headless_json",
+          "ok": true,
+          "exit_code": 0,
+          "status": "success",
+          "usage": {
+            "input_tokens": 6157,
+            "output_tokens": 1,
+            "cache_hit_tokens": 1664,
+            "total_tokens": 6158
+          },
+          "answer_matches": true,
+          "answer_characters": 2,
+          "tool_count": 0
+        },
+        {
+          "scenario": "credential_not_persisted",
+          "ok": true
+        }
+      ],
+      "selected_scenarios": [
+        "headless_json"
+      ],
+      "ok": true
+    }
+  ],
+  "latest_results": [
+    {
+      "scenario": "plain_answer_no_tools",
+      "ok": true,
+      "model_calls": 1,
+      "tools": []
+    },
+    {
+      "scenario": "read_with_reasoning",
+      "ok": true,
+      "reasoning_effort": "low",
+      "model_calls": 2,
+      "tools": [
+        "read_file"
+      ]
+    },
+    {
+      "scenario": "edit_and_bound_verification",
+      "ok": true,
+      "file_changed": true,
+      "verification": "passed",
+      "delivery": "verified",
+      "approvals": [
+        {
+          "name": "edit_file",
+          "allowed": true
+        },
+        {
+          "name": "run_command",
+          "allowed": true
+        }
+      ],
+      "model_calls": 3
+    },
+    {
+      "scenario": "readonly_review_coverage",
+      "ok": true,
+      "delivery": "reviewed",
+      "model_calls": 2
+    },
+    {
+      "scenario": "approval_denial_zero_write",
+      "ok": true,
+      "approvals": 1,
+      "file_exists": false,
+      "model_calls": 2
+    },
+    {
+      "scenario": "headless_json",
+      "ok": true,
+      "exit_code": 0,
+      "status": "success",
+      "usage": {
+        "input_tokens": 6157,
+        "output_tokens": 1,
+        "cache_hit_tokens": 1664,
+        "total_tokens": 6158
+      },
+      "answer_matches": true,
+      "answer_characters": 2,
+      "tool_count": 0
+    },
+    {
+      "scenario": "credential_not_persisted",
+      "ok": true
+    }
+  ],
+  "ok": true,
+  "total_provider_tokens": 51639,
+  "note": "首次 headless 期望答案检查失败，但退出码和结构状态成功；独立调用及脚本定向补测均返回 OK。没有改动生产代码，不宣称已确定并修复该首次失败的根因。",
+  "independent_headless_check": {
+    "exit_code": 0,
+    "status": "success",
+    "answer_matches": true,
+    "tool_count": 0,
+    "usage": {
+      "input_tokens": 6156,
+      "output_tokens": 1,
+      "cache_hit_tokens": 1536,
+      "total_tokens": 6157
+    }
+  }
+}

@@ -521,4 +521,6 @@ python -m pip wheel --no-deps --wheel-dir dist .
 python scripts/smoke_wheel.py dist/ignovate_harness-1.0.0-py3-none-any.whl
 ```
 
-GitHub Actions 的 Python 3.11/3.13 测试及发行包 smoke 模板见 [CI 模板](docs/ci/github-actions-tests.yml)。当前凭据缺少 workflow 写权限，远端 CI 尚未启用；授权后将模板放入 `.github/workflows/tests.yml`。真实模型、第三方 MCP 和 Windows 实机验证另行进行。
+GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
+
+真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](docs/reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 和 Windows 实机仍需另行验证。
