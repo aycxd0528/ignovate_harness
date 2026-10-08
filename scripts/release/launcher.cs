@@ -46,9 +46,9 @@ public static class IgnovateLauncher {
             bool setupHelp = setup && args.Length >= 3 && (args[2] == "--help" || args[2] == "-h");
             if (setup || setupFlag || !File.Exists(python) || !File.Exists(Path.Combine(runtime, ".ready"))) {
                 string script = Path.Combine(InstallHome, "releases", Version, "launch.ps1").Replace("'", "''");
-                string command = "$ErrorActionPreference='Stop'; $forward=@(for($i=0;$i -lt [int]$env:IGNOVATE_ARGC;$i++){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Environment]::GetEnvironmentVariable('IGNOVATE_ARG_'+$i)))}); & '" + script + "' @forward; exit $LASTEXITCODE";
+                string command = "$ErrorActionPreference='Stop'; try { $forward=@(for($i=0;$i -lt [int]$env:IGNOVATE_ARGC;$i++){[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Environment]::GetEnvironmentVariable('IGNOVATE_ARG_'+$i)))}); & '" + script + "' @forward; exit $LASTEXITCODE } catch { [Console]::Error.WriteLine($_.Exception.ToString()); exit 1 }";
                 string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), @"System32\WindowsPowerShell\v1.0\powershell.exe");
-                int code = Run(powershell, new [] { "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(command)) }, args);
+                int code = Run(powershell, new [] { "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-OutputFormat", "Text", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(command)) }, args);
                 if (code != 0 || environmentOnly || setupHelp) { return code; }
             }
             var appArgs = new List<string> { "-m", "nailong.cli" };

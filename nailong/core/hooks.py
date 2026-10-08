@@ -59,12 +59,15 @@ class HookRunner:
 
     def _safe_read(self, path: Path) -> dict:
         try:
+            if os.name == "nt":
+                from nailong.core.preferences import read_config
+                return read_config(path, self.project_root)
             resolved = path.resolve(strict=True)
             if not resolved.is_relative_to(self.project_root):
                 return {}
             payload = json.loads(resolved.read_text(encoding="utf-8"))
             return payload if isinstance(payload, dict) else {}
-        except (OSError, UnicodeError, json.JSONDecodeError, RuntimeError):
+        except (OSError, UnicodeError, ValueError, RuntimeError):
             return {}
 
     def _approved_commands(self) -> set[str]:
@@ -73,6 +76,12 @@ class HookRunner:
 
     def _save_approval(self, fingerprint: str) -> None:
         with self._settings_lock:
+            if os.name == "nt":
+                from nailong.core.preferences import atomic_json
+                current = self._safe_read(self.local_settings_path)
+                current["approved_hook_hashes"] = sorted(self._approved_commands() | {fingerprint})
+                atomic_json(self.local_settings_path, current, self.project_root)
+                return
             parent = self.local_settings_path.parent
             parent.mkdir(parents=True, exist_ok=True)
             resolved_parent = parent.resolve(strict=True)
