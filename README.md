@@ -510,11 +510,6 @@ check_config.py  环境变量读取示例
 
 `/context` 的分类与工具集合来自最近送入模型的请求并随会话保存。估算区分 ASCII 与非 ASCII 内容，按同模型、同提供商的实际 usage 保守校准；它仍不是精确 tokenizer 或费用账单。手动压缩后，最近实际请求统计要等下一次调用才更新。Skill 正文被省略时保留名称、路径和版本及已加载状态，持续规则可按需恢复，一次性初始化不应重复。
 
-## 学习资料
-
-飞书文档包含项目知识点和面试高频题，评论卡片内容已并入正文：[长期项目方案与执行（含里程碑看板）](https://qcnvafay57br.feishu.cn/wiki/HHsGw6FxXiK4zqkj9E4cB7bAnbc?from=from_copylink)。
-
-`tool_demo.py` 保留为手写 API 工具调用示例，可用来对照本项目里 LangChain 接管的工具循环。
 
 
 ## 发布验证
