@@ -279,6 +279,24 @@ class ManagedDeliveryTests(unittest.TestCase):
         task['evidence'] = [self.evidence(**kwargs)]
         return task
 
+    def test_native_windows_project_identity_can_prove_delivery(self):
+        for root in (r'C:\Users\测试 user\project', 'D:/work/project'):
+            with self.subTest(root=root):
+                task = self.proven_task(project_root=root)
+                task['project_root'] = root
+                report = build_delivery_report(task, current_input_fingerprint='input-v1')
+                self.assertEqual(report['status'], 'reviewed')
+                self.assertEqual(report['project_root'], root)
+
+    def test_invalid_windows_project_roots_cannot_prove_delivery(self):
+        for root in (r'C:project', r'\project', r'\\server\share', r'\\?\C:\project',
+                     r'C:\work\..\project', r'C:\work\file:stream', r'C:\work\NUL',
+                     'C:\\work\\bad\0name'):
+            with self.subTest(root=root):
+                task = self.proven_task(project_root=root)
+                task['project_root'] = root
+                self.assertEqual(build_delivery_report(task, current_input_fingerprint='input-v1')['status'], 'unverified')
+
     def test_model_unknown_stale_and_partial_evidence_never_prove_review(self):
         cases = [{'source': 'model'}, {'input_fingerprint': 'unknown'},
             {'task_revision': 1}, {'coverage': 'partial'}, {'paths': ['other.py']}]

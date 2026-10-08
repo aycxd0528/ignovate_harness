@@ -368,6 +368,7 @@ class CliTests(unittest.TestCase):
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = create_agent_runtime(settings)
+            self.addCleanup(lambda: asyncio.run(runtime._nailong_runtime_factory.aclose()))
 
         decisions = iter(["a", "r"])
         prompts = []
@@ -480,6 +481,7 @@ class CliTests(unittest.TestCase):
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = create_agent_runtime(settings)
+            self.addCleanup(lambda: asyncio.run(runtime._nailong_runtime_factory.aclose()))
 
         displayed = []
         prompts = []

@@ -17,7 +17,8 @@ class DiagnosticTests(unittest.TestCase):
     def test_offline_missing_auth_bad_config_and_no_rg(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory); (root/'.nailong').mkdir(); (root/'.nailong/settings.json').write_text('{broken', newline='\n')
-            with patch.dict(os.environ,{'IGNOVATE_CONFIG_DIR':str(root/'user-config')},clear=True),patch('shutil.which',return_value=None):
+            with patch.dict(os.environ,{'IGNOVATE_CONFIG_DIR':str(root/'user-config'),
+                                       'USERPROFILE':directory, 'HOME':directory},clear=True),patch('shutil.which',return_value=None):
                 report=self.module().diagnose(root,env={})
             text=json.dumps(report,ensure_ascii=False)
             self.assertIn('DEEPSEEK_API_KEY',text); self.assertIn('rg',text)

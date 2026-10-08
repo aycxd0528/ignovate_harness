@@ -10,6 +10,26 @@ from textual.widgets import Input, OptionList
 
 
 class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
+    async def wait_for_condition(self, pilot, condition, description):
+        async def ready():
+            while True:
+                await pilot.pause()
+                if condition():
+                    return
+        try:
+            await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for {description}; focus={getattr(pilot.app.focused, "id", None)!r}')
+
+    async def wait_for_panel(self, pilot, app, panel, focus_id):
+        await self.wait_for_condition(
+            pilot,
+            lambda: (app._interaction_panel is panel and panel.is_attached
+                     and app.focused is not None and app.focused.is_attached
+                     and app.focused.id == focus_id),
+            f'{type(panel).__name__} to mount and focus {focus_id}',
+        )
+
     def make_app(self, root):
         settings = Settings('fixture-key', 'https://api.invalid', 'deepseek-flash', root)
         app = TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None), settings)
@@ -77,16 +97,16 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 24)) as pilot:
                 composer = app.query_one('#composer', ChatInput)
                 composer.load_text('保留草稿')
-                panels = [(PlanReviewScreen('# 计划\n完整计划\n'*40), 'reject'),
-                          (PlanEditScreen('正在编辑的内容'), None),
-                          (RewindConfirmationScreen(), False),
-                          (HelpScreen(app.controller.specs(), app._ui_theme), None),
-                          (CopyReplyScreen(lambda: ['可选取任意文字'], app._ui_theme), None)]
-                for panel, expected in panels:
+                panels = [(PlanReviewScreen('# 计划\n完整计划\n'*40), 'reject', 'plan-reject'),
+                          (PlanEditScreen('正在编辑的内容'), None, 'plan-edit-content'),
+                          (RewindConfirmationScreen(), False, 'cancel'),
+                          (HelpScreen(app.controller.specs(), app._ui_theme), None, 'help-tabs'),
+                          (CopyReplyScreen(lambda: ['可选取任意文字'], app._ui_theme), None, 'copy-body')]
+                for panel, expected, focus_id in panels:
                     with self.subTest(panel=type(panel).__name__):
                         task = asyncio.create_task(app._wait_panel(panel))
                         try:
-                            await pilot.pause()
+                            await self.wait_for_panel(pilot, app, panel, focus_id)
                             self.assertEqual(len(app.screen_stack), 1)
                             self.assertTrue(app.query_one('#composer-info').display)
                             self.assertGreater(app.query_one('#transcript').size.height, 0)
@@ -100,6 +120,12 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
                             else:
                                 await pilot.press('escape')
                             self.assertEqual(await asyncio.wait_for(task, 3), expected)
+                            await self.wait_for_condition(
+                                pilot, lambda: app._interaction_panel is None and app.focused is composer,
+                                'the cancelled panel to restore composer focus',
+                            )
+                            self.assertFalse(panel.is_attached)
+                            self.assertFalse(composer.disabled)
                             self.assertEqual(composer.text, '保留草稿')
                         finally:
                             if not task.done():

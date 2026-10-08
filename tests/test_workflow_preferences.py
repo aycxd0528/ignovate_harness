@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -86,12 +87,12 @@ class CliPreferenceTests(unittest.TestCase):
         from agent import AgentRuntimeFactory
         from nailong.core.sessions import ProjectSessionStore
         from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as project,tempfile.TemporaryDirectory() as data:
+        with tempfile.TemporaryDirectory() as project,tempfile.TemporaryDirectory() as data,ExitStack() as resources:
             root=Path(project).resolve()
             try: settings=Settings('key','https://api.invalid','deepseek-flash',root,{'theme':'ansi','output_style':'detailed'})
             except TypeError: self.fail('CLI preference overrides missing')
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
-            self.addCleanup(factory.close)
+            resources.callback(factory.close)
             self.assertEqual(factory.output_style,'detailed')
             self.assertEqual(factory.preferences.effective()['theme'],'ansi')
             factory.preferences.set('theme','light')

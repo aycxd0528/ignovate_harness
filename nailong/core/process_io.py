@@ -26,7 +26,8 @@ def shell_command(command: str):
         return command, True
     # EncodedCommand preserves quotes, Unicode and newlines through CreateProcess.
     # Reset LASTEXITCODE so a successful PowerShell-only command exits with zero.
-    script = ("[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
+    script = ("$ProgressPreference = 'SilentlyContinue'; "
+              "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
               "$OutputEncoding = [Console]::OutputEncoding; $global:LASTEXITCODE = 0; "
               + command + "\nif (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit $LASTEXITCODE")
     encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
@@ -120,6 +121,10 @@ class OwnedProcess:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
+            if self.job:
+                # TerminateJobObject is asynchronous; waiting for the leader
+                # alone can leave descendants holding files or their cwd.
+                self.job.wait_empty()
         finally:
             if self.job:
                 self.job.close()

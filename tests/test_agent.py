@@ -1,11 +1,13 @@
 import importlib
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import AsyncExitStack
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -212,7 +214,9 @@ asyncio.run(main())
             patch("agent.ChatDeepSeek", return_value=object()),
             patch("agent.create_agent", return_value=object()) as create_agent,
         ):
-            AgentRuntimeFactory(settings)()
+            factory = AgentRuntimeFactory(settings)
+            self.addCleanup(factory.close)
+            factory()
 
         self.assertIn(str(settings.project_root), create_agent.call_args.kwargs["system_prompt"])
 
@@ -223,6 +227,7 @@ asyncio.run(main())
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model) as model_factory:
             runtime = agent_module.create_agent_runtime(make_settings())
+            self.addCleanup(runtime._nailong_runtime_factory.close)
 
         model_factory.assert_called_once_with(
             model="deepseek-chat",
@@ -305,6 +310,7 @@ asyncio.run(main())
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = agent_module.create_agent_runtime(make_settings())
+            self.addCleanup(runtime._nailong_runtime_factory.close)
 
         config = {"configurable": {"thread_id": "approve-test"}, "recursion_limit": 40}
         with patch("nailong.tools.files.FileSession.write_file", return_value={"ok": True}) as write_file:
@@ -332,6 +338,7 @@ asyncio.run(main())
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = agent_module.create_agent_runtime(make_settings())
+            self.addCleanup(runtime._nailong_runtime_factory.close)
 
         config = {"configurable": {"thread_id": "reject-test"}, "recursion_limit": 40}
         with patch("nailong.tools.files.FileSession.write_file", return_value={"ok": True}) as write_file:
@@ -361,6 +368,7 @@ asyncio.run(main())
             patch("local_tools.PROJECT_ROOT", root),
         ):
             runtime = AgentRuntimeFactory(make_settings(root))()
+            self.addCleanup(runtime._nailong_runtime_factory.close)
 
         config = {"configurable": {"thread_id": "edit-approve-test"}, "recursion_limit": 40}
         pending = runtime.invoke(
@@ -393,6 +401,7 @@ asyncio.run(main())
             patch("local_tools.PROJECT_ROOT", root),
         ):
             runtime = AgentRuntimeFactory(make_settings(root))()
+            self.addCleanup(runtime._nailong_runtime_factory.close)
 
         config = {"configurable": {"thread_id": "edit-reject-test"}, "recursion_limit": 40}
         pending = runtime.invoke(
@@ -426,6 +435,7 @@ asyncio.run(main())
             patch("local_tools.PROJECT_ROOT", root),
         ):
             factory = AgentRuntimeFactory(make_settings(root))
+            self.addCleanup(factory.close)
 
         config = {"configurable": {"thread_id": "persistent-edit-test"}, "recursion_limit": 40}
         first_runtime = factory(thread_id="persistent-edit-test")
@@ -455,6 +465,7 @@ asyncio.run(main())
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = agent_module.create_agent_runtime(make_settings())
+            self.addCleanup(runtime._nailong_runtime_factory.close)
 
         config = {"configurable": {"thread_id": "multiple-test"}, "recursion_limit": 40}
         with (
@@ -486,6 +497,46 @@ asyncio.run(main())
 
 
 class AgentRuntimeAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_aclose_releases_both_sqlite_connections_and_is_repeatable(self):
+        async with AsyncExitStack() as resources:
+            directory = resources.enter_context(tempfile.TemporaryDirectory())
+            root = Path(directory)
+            store = ProjectSessionStore(root, base_dir=root / 'state')
+            with patch('agent.ChatDeepSeek', return_value=object()):
+                factory = AgentRuntimeFactory(make_settings(root), session_store=store)
+            resources.push_async_callback(factory.aclose)
+            await factory.async_runtime(thread_id='close-connections')
+            sync_connection = factory.checkpointer.conn
+            async_connection = factory.async_checkpointer.conn
+            await factory.aclose()
+            await factory.aclose()
+            with self.assertRaises(sqlite3.ProgrammingError):
+                sync_connection.execute('SELECT 1')
+            with self.assertRaises(ValueError):
+                await async_connection.execute('SELECT 1')
+            # Windows refuses to remove a database with any live connection.
+            store.database_path.unlink()
+
+    async def test_aclose_releases_sqlite_when_mcp_shutdown_fails(self):
+        async with AsyncExitStack() as resources:
+            directory = resources.enter_context(tempfile.TemporaryDirectory())
+            root = Path(directory)
+            store = ProjectSessionStore(root, base_dir=root / 'state')
+            with patch('agent.ChatDeepSeek', return_value=object()):
+                factory = AgentRuntimeFactory(make_settings(root), session_store=store)
+            resources.push_async_callback(factory.aclose)
+            await factory.async_runtime(thread_id='close-after-mcp-error')
+            sync_connection = factory.checkpointer.conn
+            async_connection = factory.async_checkpointer.conn
+            with patch.object(factory.mcp_manager, 'aclose', new=AsyncMock(side_effect=RuntimeError('disconnect failed'))):
+                with self.assertRaisesRegex(RuntimeError, 'disconnect failed'):
+                    await factory.aclose()
+            with self.assertRaises(sqlite3.ProgrammingError):
+                sync_connection.execute('SELECT 1')
+            with self.assertRaises(ValueError):
+                await async_connection.execute('SELECT 1')
+            store.database_path.unlink()
+
     async def test_async_sqlite_runtime_survives_factory_restart_and_rewind(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "project"
@@ -535,6 +586,7 @@ class AgentRuntimeAsyncTests(unittest.IsolatedAsyncioTestCase):
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             factory = AgentRuntimeFactory(make_settings())
+            self.addAsyncCleanup(factory.aclose)
         service = AgentService(factory, api_key="unit-test-key")
         decisions = []
         statuses = []
@@ -583,6 +635,7 @@ class AgentRuntimeAsyncTests(unittest.IsolatedAsyncioTestCase):
                     project_root=root,
                 )
                 factory = AgentRuntimeFactory(settings)
+                self.addAsyncCleanup(factory.aclose)
                 service = AgentService(factory, api_key=settings.api_key)
                 config = {
                     "configurable": {"thread_id": "init-create-overwrite"},

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from ctypes import wintypes
 
 kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -19,6 +20,13 @@ class _IoCounters(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint64) for name in (
         'ReadOperationCount', 'WriteOperationCount', 'OtherOperationCount',
         'ReadTransferCount', 'WriteTransferCount', 'OtherTransferCount')]
+
+
+class _BasicAccounting(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_int64) for name in (
+        'TotalUserTime', 'TotalKernelTime', 'ThisPeriodTotalUserTime', 'ThisPeriodTotalKernelTime')]
+    _fields_ += [(name, wintypes.DWORD) for name in (
+        'TotalPageFaultCount', 'TotalProcesses', 'ActiveProcesses', 'TotalTerminatedProcesses')]
 
 
 class _ExtendedLimits(ctypes.Structure):
@@ -41,6 +49,8 @@ def _bind(name, args, result):
 
 _create_job = _bind('CreateJobObjectW', [ctypes.c_void_p, wintypes.LPCWSTR], wintypes.HANDLE)
 _set_job = _bind('SetInformationJobObject', [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD], wintypes.BOOL)
+_query_job = _bind('QueryInformationJobObject', [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                               wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL)
 _assign = _bind('AssignProcessToJobObject', [wintypes.HANDLE, wintypes.HANDLE], wintypes.BOOL)
 _open_process = _bind('OpenProcess', [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE)
 _terminate = _bind('TerminateJobObject', [wintypes.HANDLE, wintypes.UINT], wintypes.BOOL)
@@ -104,6 +114,21 @@ class WindowsJob:
     def terminate(self):
         if self.handle and not _terminate(self.handle, 1):
             raise ctypes.WinError(ctypes.get_last_error())
+
+    def wait_empty(self, timeout=5):
+        """Wait for descendants to finish exiting and release their cwd/handles."""
+        deadline = time.monotonic() + timeout
+        while self.handle:
+            accounting = _BasicAccounting()
+            if not _query_job(self.handle, 1, ctypes.byref(accounting),
+                              ctypes.sizeof(accounting), None):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if accounting.ActiveProcesses == 0:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Windows job descendants did not finish terminating.')
+            time.sleep(min(.01, remaining))
 
     def close(self):
         if self.handle:

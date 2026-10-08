@@ -614,12 +614,17 @@ class AgentRuntimeFactory:
             context.__exit__(None, None, None)
 
     async def aclose(self) -> None:
-        await self.mcp_manager.aclose()
-        context = getattr(self, "_async_checkpointer_context", None)
-        if context is not None:
-            self._async_checkpointer_context = None
-            self.async_checkpointer = None
-            await context.__aexit__(None, None, None)
+        try:
+            await self.mcp_manager.aclose()
+        finally:
+            try:
+                context = getattr(self, "_async_checkpointer_context", None)
+                if context is not None:
+                    self._async_checkpointer_context = None
+                    self.async_checkpointer = None
+                    await context.__aexit__(None, None, None)
+            finally:
+                self.close()
 
 
 def create_agent_runtime(settings: Settings) -> CompiledStateGraph:

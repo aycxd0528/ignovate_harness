@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -219,17 +220,20 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_environment_default_survives_switching_model_and_project(self):
         from agent import AgentRuntimeFactory
-        with tempfile.TemporaryDirectory() as directory,tempfile.TemporaryDirectory() as other,tempfile.TemporaryDirectory() as data:
+        async with AsyncExitStack() as resources:
+            directory=resources.enter_context(tempfile.TemporaryDirectory())
+            other=resources.enter_context(tempfile.TemporaryDirectory())
+            data=resources.enter_context(tempfile.TemporaryDirectory())
             root=Path(directory);(root/'.nailong').mkdir()
             (root/'.nailong/settings.json').write_text(json.dumps({'models':{'pro':{'model':'deepseek-v4-pro'}},'model':'pro'}), newline='\n')
             settings=Settings('key','https://api.invalid','deepseek-flash',root)
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
-            self.addAsyncCleanup(factory.aclose);self.addCleanup(factory.close)
+            resources.push_async_callback(factory.aclose)
             self.assertEqual(factory.settings.model,'deepseek-v4-pro')
             factory.set_model('deepseek-v4-pro')
             next_factory=AgentRuntimeFactory(replace(factory.settings,project_root=Path(other)),
                 session_store=ProjectSessionStore(other,base_dir=data))
-            self.addAsyncCleanup(next_factory.aclose);self.addCleanup(next_factory.close)
+            resources.push_async_callback(next_factory.aclose)
             self.assertEqual(next_factory.preferences.effective()['models']['default']['model'],'deepseek-flash')
 
     async def test_editor_private_copy_is_removed_and_process_stopped_on_cancel(self):

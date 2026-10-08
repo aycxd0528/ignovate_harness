@@ -75,7 +75,8 @@ class HarnessSetupTests(unittest.TestCase):
             store = self.store(Path(directory)/'user')
             store.save('https://api.invalid', 'deepseek-flash', 'fixture-key')
             with patch('dotenv.dotenv_values', return_value={}), \
-                    patch.dict(os.environ, {'IGNOVATE_CONFIG_DIR':str(store.path.parent)}, clear=True):
+                    patch.dict(os.environ, {'IGNOVATE_CONFIG_DIR':str(store.path.parent),
+                                            'USERPROFILE':directory, 'HOME':directory}, clear=True):
                 report = diagnose(directory)
             credentials = next(row for row in report['checks'] if row['name']=='credentials')
             self.assertEqual(credentials['status'], 'ok')

@@ -18,6 +18,7 @@ from nailong.core import process_io
 from nailong.core.hooks import HookRunner
 from nailong.core.plan import edit_plan_with_editor, edit_plan_with_editor_async
 from nailong.core.processes import ProcessCancelled, execute_process
+from platform_fixtures import process_exists
 
 
 def shell_python(code: str) -> str:
@@ -93,6 +94,38 @@ class PortableCaptureTests(unittest.TestCase):
         self.assertIn(b'spawned', caught.exception.output)
         time.sleep(timeout+.8)
         self.assertFalse(marker.exists())
+
+
+@unittest.skipUnless(os.name == 'nt', 'Requires native Windows job objects and directory sharing.')
+class WindowsJobCleanupTests(unittest.TestCase):
+    def test_close_releases_descendant_working_directories_before_returning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for attempt in range(8):
+                root = Path(directory) / str(attempt)
+                root.mkdir()
+                started = root / 'children.json'
+                code = (
+                    "import json,subprocess,sys,time;from pathlib import Path;"
+                    "children=[subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)'],"
+                    "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL) for _ in range(12)];"
+                    f"info=Path({str(started)!r});"
+                    "info.with_suffix('.tmp').write_text(json.dumps([child.pid for child in children]));"
+                    "info.with_suffix('.tmp').replace(info);"
+                    "time.sleep(30)"
+                )
+                owner = process_io.OwnedProcess([sys.executable, '-c', code], cwd=root)
+                try:
+                    deadline = time.monotonic() + 5
+                    while not started.exists() and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue(started.exists(), 'Parent did not finish starting descendants.')
+                    pids = json.loads(started.read_text())
+                finally:
+                    owner.close()
+                self.assertTrue(all(not process_exists(pid) for pid in pids))
+                started.unlink()
+                # No retry or grace period: close must make the cwd deletable.
+                root.rmdir()
 
 
 class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
