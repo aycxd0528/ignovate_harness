@@ -58,11 +58,4 @@ jobs:
           Expand-Archive "$env:RUNNER_TEMP\rg.zip" "$env:RUNNER_TEMP\rg"
           "$env:RUNNER_TEMP\rg\ripgrep-15.2.0-x86_64-pc-windows-msvc" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       - name: Native runtime tests
-        run: |
-          @'
-          import faulthandler, sys, unittest
-          faulthandler.dump_traceback_later(120, repeat=True)
-          result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover('tests'))
-          faulthandler.cancel_dump_traceback_later()
-          sys.exit(not result.wasSuccessful())
-          '@ | python -u -
+        run: python -u scripts/run_native_tests.py

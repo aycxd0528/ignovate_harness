@@ -104,29 +104,58 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
             app=TerminalAgentApp(AgentService(factory,session_store=factory.session_store),settings)
             async with app.run_test(size=(80,24)) as pilot:
-                app._dispatch('/memory edit project');await pilot.pause()
-                self.assertIsInstance(app._interaction_panel,PlanEditScreen)
-                self.assertIn('记忆',str(app.screen.query_one('#plan-edit-title',Static).render()))
-                app.screen.query_one('#plan-edit-content',TextArea).text='updated'
-                await pilot.click('#plan-edit-save');await pilot.pause()
+                async def ready(condition, description):
+                    from textual.errors import NoWidget
+                    async def wait():
+                        while True:
+                            await pilot.pause()
+                            try:
+                                if condition(): return
+                            except NoWidget:
+                                continue
+                    try:
+                        await asyncio.wait_for(wait(), 3)
+                    except TimeoutError:
+                        self.fail(f'Timed out waiting for {description}; focus={app.focused!r}')
+
+                async def save_edit(text):
+                    await ready(lambda: isinstance(app._interaction_panel,PlanEditScreen)
+                        and app._interaction_panel.is_attached
+                        and app.focused is not None and app.focused.id=='plan-edit-content',
+                        'memory editor to mount and focus')
+                    self.assertIsInstance(app._interaction_panel,PlanEditScreen)
+                    self.assertIn('记忆',str(app.screen.query_one('#plan-edit-title',Static).render()))
+                    editor=app.screen.query_one('#plan-edit-content',TextArea)
+                    editor.text=text
+                    button=app.screen.query_one('#plan-edit-save')
+                    await ready(lambda: button.region.width>1 and button.region.height>0
+                        and app.get_widget_at(button.region.x+1,button.region.y)[0] is button,
+                        'memory save button to finish layout')
+                    self.assertTrue(await pilot.click('#plan-edit-save',offset=(1,0)))
+                    await ready(lambda: app.query_one('#approval-panel').display
+                        and app._approval_future is not None
+                        and app.focused is not None and app.focused.id=='approval-choices',
+                        'memory edit approval to open and focus')
+
+                app._dispatch('/memory edit project')
+                await save_edit('updated')
                 self.assertTrue(app.query_one('#approval-panel').display)
                 self.assertEqual(len(app.screen_stack),1)
                 self.assertEqual(path.read_text(),'original')
-                await pilot.press('escape');await pilot.pause();await app.session_runner.wait_idle()
+                await pilot.press('escape');await asyncio.wait_for(app.session_runner.wait_idle(),3)
                 self.assertEqual(path.read_text(),'original')
-                app._dispatch('/memory edit project');await pilot.pause()
-                app.screen.query_one('#plan-edit-content',TextArea).text='approved'
-                await pilot.click('#plan-edit-save');await pilot.pause();await pilot.press('2')
-                await pilot.pause();await app.session_runner.wait_idle()
+                app._dispatch('/memory edit project')
+                await save_edit('approved')
+                await pilot.press('2');await asyncio.wait_for(app.session_runner.wait_idle(),3)
                 self.assertEqual(path.read_text(),'approved')
                 self.assertIn('approved',factory._project_memory[0].content)
                 skill=root/'.agents/skills/probe/SKILL.md';skill.parent.mkdir(parents=True)
                 skill.write_text('---\nname: probe\ndescription: Menu refresh probe.\n---\nbody', newline='\n')
-                app._dispatch('/reload-skills');await pilot.pause();await app.session_runner.wait_idle()
+                app._dispatch('/reload-skills');await asyncio.wait_for(app.session_runner.wait_idle(),3)
                 app.query_one('#composer',ChatInput).text='$pro';await pilot.pause()
                 self.assertIn('$probe',str(app.query_one('#command-menu',Static).render()))
                 app.query_one('#composer',ChatInput).text=''
-                app._dispatch('/skills disable probe');await pilot.pause();await app.session_runner.wait_idle()
+                app._dispatch('/skills disable probe');await asyncio.wait_for(app.session_runner.wait_idle(),3)
                 self.assertNotIn('$probe',{spec.name for spec in app.controller.specs()})
 
     async def test_real_inline_ctrl_c_is_an_input_event_not_loop_interrupt(self):

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from textual.errors import NoWidget
 from textual.widgets import RichLog, Static, TextArea
 
 from config import Settings
@@ -97,6 +98,47 @@ def make_settings():
 
 
 class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
+    def interaction_state(self, pilot):
+        app = pilot.app
+        return (f'focus={getattr(app.focused, "id", None)!r}, '
+                f'panel={app._interaction_panel!r}, '
+                f'interaction_future={app._interaction_future!r}, '
+                f'approval_future={app._approval_future!r}')
+
+    async def wait_for_target(self, pilot, selector, *, focus_id):
+        async def ready():
+            while True:
+                await pilot.pause()
+                matches = pilot.app.query(selector)
+                if not matches:
+                    continue
+                target = matches[0]
+                if not target.is_attached or not target.region.width or not target.region.height:
+                    continue
+                if getattr(pilot.app.focused, 'id', None) != focus_id:
+                    continue
+                try:
+                    hit, _ = pilot.app.get_widget_at(*target.region.offset)
+                except NoWidget:
+                    continue
+                if hit is target:
+                    return target
+        try:
+            return await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for visible {selector}; {self.interaction_state(pilot)}')
+
+    async def wait_for_result(self, pilot, awaitable):
+        pending = asyncio.create_task(awaitable)
+        try:
+            return await asyncio.wait_for(asyncio.shield(pending), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for interaction result; {self.interaction_state(pilot)}')
+        finally:
+            if not pending.done():
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+
     async def test_saved_session_opens_history_and_restored_metrics(self):
         service = FakeService()
         service.session_store = SimpleNamespace(read_events=lambda _thread_id: [
@@ -122,18 +164,18 @@ class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
                 return await app._wait_panel(PlanReviewScreen("# 草稿"))
 
             review_worker = app.run_worker(review())
-            await pilot.pause()
-            await pilot.click("#plan-edit")
-            self.assertEqual(await review_worker.wait(), "edit")
+            target = await self.wait_for_target(pilot, '#plan-edit', focus_id='plan-reject')
+            self.assertTrue(await pilot.click('#plan-edit'), f'Click missed {target.region}')
+            self.assertEqual(await self.wait_for_result(pilot, review_worker.wait()), 'edit')
 
             async def edit():
                 return await app._wait_panel(PlanEditScreen("# 草稿"))
 
             edit_worker = app.run_worker(edit())
-            await pilot.pause()
+            target = await self.wait_for_target(pilot, '#plan-edit-save', focus_id='plan-edit-content')
             app.screen.query_one("#plan-edit-content", TextArea).text = "# 已修改"
-            await pilot.click("#plan-edit-save")
-            self.assertEqual(await edit_worker.wait(), "# 已修改")
+            self.assertTrue(await pilot.click('#plan-edit-save'), f'Click missed {target.region}')
+            self.assertEqual(await self.wait_for_result(pilot, edit_worker.wait()), '# 已修改')
 
     async def test_dashboard_cost_context_and_compact_commands_use_active_service(self):
         service = FakeService()
@@ -373,18 +415,18 @@ class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
                 return await app._wait_panel(RewindConfirmationScreen())
 
             worker = app.run_worker(show_screen())
-            await pilot.pause()
+            target = await self.wait_for_target(pilot, '#cancel', focus_id='cancel')
             details = app.screen.query_one("#rewind-details", Static).render().plain
             self.assertIn("舍弃", details)
             self.assertIn("不会撤销", details)
-            await pilot.click("#cancel")
-            self.assertFalse(await worker.wait())
+            self.assertTrue(await pilot.click('#cancel'), f'Click missed {target.region}')
+            self.assertFalse(await self.wait_for_result(pilot, worker.wait()))
             self.assertEqual(service.rewinds, 0)
 
             app._dispatch("/rewind")
-            await pilot.pause()
-            await pilot.click("#confirm")
-            await pilot.pause(0.1)
+            target = await self.wait_for_target(pilot, '#confirm', focus_id='cancel')
+            self.assertTrue(await pilot.click('#confirm'), f'Click missed {target.region}')
+            await self.wait_for_result(pilot, app.session_runner.wait_idle())
 
         self.assertEqual(service.rewinds, 1)
 
@@ -618,14 +660,14 @@ class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             worker = app.run_worker(show_screen())
-            await pilot.pause()
+            await self.wait_for_target(pilot, '#approval-choices', focus_id='approval-choices')
             self.assertIsNotNone(app.screen.query_one("#approval-details"))
             await pilot.press("d")
             await pilot.pause()
             rendered = app.screen.query_one("#approval-details", Static).render()
             self.assertIn("[red]sample[/red]", rendered.plain)
             await pilot.press("1")
-            self.assertEqual(await worker.wait(), "reject")
+            self.assertEqual(await self.wait_for_result(pilot, worker.wait()), 'reject')
 
     async def test_approval_screen_shows_reason_diff_and_session_allow_choice(self):
         app = TerminalAgentApp(FakeService(), make_settings(), thread_id="approval-details")
@@ -647,13 +689,13 @@ class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
                 )
 
             worker = app.run_worker(show_screen())
-            await pilot.pause()
+            await self.wait_for_target(pilot, '#approval-choices', focus_id='approval-choices')
             details = app.screen.query_one("#approval-details", Static).render().plain
             self.assertIn("该编辑需要审批", details)
             self.assertIn("-old", details)
             self.assertIn("approve_session", app.query_one("#approval-panel")._decisions)
             await pilot.press("3")
-            self.assertEqual(await worker.wait(), "approve_session")
+            self.assertEqual(await self.wait_for_result(pilot, worker.wait()), 'approve_session')
 
     async def test_narrow_terminal_switches_to_compact_layout(self):
         app = TerminalAgentApp(FakeService(), make_settings(), thread_id="small-screen")
