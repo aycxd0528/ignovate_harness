@@ -1,0 +1,23 @@
+name: Windows native
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Build release bundle
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python scripts/build_release.py --wheel (Get-Item dist/*.whl).FullName
+      - name: Native launcher and repair smoke
+        shell: powershell
+        run: ./scripts/smoke_windows_installer.ps1 -Archive (Get-Item dist/release/*-windows.zip).FullName

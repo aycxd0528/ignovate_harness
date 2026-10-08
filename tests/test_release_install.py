@@ -49,11 +49,13 @@ class ReleaseInstallTests(unittest.TestCase):
                 self.assertTrue(archive.getmember(f'ignovate-{VERSION}/install.sh').mode & 0o100)
             with zipfile.ZipFile(output/f'ignovate-{VERSION}-windows.zip') as archive:
                 self.assertIn(f'ignovate-{VERSION}/install.ps1', archive.namelist())
+                self.assertIn(f'ignovate-{VERSION}/launch.ps1', archive.namelist())
+                self.assertIn(f'ignovate-{VERSION}/common.ps1', archive.namelist())
             for row in (output/'SHA256SUMS').read_text().splitlines():
                 digest, name = row.split('  ')
                 self.assertEqual(hashlib.sha256((output/name).read_bytes()).hexdigest(), digest)
 
-    @unittest.skipIf(os.name == 'nt', 'POSIX launcher; WSL smoke covers Windows')
+    @unittest.skipIf(os.name == 'nt', 'POSIX launcher; native PowerShell smoke covers Windows')
     def test_install_without_python_preserves_config_and_dispatches_arguments(self):
         with tempfile.TemporaryDirectory(prefix="ignovate space ' ") as directory:
             output = self.build_bundle(directory)

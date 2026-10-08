@@ -1,75 +1,89 @@
 #Requires -Version 5.1
 param([Parameter(Mandatory = $true)][string]$Archive)
 $ErrorActionPreference = 'Stop'
-$root = Join-Path ([IO.Path]::GetTempPath()) ('ignovate windows space ' + [Guid]::NewGuid())
+$root = Join-Path ([IO.Path]::GetTempPath()) ('ignovate native space ' + [Guid]::NewGuid())
 New-Item -ItemType Directory -Path $root | Out-Null
-$previousNoModify = $env:IGNOVATE_NO_MODIFY_PATH
-$previousPath = $env:Path
+$oldNoModify, $oldPath = $env:IGNOVATE_NO_MODIFY_PATH, $env:Path
+$originalUserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 try {
     Expand-Archive -LiteralPath $Archive -DestinationPath $root
     $bundle = (Get-ChildItem -LiteralPath $root -Directory | Where-Object Name -Like 'ignovate-*').FullName
-    $bin = Join-Path $root 'bin'
+    $version = [IO.File]::ReadAllText((Join-Path $bundle 'VERSION')).Trim()
+    $bin, $data = (Join-Path $root 'bin'), (Join-Path $root 'data')
     $env:IGNOVATE_NO_MODIFY_PATH = '1'
-    $env:IGNOVATE_FIXTURE_VERSION_PATH = Join-Path $root 'wsl-version'
-    Set-Content -LiteralPath $env:IGNOVATE_FIXTURE_VERSION_PATH -Value '2'
-    # Replace only the OS/WSL boundary with a real native executable.
-    $nativeBin = Join-Path $root 'native-bin'
-    New-Item -ItemType Directory -Path $nativeBin | Out-Null
+    & (Join-Path $bundle 'install.ps1') -InstallHome $data -BinDirectory $bin
+    $launcher = Join-Path $bin 'ignovate.exe'
+    if (-not (Test-Path -LiteralPath $launcher)) { throw 'Native launcher missing.' }
+    if (Test-Path -LiteralPath (Join-Path $data 'venvs')) { throw 'Installer prepared Python before set up.' }
+    if ([Environment]::GetEnvironmentVariable('Path', 'User') -ne $originalUserPath) { throw 'PATH opt-out was ignored.' }
+    # Substitute a real native executable only at the Python process boundary.
+    $runtime = Join-Path $data "venvs\$version"
+    $scripts = Join-Path $runtime 'Scripts'
+    New-Item -ItemType Directory -Path $scripts | Out-Null
+    [IO.File]::WriteAllText((Join-Path $runtime '.ready'), $version)
     $source = @'
 using System;
 using System.IO;
-public class WslFixture {
-    static string Quote(string value) {
-        return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n") + "\"";
-    }
+public class PythonFixture {
+    static string Quote(string value) { return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n") + "\""; }
     public static int Main(string[] args) {
         Console.OutputEncoding = new System.Text.UTF8Encoding(false);
-        string versionFile = Environment.GetEnvironmentVariable("IGNOVATE_FIXTURE_VERSION_PATH");
-        if (Array.IndexOf(args, "--list") >= 0) {
-            Console.WriteLine(Array.IndexOf(args, "--verbose") >= 0 ? "  Ubuntu Running " + File.ReadAllText(versionFile).Trim() : "Ubuntu");
-            return 0;
-        }
-        if (Array.IndexOf(args, "--set-version") >= 0) { File.WriteAllText(versionFile, "2"); return 0; }
-        if (Array.IndexOf(args, "wslpath") >= 0) {
-            Console.WriteLine(args[args.Length - 1] == @"C:\a project with spaces" ? "/mnt/c/a project with spaces" : "/mnt/c/ignovate fixture"); return 0;
-        }
-        if (Array.IndexOf(args, "HOME") >= 0) { Console.WriteLine("/home/fixture"); return 0; }
-        if (Array.IndexOf(args, "sh") >= 0) { return Array.IndexOf(args, "IGNOVATE_NO_MODIFY_PATH=1") >= 0 ? 0 : 8; }
         if (Array.IndexOf(args, "force-error") >= 0) { return 7; }
-        Console.WriteLine("[" + string.Join(",", Array.ConvertAll(args, Quote)) + "]");
+        Console.WriteLine("{\"cwd\":" + Quote(Environment.CurrentDirectory) + ",\"args\":[" + string.Join(",", Array.ConvertAll(args, Quote)) + "]}");
         return 0;
     }
 }
 '@
-    Add-Type -TypeDefinition $source -OutputAssembly (Join-Path $nativeBin 'wsl.exe') -OutputType ConsoleApplication
-    $env:Path = "$nativeBin;$env:Path"
-    & (Join-Path $bundle 'install.ps1') -BinDirectory $bin
-    if (-not (Test-Path (Join-Path $bin 'ignovate.cmd'))) { throw 'Windows launcher missing.' }
-    if (Test-Path (Join-Path $bin 'ignovate.ps1')) { throw 'PowerShell command discovery would bypass the cmd entry point.' }
-    $result = & (Join-Path $bin 'ignovate.cmd') -p 'a prompt with spaces' --project 'C:\a project with spaces' | ConvertFrom-Json
-    $expected = @('--distribution', 'Ubuntu', '--cd', (Get-Location).Path, '--exec', '/home/fixture/.local/bin/ignovate', '-p', 'a prompt with spaces', '--project', '/mnt/c/a project with spaces')
-    if (($result | ConvertTo-Json -Compress) -ne ($expected | ConvertTo-Json -Compress)) { throw 'Native cmd/PowerShell/WSL argv or cwd was lost.' }
-    $result = & (Join-Path $bin 'ignovate.cmd') --project='C:\a project with spaces' | ConvertFrom-Json
-    if ($result[-1] -ne '--project=/mnt/c/a project with spaces') { throw '--project= path was not translated.' }
-    # Initial WinPS 5.1 -> cmd quoting uses the native shell's escaping convention.
-    $result = & (Join-Path $bin 'ignovate.cmd') -p 'say \"hello\"' | ConvertFrom-Json
-    if ($result[-1] -ne 'say "hello"') { throw 'Embedded quotes were lost inside the launcher.' }
-    & (Join-Path $bin 'ignovate.cmd') force-error
-    if ($LASTEXITCODE -ne 7) { throw 'Native launcher did not preserve the exit code.' }
-    Set-Content -LiteralPath $env:IGNOVATE_FIXTURE_VERSION_PATH -Value '1'
-    & (Join-Path $bundle 'install.ps1') -BinDirectory $bin
-    if ((Get-Content $env:IGNOVATE_FIXTURE_VERSION_PATH).Trim() -ne '2') { throw 'Existing WSL1 distro was not upgraded.' }
+    Add-Type -TypeDefinition $source -OutputAssembly (Join-Path $scripts 'python.exe') -OutputType ConsoleApplication
+    function Invoke-Fixture([string[]]$Values) {
+        $serialized = foreach ($value in $Values) {
+            $escaped = [Regex]::Replace($value, '(\\*)"', { param($match) ($match.Groups[1].Value * 2) + '\"' })
+            $escaped = [Regex]::Replace($escaped, '(\\+)$', { param($match) $match.Value * 2 })
+            '"' + $escaped + '"'
+        }
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = $launcher
+        $start.Arguments = $serialized -join ' '
+        $start.WorkingDirectory = $root
+        $start.UseShellExecute = $false
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $start.StandardOutputEncoding = New-Object Text.UTF8Encoding $false
+        $process = [Diagnostics.Process]::Start($start)
+        $output, $errors = $process.StandardOutput.ReadToEnd(), $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        $result = @{Code=$process.ExitCode; Output=$output; Errors=$errors}
+        $process.Dispose()
+        return $result
+    }
+    $values = @('-p', 'say "hello" with spaces', '--project', 'C:\a project\', '', '--project=C:\other project')
+    $result = Invoke-Fixture $values
+    if ($result.Code -ne 0) { throw $result.Errors }
+    $actual = $result.Output | ConvertFrom-Json
+    $expected = @('-m', 'nailong.cli') + $values
+    if (($actual.args | ConvertTo-Json -Compress) -ne ($expected | ConvertTo-Json -Compress)) { throw 'Native launcher lost argv.' }
+    if ($actual.cwd -ne $root) { throw 'Native launcher lost cwd.' }
+    if ((Invoke-Fixture @('force-error')).Code -ne 7) { throw 'Native exit code was lost.' }
+    # Reinstallation must be safe in the same PowerShell process.
+    & (Join-Path $bundle 'install.ps1') -InstallHome $data -BinDirectory $bin
+    $help = Invoke-Fixture @('set', 'up', '--help')
+    if ($help.Code -ne 0 -or $help.Output -notlike '*Usage: ignovate set up*') { throw 'Setup help unavailable.' }
+    $tools = Join-Path $data 'tools'
+    New-Item -ItemType Directory -Path $tools | Out-Null
+    Add-Type -TypeDefinition 'public class FailedUv { public static int Main(string[] args) { return 69; } }' -OutputAssembly (Join-Path $tools 'uv.exe') -OutputType ConsoleApplication
+    $repair = Invoke-Fixture @('set', 'up', '--environment-only')
+    if ($repair.Code -eq 0 -or (Test-Path -LiteralPath (Join-Path $runtime '.ready'))) { throw 'Failed repair left ready state.' }
+    $released = [IO.File]::Open((Join-Path $data 'setup.lock'), [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $released.Dispose()
+    if (@(Get-ChildItem -LiteralPath $data -Directory -Filter '.setup-*').Count -ne 0) { throw 'Temporary setup files were not cleaned.' }
     Set-Content -LiteralPath (Join-Path $bundle 'requirements-release.lock') -Value 'tampered'
     $rejected = $false
-    try { & (Join-Path $bundle 'install.ps1') -BinDirectory (Join-Path $root 'bad-bin') }
+    try { & (Join-Path $bundle 'install.ps1') -InstallHome (Join-Path $root 'bad-data') -BinDirectory (Join-Path $root 'bad-bin') }
     catch { $rejected = $_.Exception.Message -like '*Checksum failed*' }
     if (-not $rejected) { throw 'Corrupt release was accepted.' }
-    Write-Host 'Windows installer smoke passed: checksums, WSL2 enforcement, PATH opt-out, native argv/cwd/exit.'
+    Write-Host 'Native installer smoke passed: integrity, PATH opt-out, cwd/argv/exit, help, repeat install and failed repair.'
     $global:LASTEXITCODE = 0
-}
-finally {
-    $env:IGNOVATE_NO_MODIFY_PATH = $previousNoModify
-    $env:Path = $previousPath
-    Remove-Item Env:\IGNOVATE_FIXTURE_VERSION_PATH -ErrorAction SilentlyContinue
+} finally {
+    $env:IGNOVATE_NO_MODIFY_PATH, $env:Path = $oldNoModify, $oldPath
     Remove-Item -LiteralPath $root -Recurse -Force
 }
