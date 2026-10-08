@@ -15,6 +15,8 @@
 
 首轮出现旧 Actions 的 Node 20 弃用警告，因此后续使用已核对官方发布的 `actions/checkout@v7.0.1` 和 `actions/setup-python@v7.0.0`，固定 Ubuntu 24.04，并设置 15 分钟任务上限。最新提交的实际检查结果以对应 GitHub Actions 记录为准。
 
+后续提交 `01d4637` 的 [运行记录](https://github.com/aycxd0528/ignovate_harness/actions/runs/37720074286) 中，Python 3.11 的 1043 项测试（132.893 秒）与 wheel smoke 通过；Python 3.13 在 `RewindConfirmationScreen` 子测试断言失败后停滞，运行已取消以读取日志。该循环缺少失败时的面板任务清理，后续面板会持续等待；补齐 `finally` 取消/收集任务，并为结果与清理各设 3 秒协作式超时，工作流 15 分钟限制提供外层限时。故障注入证实旧测试挂起超过 12 秒，新测试保留同一断言失败并正常结束；本地 9 项交互测试通过。原始 UI 断言失败的具体原因尚未确认，后续远端结果需结合该历史记录评估。
+
 ## 真实模型验证
 
 使用本机配置的 `api.deepseek.com` / `deepseek-flash`，真实 SDK 请求，没有假模型。测试项目、SQLite 会话和验证命令都位于临时目录。运行时仍会读取本机已有的用户级记忆、技能与偏好，结果反映本机配置。未向 CI 配置模型密钥或自动触发付费模型请求。

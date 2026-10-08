@@ -85,21 +85,26 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
                 for panel, expected in panels:
                     with self.subTest(panel=type(panel).__name__):
                         task = asyncio.create_task(app._wait_panel(panel))
-                        await pilot.pause()
-                        self.assertEqual(len(app.screen_stack), 1)
-                        self.assertTrue(app.query_one('#composer-info').display)
-                        self.assertGreater(app.query_one('#transcript').size.height, 0)
-                        self.assertLessEqual(panel.region.bottom, app.query_one('#composer-info').region.y)
-                        if isinstance(panel, PlanReviewScreen):
-                            self.assertEqual(app.focused.id, 'plan-reject')
-                            await pilot.press('enter')
-                        elif isinstance(panel, RewindConfirmationScreen):
-                            self.assertEqual(app.focused.id, 'cancel')
-                            await pilot.press('enter')
-                        else:
-                            await pilot.press('escape')
-                        self.assertEqual(await task, expected)
-                        self.assertEqual(composer.text, '保留草稿')
+                        try:
+                            await pilot.pause()
+                            self.assertEqual(len(app.screen_stack), 1)
+                            self.assertTrue(app.query_one('#composer-info').display)
+                            self.assertGreater(app.query_one('#transcript').size.height, 0)
+                            self.assertLessEqual(panel.region.bottom, app.query_one('#composer-info').region.y)
+                            if isinstance(panel, PlanReviewScreen):
+                                self.assertEqual(app.focused.id, 'plan-reject')
+                                await pilot.press('enter')
+                            elif isinstance(panel, RewindConfirmationScreen):
+                                self.assertEqual(app.focused.id, 'cancel')
+                                await pilot.press('enter')
+                            else:
+                                await pilot.press('escape')
+                            self.assertEqual(await asyncio.wait_for(task, 3), expected)
+                            self.assertEqual(composer.text, '保留草稿')
+                        finally:
+                            if not task.done():
+                                task.cancel()
+                            await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 3)
 
     async def test_failed_model_save_keeps_form_and_retries_without_partial_write(self):
         from agent import AgentRuntimeFactory
