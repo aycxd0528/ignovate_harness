@@ -65,7 +65,7 @@ class ReleaseInstallTests(unittest.TestCase):
             install_home = Path(directory)/'data'
             bin_dir = Path(directory)/'bin'
             config = Path(directory)/'config.json'
-            config.write_text('{"keep": true}')
+            config.write_text('{"keep": true}', newline='\n')
             env = {**os.environ, 'IGNOVATE_INSTALL_HOME': str(install_home),
                    'IGNOVATE_BIN_DIR': str(bin_dir), 'IGNOVATE_NO_MODIFY_PATH': '1'}
             result = subprocess.run(['sh', str(package/'install.sh')], env=env,
@@ -76,9 +76,9 @@ class ReleaseInstallTests(unittest.TestCase):
             # A pre-existing healthy runtime must start offline and preserve argv/cwd.
             runtime = install_home/f'venvs/{VERSION}'
             (runtime/'bin').mkdir(parents=True)
-            (runtime/'.ready').write_text(VERSION+'\n')
+            (runtime/'.ready').write_text(VERSION+'\n', newline='\n')
             python = runtime/'bin/python'
-            python.write_text('#!/bin/sh\nprintf "%s\\n" "$PWD" "$@"\n')
+            python.write_text('#!/bin/sh\nprintf "%s\\n" "$PWD" "$@"\n', newline='\n')
             python.chmod(0o755)
             result = subprocess.run([str(bin_dir/'ignovate'), '-p', 'a prompt with spaces'],
                                     cwd=directory, env=env, capture_output=True, text=True)
@@ -93,7 +93,7 @@ class ReleaseInstallTests(unittest.TestCase):
             with tarfile.open(output/f'ignovate-{VERSION}-unix.tar.gz') as archive:
                 archive.extractall(directory, filter='data')
             package = Path(directory)/f'ignovate-{VERSION}'
-            (package/'requirements-release.lock').write_text('tampered')
+            (package/'requirements-release.lock').write_text('tampered', newline='\n')
             bin_dir = Path(directory)/'bin'
             env = {**os.environ, 'IGNOVATE_INSTALL_HOME': str(Path(directory)/'data'),
                    'IGNOVATE_BIN_DIR': str(bin_dir), 'IGNOVATE_NO_MODIFY_PATH': '1'}
@@ -112,14 +112,14 @@ class ReleaseInstallTests(unittest.TestCase):
             install_home = Path(directory)/'data'
             runtime = install_home/f'venvs/{VERSION}'
             (runtime/'bin').mkdir(parents=True)
-            (runtime/'.ready').write_text(VERSION+'\n')
+            (runtime/'.ready').write_text(VERSION+'\n', newline='\n')
             python = runtime/'bin/python'
-            python.write_text('#!/bin/sh\nexit 0\n')
+            python.write_text('#!/bin/sh\nexit 0\n', newline='\n')
             python.chmod(0o755)
             tools = install_home/'tools'
             tools.mkdir()
             uv = tools/'uv'
-            uv.write_text('#!/bin/sh\nprintf "download failed\\n" >&2\nexit 69\n')
+            uv.write_text('#!/bin/sh\nprintf "download failed\\n" >&2\nexit 69\n', newline='\n')
             uv.chmod(0o755)
             result = subprocess.run(['sh', str(package/'launch.sh'), 'set', 'up', '--environment-only'],
                                     env={**os.environ, 'IGNOVATE_INSTALL_HOME': str(install_home)},
@@ -138,7 +138,7 @@ class ReleaseInstallTests(unittest.TestCase):
             root = Path(directory)
             home = root/'home'
             home.mkdir()
-            (home/'.bash_profile').write_text('export PATH=/usr/bin:/bin\n')
+            (home/'.bash_profile').write_text('export PATH=/usr/bin:/bin\n', newline='\n')
             env = {**os.environ, 'HOME': str(home), 'ZDOTDIR': str(home),
                    'IGNOVATE_INSTALL_HOME': str(root/'data'), 'IGNOVATE_BIN_DIR': str(root/'bin'),
                    'IGNOVATE_NO_MODIFY_PATH': '0'}

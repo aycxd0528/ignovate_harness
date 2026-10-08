@@ -70,7 +70,7 @@ class HeadlessTests(unittest.TestCase):
             project.mkdir()
             (project / '.nailong').mkdir()
             settings_path = project / '.nailong/settings.json'
-            settings_path.write_text(json.dumps({'permissions': {'deny': ['Write(*)', 'Bash(*)']}}))
+            settings_path.write_text(json.dumps({'permissions': {'deny': ['Write(*)', 'Bash(*)']}}), newline='\n')
             before = settings_path.read_bytes()
             calls = [{'name': 'write_file', 'args': {'path': 'unattended.txt', 'content': 'created'}, 'id': 'write'},
                 {'name': 'run_command', 'args': {'command': shell_join([sys.executable, '-B', '-c',
@@ -296,7 +296,7 @@ class HeadlessTests(unittest.TestCase):
                     "cache_hit_per_million": 0.2,
                     "output_per_million": 2,
                 }}
-            }), encoding="utf-8")
+            }), encoding="utf-8", newline='\n')
             settings = self.make_settings(directory)
             store = GoalStore(root / ".nailong" / "goals.json", api_key="private-key")
             factory = SimpleNamespace(

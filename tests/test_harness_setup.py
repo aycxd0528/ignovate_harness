@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import importlib
 import json
 import tempfile
@@ -23,7 +24,7 @@ class HarnessSetupTests(unittest.TestCase):
             self.assertEqual(saved['provider']['api_key'], 'fixture-key')
             self.assertEqual(saved['reasoning_effort'], 'low')
             self.assertNotIn('permission_mode', saved)
-            self.assertEqual(store.path.stat().st_mode & 0o777, 0o600)
+            assert_private(self, store.path)
             self.assertTrue(store.completed())
 
     def test_blank_key_preserves_existing_key_and_failed_validation_does_not_write(self):
@@ -44,13 +45,13 @@ class HarnessSetupTests(unittest.TestCase):
             root = Path(directory)
             store = self.store(root/'user')
             store.path.parent.mkdir()
-            store.path.write_text('{broken')
+            store.path.write_text('{broken', newline='\n')
             with self.assertRaises(ValueError):
                 store.save('https://api.invalid', 'deepseek-flash', 'new-key')
             self.assertEqual(store.path.read_text(), '{broken')
             store.path.unlink()
             other = root/'other.json'
-            other.write_text('{}')
+            other.write_text('{}', newline='\n')
             store.path.symlink_to(other)
             with self.assertRaises(ValueError):
                 store.save('https://api.invalid', 'deepseek-flash', 'new-key')

@@ -78,7 +78,7 @@ class CommandRegistry:
                 if resolved_path.is_file():
                     try:
                         metadata, _ = self._parse(resolved_path)
-                    except (OSError, UnicodeError, yaml.YAMLError):
+                    except (OSError, ValueError, UnicodeError, yaml.YAMLError):
                         continue
                     description = str(metadata.get("description", "自定义命令"))
                     if self.api_key:
@@ -96,7 +96,10 @@ class CommandRegistry:
         path = self.list_commands().get(name, ("", None))[1]
         if path is None:
             return None
-        metadata, body = self._parse(path)
+        try:
+            metadata, body = self._parse(path)
+        except (OSError, ValueError, UnicodeError, yaml.YAMLError):
+            return None
         available = set(available_tools)
         declared = metadata.get("allowed-tools")
         if isinstance(declared, str):

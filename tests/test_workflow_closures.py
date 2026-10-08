@@ -1,5 +1,5 @@
-from platform_fixtures import python_command, shell_join, editor_command
 """End-state regressions found while auditing the approved workflow design."""
+from platform_fixtures import assert_private, editor_command, kill_process_if_alive, process_exists, python_command, shell_join
 import asyncio
 import json
 import os
@@ -50,7 +50,7 @@ class FinalMetricsTests(unittest.TestCase):
     def test_ui_and_service_use_the_same_configured_window(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'.nailong').mkdir()
-            (root/'.nailong/settings.json').write_text(json.dumps({'context_windows':{'private':4096}}))
+            (root/'.nailong/settings.json').write_text(json.dumps({'context_windows':{'private':4096}}), newline='\n')
             self.assertEqual(configured_context_window('private',root),4096)
 
     def test_damaged_usage_cannot_be_claimed_as_complete(self):
@@ -80,7 +80,7 @@ class FinalMetricsTests(unittest.TestCase):
             connection.mkdir()
             (connection/'config.json').write_text(json.dumps({'version':1,'onboarding_complete':True,
                 'provider':{'api_base':'https://api.invalid','model':'deepseek-flash','api_key':'fixture-hidden'},
-                'reasoning_effort':'low'}))
+                'reasoning_effort':'low'}), newline='\n')
             result=subprocess.run([sys.executable,'-S','main.py','doctor','--project',directory,'--output-format','json'],
                 env={**os.environ,'IGNOVATE_CONFIG_DIR':str(connection)},capture_output=True,text=True,timeout=8)
             self.assertTrue(result.stdout.startswith('{'), 'doctor must emit JSON even with saved user configuration')
@@ -98,7 +98,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
         from textual.widgets import TextArea,Static
         with tempfile.TemporaryDirectory() as project,tempfile.TemporaryDirectory() as data:
             root=Path(project).resolve();(root/'.nailong').mkdir()
-            path=root/'.nailong/context.md';path.write_text('original')
+            path=root/'.nailong/context.md';path.write_text('original', newline='\n')
             settings=Settings('key','https://api.invalid','deepseek-flash',root)
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
             app=TerminalAgentApp(AgentService(factory,session_store=factory.session_store),settings)
@@ -120,7 +120,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(path.read_text(),'approved')
                 self.assertIn('approved',factory._project_memory[0].content)
                 skill=root/'.agents/skills/probe/SKILL.md';skill.parent.mkdir(parents=True)
-                skill.write_text('---\nname: probe\ndescription: Menu refresh probe.\n---\nbody')
+                skill.write_text('---\nname: probe\ndescription: Menu refresh probe.\n---\nbody', newline='\n')
                 app._dispatch('/reload-skills');await pilot.pause();await app.session_runner.wait_idle()
                 app.query_one('#composer',ChatInput).text='$pro';await pilot.pause()
                 self.assertIn('$probe',str(app.query_one('#command-menu',Static).render()))
@@ -166,7 +166,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
             execution=ToolExecutionContext(root,approval_handler=approve)
             tool=next(item for item in build_tools(file_session=FileSession(root),goal_store=goals,
                 thread_id='thread',execution_context=execution) if item.name=='run_command')
-            proof=json.loads(await tool.ainvoke({'command':'true'}))
+            proof=json.loads(await tool.ainvoke({'command':python_command('pass')}))
             self.assertTrue(proof['ok']);self.assertTrue(proof['started'])
             self.assertTrue(goals.get(goal.id).verification_succeeded)
             command=shell_join([sys.executable,'-B','-c',"from pathlib import Path;import os,time;Path('pid').write_text(str(os.getpid()));Path('side-effect').write_text('changed');time.sleep(30);Path('late').write_text('unexpected')"])
@@ -183,9 +183,9 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 task.cancel()
                 with self.assertRaises(asyncio.CancelledError): await task
-            self.assertEqual(approvals,['true',command])
+            self.assertEqual(approvals,[python_command('pass'),command])
             self.assertFalse((root/'late').exists())
-            with self.assertRaises(ProcessLookupError): os.kill(pid,0)
+            self.assertFalse(process_exists(pid))
             self.assertFalse(goals.get(goal.id).verification_succeeded)
             self.assertFalse(goals.update(goal.id,state='complete',thread_id='thread')[0])
 
@@ -194,15 +194,15 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
         from nailong.core.session_actions import SessionActions
         with tempfile.TemporaryDirectory() as directory,tempfile.TemporaryDirectory() as data:
             root=Path(directory).resolve();(root/'.nailong').mkdir()
-            (root/'input.py').write_text('original')
-            (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[{'name':'test','kind':'test','command':'true'}]}}))
+            (root/'input.py').write_text('original', newline='\n')
+            (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[{'name':'test','kind':'test','command':python_command('pass')}]}}), newline='\n')
             store=ProjectSessionStore(root,base_dir=data)
             async def approve(*args): return 'approve'
             result=await VerificationService(root,store).run('thread',approval=approve)
             self.assertEqual(result['status'],'passed')
             actions=SessionActions(root,store)
             self.assertIn('已验证：完整项目验证通过',actions.recap('thread'))
-            (root/'input.py').write_text('changed')
+            (root/'input.py').write_text('changed', newline='\n')
             self.assertIn('未验证：',actions.recap('thread'))
 
     async def test_stop_pauses_the_current_session_goal(self):
@@ -221,7 +221,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
         from agent import AgentRuntimeFactory
         with tempfile.TemporaryDirectory() as directory,tempfile.TemporaryDirectory() as other,tempfile.TemporaryDirectory() as data:
             root=Path(directory);(root/'.nailong').mkdir()
-            (root/'.nailong/settings.json').write_text(json.dumps({'models':{'pro':{'model':'deepseek-v4-pro'}},'model':'pro'}))
+            (root/'.nailong/settings.json').write_text(json.dumps({'models':{'pro':{'model':'deepseek-v4-pro'}},'model':'pro'}), newline='\n')
             settings=Settings('key','https://api.invalid','deepseek-flash',root)
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
             self.addAsyncCleanup(factory.aclose);self.addCleanup(factory.close)
@@ -236,7 +236,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
         from nailong.core.plan import edit_plan_with_editor_async
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);script=root/'editor.py';info=root/'info.json'
-            script.write_text("import json,os,sys,time\nfrom pathlib import Path\np=Path(sys.argv[1])\nPath("+repr(str(info))+").write_text(json.dumps({'pid':os.getpid(),'path':str(p),'mode':p.stat().st_mode&0o777,'key':os.environ.get('DEEPSEEK_API_KEY')}))\ntime.sleep(30)\n")
+            script.write_text("import json,os,sys,time\nfrom pathlib import Path\np=Path(sys.argv[1])\nPath("+repr(str(info))+").write_text(json.dumps({'pid':os.getpid(),'path':str(p),'mode':p.stat().st_mode&0o777,'key':os.environ.get('DEEPSEEK_API_KEY')}))\ntime.sleep(30)\n", newline='\n')
             with patch.dict(os.environ,{'VISUAL':editor_command([sys.executable,str(script)]),'DEEPSEEK_API_KEY':'unit-private-key'}):
                 task=asyncio.create_task(edit_plan_with_editor_async('original'))
                 try:
@@ -244,12 +244,12 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
                         if info.exists(): break
                         await asyncio.sleep(.01)
                     self.assertTrue(info.exists())
-                    row=json.loads(info.read_text());self.assertEqual(row['mode'],0o600);self.assertIsNone(row['key'])
+                    row=json.loads(info.read_text());assert_private(self, Path(row['path']));self.assertIsNone(row['key'])
                 finally:
                     task.cancel()
                     with self.assertRaises(asyncio.CancelledError): await task
             self.assertFalse(Path(row['path']).exists())
-            with self.assertRaises(ProcessLookupError): os.kill(row['pid'],0)
+            self.assertFalse(process_exists(row['pid']))
 
     async def test_child_prices_are_per_call_including_zero_token_records(self):
         from nailong.tools.agents import ChildTaskResult,ReadOnlyTaskRunner

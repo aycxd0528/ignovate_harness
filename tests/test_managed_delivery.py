@@ -185,7 +185,7 @@ class ReviewCoverageTests(unittest.TestCase):
         from nailong.tools.files import FileSession
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'a.py').write_text('甲乙\nγδ\n', encoding='utf-8')
+            (root / 'a.py').write_text('甲乙\nγδ\n', encoding='utf-8', newline='\n')
             session = FileSession(root)
             first = session.read_file('a.py', limit=1)
             second = session.read_file('a.py', offset=first['next_offset'], limit=1)
@@ -205,7 +205,7 @@ class ReviewCoverageTests(unittest.TestCase):
         from nailong.tools.files import FileSession
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'a.py').write_text('abcdef', encoding='utf-8')
+            (root / 'a.py').write_text('abcdef', encoding='utf-8', newline='\n')
             session = FileSession(root)
             first = session.read_file('a.py', max_chars=3)
             second = session.read_file('a.py', offset=first['next_offset'],

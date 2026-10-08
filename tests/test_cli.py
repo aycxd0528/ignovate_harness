@@ -254,7 +254,7 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "图书管理系统"
             root.mkdir()
-            (root / "main.c").write_text("int main(void) { return 0; }", encoding="utf-8")
+            (root / "main.c").write_text("int main(void) { return 0; }", encoding="utf-8", newline='\n')
             settings = Settings("unit-test-key", "https://api.deepseek.com", "deepseek-chat", Path(tempfile.gettempdir()))
             original_root = local_tools.PROJECT_ROOT
             observed = []
@@ -333,7 +333,7 @@ class CliTests(unittest.TestCase):
             self.assertIs(observed[1][0], created_agents[1])
             self.assertNotEqual(observed[0][2], observed[1][2])
             self.assertEqual(observed[1][3], root.resolve())
-            self.assertIn(str(root), "\n".join(displayed))
+            self.assertIn(str(root.resolve()), "\n".join(displayed))
             self.assertEqual(local_tools.PROJECT_ROOT, original_root)
 
     def test_run_turn_prompts_for_each_tool_and_resumes_in_order(self):

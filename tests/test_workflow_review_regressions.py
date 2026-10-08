@@ -1,4 +1,4 @@
-from platform_fixtures import python_command, shell_join, editor_command
+from platform_fixtures import assert_private, editor_command, kill_process_if_alive, process_exists, python_command, shell_join
 import asyncio
 import json
 import os
@@ -28,14 +28,14 @@ class ReviewVerificationTests(VerificationTests):
             with self.assertRaises(ValueError): self.service().list_steps()
         self.config([step])
         path=self.root/'.nailong/settings.json'
-        path.write_text(json.dumps({'verification':{'steps':[step],'unexpected':True}}))
+        path.write_text(json.dumps({'verification':{'steps':[step],'unexpected':True}}), newline='\n')
         with self.assertRaises(ValueError): self.service().list_steps()
 
     async def test_generated_directory_does_not_hide_later_input(self):
         self.config([{'name':'build','kind':'build','command':self.command("import pathlib; pathlib.Path('build').mkdir(exist_ok=True); pathlib.Path('build/out').write_text('output')"),'generated_paths':['build']}])
         goal=self.goals.create('verify',thread_id='thread')
         self.assertEqual((await self.run_steps())['status'],'passed')
-        (self.root/'build/new_input.py').write_text('source')
+        (self.root/'build/new_input.py').write_text('source', newline='\n')
         self.assertFalse(self.goals.update(goal.id,state='complete',thread_id='thread')[0])
         with self.assertRaises(ValueError): await self.run_steps()
 
@@ -52,13 +52,12 @@ class ReviewVerificationTests(VerificationTests):
         try:
             task.cancel(); await asyncio.sleep(.05); task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
-            with self.assertRaises(ProcessLookupError): os.kill(pid,0)
+            self.assertFalse(process_exists(pid))
             record=self.store.read_events('thread')[-1]['data']
             self.assertEqual(record['status'],'cancelled'); self.assertEqual(record['steps'][0]['name'],'cancel')
             self.assertIsNotNone(record['steps'][0]['exit_code'])
         finally:
-            try: os.kill(pid,signal.SIGKILL)
-            except ProcessLookupError: pass
+            kill_process_if_alive(pid)
 
 
 class ReviewAccountingTests(unittest.IsolatedAsyncioTestCase):

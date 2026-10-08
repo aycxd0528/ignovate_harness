@@ -9,9 +9,11 @@ import os
 
 kernel = ctypes.WinDLL('kernel32', use_last_error=True)
 security = ctypes.WinDLL('advapi32', use_last_error=True)
+native = ctypes.WinDLL('ntdll', use_last_error=True)
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 GENERIC_READ, GENERIC_WRITE = 0x80000000, 0x40000000
 LIST_DIRECTORY, READ_ATTRIBUTES, READ_CONTROL, WRITE_DAC = 0x1, 0x80, 0x20000, 0x40000
+DELETE = 0x10000
 SHARE_READ, SHARE_WRITE = 1, 2
 OPEN_EXISTING, OPEN_ALWAYS, CREATE_NEW = 3, 4, 1
 REPARSE_POINT, DIRECTORY = 0x400, 0x10
@@ -37,6 +39,21 @@ class Overlapped(ctypes.Structure):
                 ('event', wintypes.HANDLE)]
 
 
+class IOStatus(ctypes.Structure):
+    _fields_ = [('status', wintypes.LPVOID), ('information', ctypes.c_size_t)]
+
+
+class RenameInformation(ctypes.Structure):
+    _fields_ = [('replace', wintypes.BYTE), ('root', wintypes.HANDLE),
+                ('length', wintypes.DWORD), ('name', wintypes.WCHAR * 1)]
+
+
+class BasicInformation(ctypes.Structure):
+    _fields_ = [('created', ctypes.c_longlong), ('accessed', ctypes.c_longlong),
+                ('written', ctypes.c_longlong), ('changed', ctypes.c_longlong),
+                ('attributes', wintypes.DWORD)]
+
+
 def _bind(library, name, args, result):
     function = getattr(library, name)
     function.argtypes, function.restype = args, result
@@ -49,8 +66,13 @@ CloseHandle = _bind(kernel, 'CloseHandle', [wintypes.HANDLE], wintypes.BOOL)
 GetInformation = _bind(kernel, 'GetFileInformationByHandle', [wintypes.HANDLE, ctypes.POINTER(FileInformation)], wintypes.BOOL)
 GetFileType = _bind(kernel, 'GetFileType', [wintypes.HANDLE], wintypes.DWORD)
 CreateDirectory = _bind(kernel, 'CreateDirectoryW', [wintypes.LPCWSTR, ctypes.POINTER(SecurityAttributes)], wintypes.BOOL)
-ReplaceFile = _bind(kernel, 'ReplaceFileW', [wintypes.LPCWSTR, wintypes.LPCWSTR,
-    wintypes.LPCWSTR, wintypes.DWORD, wintypes.LPVOID, wintypes.LPVOID], wintypes.BOOL)
+SetInformation = _bind(kernel, 'SetFileInformationByHandle', [wintypes.HANDLE,
+    ctypes.c_int, wintypes.LPVOID, wintypes.DWORD], wintypes.BOOL)
+GetInformationEx = _bind(kernel, 'GetFileInformationByHandleEx', [wintypes.HANDLE,
+    ctypes.c_int, wintypes.LPVOID, wintypes.DWORD], wintypes.BOOL)
+NtSetInformation = _bind(native, 'NtSetInformationFile', [wintypes.HANDLE,
+    ctypes.POINTER(IOStatus), wintypes.LPVOID, wintypes.DWORD, ctypes.c_int], ctypes.c_long)
+NtStatusToDosError = _bind(native, 'RtlNtStatusToDosError', [wintypes.DWORD], wintypes.DWORD)
 LockFileEx = _bind(kernel, 'LockFileEx', [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD,
     wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(Overlapped)], wintypes.BOOL)
 UnlockFileEx = _bind(kernel, 'UnlockFileEx', [wintypes.HANDLE, wintypes.DWORD,
@@ -67,6 +89,11 @@ GetDacl = _bind(security, 'GetSecurityDescriptorDacl', [wintypes.LPVOID,
     ctypes.POINTER(wintypes.BOOL), ctypes.POINTER(wintypes.LPVOID), ctypes.POINTER(wintypes.BOOL)], wintypes.BOOL)
 SetSecurityInfo = _bind(security, 'SetSecurityInfo', [wintypes.HANDLE, ctypes.c_int,
     wintypes.DWORD, wintypes.LPVOID, wintypes.LPVOID, wintypes.LPVOID, wintypes.LPVOID], wintypes.DWORD)
+GetSecurityInfo = _bind(security, 'GetSecurityInfo', [wintypes.HANDLE, ctypes.c_int,
+    wintypes.DWORD, wintypes.LPVOID, wintypes.LPVOID, ctypes.POINTER(wintypes.LPVOID),
+    wintypes.LPVOID, ctypes.POINTER(wintypes.LPVOID)], wintypes.DWORD)
+GetDescriptorControl = _bind(security, 'GetSecurityDescriptorControl', [wintypes.LPVOID,
+    ctypes.POINTER(wintypes.WORD), ctypes.POINTER(wintypes.DWORD)], wintypes.BOOL)
 
 
 def _error(path=None):
@@ -178,10 +205,87 @@ def pin_directory(path, *, create=False, private=True):
             CloseHandle(handle)
 
 
-def replace_project_file(temporary, destination):
-    """Native metadata-preserving replacement; never ignore an ACL merge error."""
-    if not ReplaceFile(extended(destination), extended(temporary), None, 0, None, None):
-        raise _error(destination)
+def publish_same_directory(handle, name, *, replace=True):
+    """Rename an open DELETE-capable file without reopening its pinned parent.
+
+    A NULL RootDirectory and a single basename identify the source handle's
+    existing directory. Passing a full path or RootDirectory instead causes
+    IopOpenLinkOrRenameTarget to reopen the directory for writes, conflicting
+    with the pin that prevents in-place reparse-point changes.
+    """
+    if (not name or name in {'.', '..'} or any(char in name for char in '\\/:\0')):
+        raise ValueError('原子文件发布需要同目录的普通文件名。')
+    encoded = name.encode('utf-16-le')
+    buffer = ctypes.create_string_buffer(ctypes.sizeof(RenameInformation) + len(encoded))
+    data = RenameInformation.from_buffer(buffer)
+    data.replace, data.root, data.length = bool(replace), None, len(encoded)
+    ctypes.memmove(ctypes.addressof(buffer) + RenameInformation.name.offset, encoded, len(encoded))
+    status = NtSetInformation(handle, ctypes.byref(IOStatus()), buffer, len(buffer), 10)
+    if status < 0:
+        raise ctypes.WinError(NtStatusToDosError(status & 0xffffffff))
+
+
+def _check_basic_metadata(handle, data):
+    # These need dedicated encryption/compression/sparse and stream-copy APIs.
+    # Refuse edits rather than quietly stripping metadata from an existing file.
+    if data.attributes & (0x200 | 0x800 | 0x4000):
+        raise ValueError('项目文件包含稀疏、压缩或加密属性，不能安全替换。')
+    size = 4096
+    while True:
+        buffer = ctypes.create_string_buffer(size)
+        if GetInformationEx(handle, 7, buffer, size):  # FileStreamInfo
+            offset = 0
+            while True:
+                next_offset, length = (wintypes.DWORD.from_buffer(buffer, offset).value,
+                                       wintypes.DWORD.from_buffer(buffer, offset + 4).value)
+                if length > size - offset - 24:
+                    raise ValueError('项目文件数据流信息无效。')
+                name = bytes(buffer[offset + 24:offset + 24 + length]).decode('utf-16-le')
+                if name != '::$DATA':
+                    raise ValueError('项目文件包含附加数据流，不能安全替换。')
+                if not next_offset:
+                    return
+                if next_offset < 24 or offset + next_offset >= size:
+                    raise ValueError('项目文件数据流信息无效。')
+                offset += next_offset
+        elif ctypes.get_last_error() in {38}:  # ERROR_HANDLE_EOF: no streams
+            return
+        elif ctypes.get_last_error() in {234} and size < 1024 * 1024:
+            size *= 2
+        else:
+            raise _error()
+
+
+def copy_project_metadata(temporary_handle, destination):
+    """Copy a verified target's DACL/protection and basic attributes, fail closed."""
+    handle = open_handle(destination, access=GENERIC_READ | GENERIC_WRITE)
+    descriptor, dacl = wintypes.LPVOID(), wintypes.LPVOID()
+    try:
+        data = information(handle)
+        if data.attributes & 1:
+            raise PermissionError('项目文件为只读文件，保留原文件和权限。')
+        _check_basic_metadata(handle, data)
+        code = GetSecurityInfo(handle, 1, 4, None, None, ctypes.byref(dacl), None,
+                               ctypes.byref(descriptor))
+        if code:
+            raise ctypes.WinError(code)
+        control, revision = wintypes.WORD(), wintypes.DWORD()
+        if not GetDescriptorControl(descriptor, ctypes.byref(control), ctypes.byref(revision)):
+            raise _error(destination)
+        protection = 0x80000000 if control.value & 0x1000 else 0x20000000
+        code = SetSecurityInfo(temporary_handle, 1, 4 | protection, None, None, dacl, None)
+        if code:
+            raise ctypes.WinError(code)
+        basic = BasicInformation(
+            (data.created.dwHighDateTime << 32) | data.created.dwLowDateTime,
+            (data.accessed.dwHighDateTime << 32) | data.accessed.dwLowDateTime,
+            0, 0, data.attributes)
+        if not SetInformation(temporary_handle, 0, ctypes.byref(basic), ctypes.sizeof(basic)):
+            raise _error(destination)
+    finally:
+        if descriptor:
+            LocalFree(descriptor)
+        CloseHandle(handle)
 
 
 def set_private_permissions(path, *, directory=False):

@@ -51,7 +51,7 @@ class ManagedUiIntegrationTests(unittest.IsolatedAsyncioTestCase):
             first, second = base / 'first', base / 'second'
             first.mkdir()
             second.mkdir()
-            (second / 'identity.txt').write_text('inline second project')
+            (second / 'identity.txt').write_text('inline second project', newline='\n')
             output = StringIO()
             with patch.dict(os.environ, {'NAILONG_DATA_DIR': str(base / 'private')}), \
                     patch('ui.app.AgentRuntimeFactory', side_effect=build):
@@ -73,7 +73,7 @@ class ManagedUiIntegrationTests(unittest.IsolatedAsyncioTestCase):
             first, second = base / 'first', base / 'second'
             first.mkdir()
             second.mkdir()
-            (second / 'identity.txt').write_text('second project')
+            (second / 'identity.txt').write_text('second project', newline='\n')
             settings = Settings('fake', 'https://api.invalid', 'deepseek-flash', first)
             with patch('agent.ChatDeepSeek', return_value=Model(responses=[AIMessage(content='done')])):
                 factory = AgentRuntimeFactory(settings, session_store=ProjectSessionStore(first, base_dir=base / 'private'))
@@ -129,7 +129,7 @@ class ManagedUiIntegrationTests(unittest.IsolatedAsyncioTestCase):
             base = Path(directory)
             root = base / 'project'
             root.mkdir()
-            (root / 'source.py').write_text('value = 1\n')
+            (root / 'source.py').write_text('value = 1\n', newline='\n')
             settings = Settings('fake', 'https://api.invalid', 'deepseek-flash', root)
             store = ProjectSessionStore(root, base_dir=base / 'private')
             with patch('agent.ChatDeepSeek', return_value=Model(responses=[AIMessage(content='你好，这是普通回复。')])):

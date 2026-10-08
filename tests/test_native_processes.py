@@ -173,7 +173,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         settings = self.root/'.nailong'; settings.mkdir()
         command = self.spawning_command(started, marker)
         (settings/'settings.json').write_text(json.dumps({'hooks': {'PreToolUse': [
-            {'hooks': [{'type': 'command', 'command': command}]}]}}), encoding='utf-8')
+            {'hooks': [{'type': 'command', 'command': command}]}]}}), encoding='utf-8', newline='\n')
         runner = HookRunner(self.root)
         task = asyncio.create_task(runner.run_event('PreToolUse', confirm=lambda _: True))
         await self.wait_started(started)
@@ -187,7 +187,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         settings = self.root/'.nailong'; settings.mkdir()
         code = "import sys;sys.stdout.buffer.write(('首'+'x'*30000).encode());sys.stderr.buffer.write(('错误'+'z'*30000).encode());sys.exit(2)"
         (settings/'settings.json').write_text(json.dumps({'hooks': {'PreToolUse': [
-            {'hooks': [{'type': 'command', 'command': shell_python(code)}]}]}}), encoding='utf-8')
+            {'hooks': [{'type': 'command', 'command': shell_python(code)}]}]}}), encoding='utf-8', newline='\n')
         result = await HookRunner(self.root, max_output_chars=512).run_event('PreToolUse', confirm=lambda _: True)
         self.assertTrue(result.blocked)
         self.assertIn('首', result.outputs[0].stdout)
@@ -209,7 +209,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         info, marker = self.root/'editor-info.json', self.root/'editor-late'
         child = f"import time;from pathlib import Path;time.sleep(.8);Path({str(marker)!r}).write_text('leak')"
         script = self.root/'editor helper.py'
-        script.write_text(f"import json,os,subprocess,sys,time\nfrom pathlib import Path\nsubprocess.Popen([sys.executable,'-c',{child!r}])\nPath({str(info)!r}).write_text(json.dumps({{'path':sys.argv[-1],'key':os.getenv('DEEPSEEK_API_KEY')}}))\ntime.sleep(30)\n", encoding='utf-8')
+        script.write_text(f"import json,os,subprocess,sys,time\nfrom pathlib import Path\nsubprocess.Popen([sys.executable,'-c',{child!r}])\nPath({str(info)!r}).write_text(json.dumps({{'path':sys.argv[-1],'key':os.getenv('DEEPSEEK_API_KEY')}}))\ntime.sleep(30)\n", encoding='utf-8', newline='\n')
         selected = subprocess.list2cmdline([sys.executable, str(script)]) if os.name == 'nt' else shlex.join([sys.executable, str(script)])
         with patch.dict(os.environ, {'VISUAL': selected, 'DEEPSEEK_API_KEY': 'private-key'}):
             task = asyncio.create_task(edit_plan_with_editor_async('original'))
@@ -225,14 +225,14 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sync_editor_does_not_receive_model_credential(self):
         script = self.root/'secret editor.py'
-        script.write_text("import os,sys\nfrom pathlib import Path\nPath(sys.argv[-1]).write_text(os.getenv('DEEPSEEK_API_KEY','missing'),encoding='utf-8')\n", encoding='utf-8')
+        script.write_text("import os,sys\nfrom pathlib import Path\nPath(sys.argv[-1]).write_text(os.getenv('DEEPSEEK_API_KEY','missing'),encoding='utf-8')\n", encoding='utf-8', newline='\n')
         selected = subprocess.list2cmdline([sys.executable, str(script)]) if os.name == 'nt' else shlex.join([sys.executable, str(script)])
         with patch.dict(os.environ, {'DEEPSEEK_API_KEY': 'private-key'}):
             self.assertEqual(edit_plan_with_editor('before', editor=selected), 'missing')
 
     async def test_editor_exec_preserves_quoted_paths_and_reads_updated_copy(self):
         script = self.root/'write editor.py'
-        script.write_text("import sys\nfrom pathlib import Path\nPath(sys.argv[-1]).write_text('修改后',encoding='utf-8')\n", encoding='utf-8')
+        script.write_text("import sys\nfrom pathlib import Path\nPath(sys.argv[-1]).write_text('修改后',encoding='utf-8')\n", encoding='utf-8', newline='\n')
         selected = subprocess.list2cmdline([sys.executable, str(script)]) if os.name == 'nt' else shlex.join([sys.executable, str(script)])
         self.assertEqual(edit_plan_with_editor('before', editor=selected), '修改后')
         with patch.dict(os.environ, {'VISUAL': selected}):

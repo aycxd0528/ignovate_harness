@@ -2,6 +2,7 @@ from platform_fixtures import python_command, shell_join, editor_command
 import asyncio
 import importlib
 import json
+import os
 import shlex
 import socket
 import sys
@@ -24,7 +25,7 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         self.engine=PermissionEngine(self.root,rules={})
     def config(self,steps):
         (self.root/'.nailong').mkdir(exist_ok=True)
-        (self.root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':steps}}))
+        (self.root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':steps}}), newline='\n')
     def command(self,code): return python_command(code)
     def service(self):
         try: cls=importlib.import_module('nailong.core.verification').VerificationService
@@ -44,19 +45,20 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(full['status'],'failed'); self.assertEqual(full['steps'][1]['exit_code'],3)
         self.assertEqual(self.store.read_events('thread')[-1]['kind'],'verification')
     async def test_complete_evidence_invalidated_by_external_edit(self):
-        (self.root/'source.py').write_text('before')
+        (self.root/'source.py').write_text('before', newline='\n')
         self.config([{'name':'test','kind':'test','command':self.command('print("ok")')}])
         goal=self.goals.create('verify',thread_id='thread')
         result=await self.run_steps(); self.assertEqual(result['status'],'passed')
         self.assertTrue(self.goals.get(goal.id).verification_succeeded)
-        (self.root/'source.py').write_text('external change')
+        (self.root/'source.py').write_text('external change', newline='\n')
         self.assertFalse(self.goals.update(goal.id,state='complete',thread_id='thread')[0])
         result=await self.run_steps(); self.assertEqual(result['status'],'passed')
         self.assertTrue(self.goals.update(goal.id,state='complete',thread_id='thread')[0])
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX executable bits and shell scripts; Windows ACL/readonly tests cover native permissions.')
     async def test_executable_permission_change_invalidates_verification(self):
         script = self.root/'check.sh'
-        script.write_text('#!/bin/sh\nexit 0\n')
+        script.write_text('#!/bin/sh\nexit 0\n', newline='\n')
         script.chmod(0o755)
         self.config([{'name':'test', 'kind':'test', 'command':'./check.sh'}])
         goal = self.goals.create('verify', thread_id='thread')
@@ -97,7 +99,7 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
                       {'name':'conf','kind':'test','command':'true','generated_paths':['.nailong']} ]:
             self.config([step])
             with self.assertRaises(ValueError): self.service().list_steps()
-        (self.root/'input').write_text('source')
+        (self.root/'input').write_text('source', newline='\n')
         self.config([{'name':'test','kind':'test','command':'true','generated_paths':['input']}])
         with self.assertRaises(ValueError): await self.run_steps()
     async def test_declared_new_generated_output_is_allowed_but_mutation_invalid(self):
@@ -105,7 +107,7 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
                      'generated_paths':['build.log']}])
         self.assertEqual((await self.run_steps())['status'],'passed')
         self.assertEqual((await self.run_steps())['status'],'passed')
-        (self.root/'input').write_text('before')
+        (self.root/'input').write_text('before', newline='\n')
         self.config([{'name':'mutate','kind':'test','command':self.command("open('input','w').write('changed')")}])
         self.assertEqual((await self.run_steps())['status'],'invalidated')
     async def test_headless_verify_returns_machine_readable_evidence_without_model(self):

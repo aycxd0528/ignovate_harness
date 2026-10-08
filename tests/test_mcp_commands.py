@@ -1,3 +1,4 @@
+from platform_fixtures import process_exists
 import json
 import os
 import shlex
@@ -67,6 +68,13 @@ class MCPCommandTests(unittest.IsolatedAsyncioTestCase):
                     await self.command('/mcp ' + argument)
         self.assertEqual(set(self.manager.store.list_servers()), {'docs'})
 
+    async def test_windows_mcp_command_keeps_quoted_and_unquoted_backslash_paths(self):
+        with patch('ui.arguments._WINDOWS', True):
+            await self.command(r'/mcp add native --transport stdio -- C:\Tools\python.exe "C:\项目 文件\server.py"')
+        definition = self.manager.store.list_servers()['native']
+        self.assertEqual(definition['command'], r'C:\Tools\python.exe')
+        self.assertEqual(definition['args'], [r'C:\项目 文件\server.py'])
+
     async def test_plan_mode_allows_listing_but_refuses_connection(self):
         await self.command('/mcp add docs --transport http https://example.com/mcp')
         self.service.permission_mode = 'plan'
@@ -112,8 +120,7 @@ class MCPProjectSwitchTests(unittest.IsolatedAsyncioTestCase):
                     await app.workers.wait_for_complete()
                     self.assertEqual(app.settings.project_root, other)
                     self.assertEqual(manager.tools('local'), ())
-                    with self.assertRaises(ProcessLookupError):
-                        os.kill(pid, 0)
+                    self.assertFalse(process_exists(pid))
 
 
 if __name__ == '__main__':

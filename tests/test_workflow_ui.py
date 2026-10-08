@@ -1,3 +1,4 @@
+from platform_fixtures import python_command
 import asyncio
 import tempfile
 import unittest
@@ -29,7 +30,7 @@ class WorkflowUiTests(unittest.IsolatedAsyncioTestCase):
         from agent_service import AgentService
         with tempfile.TemporaryDirectory() as directory,tempfile.TemporaryDirectory() as data:
             root=Path(directory); (root/'.nailong').mkdir()
-            (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[{'name':'test','kind':'test','command':'true'}]}}))
+            (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[{'name':'test','kind':'test','command':python_command('pass')}]}}), newline='\n')
             settings=Settings('key','https://api.invalid','deepseek-flash',root)
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
             app=TerminalAgentApp(AgentService(factory,session_store=factory.session_store),settings)

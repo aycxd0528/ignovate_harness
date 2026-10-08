@@ -1,3 +1,4 @@
+from platform_fixtures import process_exists
 from platform_fixtures import python_command, shell_join, editor_command
 """Real local workflow boundaries: durable identity, approval and cancellation."""
 import asyncio
@@ -37,7 +38,7 @@ class WorkflowFixture(unittest.IsolatedAsyncioTestCase):
         self.goals.task_store = self.tasks
         self.engine = PermissionEngine(self.root, rules={})
         (self.root / '.nailong').mkdir()
-        (self.root / 'source.py').write_text('value = 1\n')
+        (self.root / 'source.py').write_text('value = 1\n', newline='\n')
         self.steps = [{'name': 'test', 'kind': 'test', 'command': self.command('pass')}]
         self.configure(self.steps)
 
@@ -45,7 +46,7 @@ class WorkflowFixture(unittest.IsolatedAsyncioTestCase):
         return shell_join([sys.executable, '-B', '-c', body])
 
     def configure(self, steps):
-        (self.root / '.nailong/settings.json').write_text(json.dumps({'verification': {'steps': steps}}))
+        (self.root / '.nailong/settings.json').write_text(json.dumps({'verification': {'steps': steps}}), newline='\n')
 
     def begin(self, *, scope=None, objective='修复功能'):
         self.tasks.begin('thread', objective, scope=scope)
@@ -248,12 +249,12 @@ print(json.dumps(TaskStore(store).snapshot('thread'),ensure_ascii=False))
             with self.subTest(binding=bad):
                 damaged = copy.deepcopy(original)
                 next(row for row in damaged['acceptance'] if row['id'] == 'feature')['verification_binding'] = bad
-                path.write_text(json.dumps(damaged))
+                path.write_text(json.dumps(damaged), newline='\n')
                 before = path.read_bytes()
                 with self.assertRaises(ValueError):
                     TaskStore(self.store).snapshot('thread')
                 self.assertEqual(path.read_bytes(), before)
-        path.write_text(json.dumps(original))
+        path.write_text(json.dumps(original), newline='\n')
 
 
 class ApprovalBoundaryTests(WorkflowFixture):
@@ -316,7 +317,7 @@ class ApprovalBoundaryTests(WorkflowFixture):
         return result
 
     async def test_input_changed_during_async_approval_never_starts_process(self):
-        await self.changing_approval(lambda: (self.root / 'source.py').write_text('value = 2\n'))
+        await self.changing_approval(lambda: (self.root / 'source.py').write_text('value = 2\n', newline='\n'))
 
     async def test_configuration_changed_during_async_approval_never_starts_process(self):
         await self.changing_approval(lambda: self.configure([{**self.steps[0], 'timeout_seconds': 2}]))
@@ -403,8 +404,7 @@ class VerificationIdentityTests(WorkflowFixture):
             record = self.store.read_events('thread')[-1]['data']
             self.assertEqual(record['status'], 'cancelled')
             self.assertEqual(record['task_id'], original['task_id'])
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
+            self.assertFalse(process_exists(pid))
         finally:
             if not operation.done():
                 operation.cancel()
@@ -426,7 +426,7 @@ class VerificationIdentityTests(WorkflowFixture):
 
     async def test_narrow_binding_does_not_claim_uncovered_task_scope(self):
         self.begin(scope=['source.py', 'other.py'])
-        (self.root / 'other.py').write_text('other = 1\n')
+        (self.root / 'other.py').write_text('other = 1\n', newline='\n')
         self.tasks.add_acceptance('thread', 'feature', '功能正确', kind='test')
         self.tasks.bind_verification('thread', 'feature', 'test', ['source.py'])
         result = await self.verify()

@@ -350,14 +350,14 @@ class WindowsHandleTests(NativeFileBackendTests):
         backend = self.backend()
         directory = self.root / 'state'
         directory.mkdir()
-        real_replace = os.replace
+        from nailong.core._win32_files import publish_same_directory
         attempts = []
-        def replace(source, destination, *args, **kwargs):
+        def publish(handle, destination, *args, **kwargs):
             with self.assertRaises(OSError):
                 directory.rename(self.root / 'moved')
             attempts.append(True)
-            return real_replace(source, destination, *args, **kwargs)
-        with patch('nailong.core.safe_files.os.replace', side_effect=replace):
+            return publish_same_directory(handle, destination, *args, **kwargs)
+        with patch('nailong.core._win32_files.publish_same_directory', side_effect=publish):
             backend.atomic_write_bytes(directory / 'file', b'private')
         self.assertEqual(attempts, [True])
         self.assertEqual((directory / 'file').read_bytes(), b'private')
@@ -407,6 +407,42 @@ class WindowsHandleTests(NativeFileBackendTests):
         self.assertEqual(path.read_bytes(), b'original')
         self.assertTrue(path.stat().st_file_attributes & 1)
         self.assertEqual(self.dacl(path), original)
+
+    def test_project_write_preserves_protected_dacl_creation_time_and_hidden_attribute(self):
+        import ctypes
+        from ctypes import wintypes
+        from nailong.core._win32_files import (kernel, open_handle, CloseHandle,
+            information, GENERIC_WRITE)
+        backend = self.backend()
+        path = self.root / 'hidden.txt'
+        path.write_bytes(b'original')
+        backend.private_file_permissions(path)
+        set_time = kernel.SetFileTime
+        set_time.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME),
+                            ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME)]
+        set_time.restype = wintypes.BOOL
+        set_attrs = kernel.SetFileAttributesW
+        set_attrs.argtypes = [wintypes.LPCWSTR, wintypes.DWORD]
+        set_attrs.restype = wintypes.BOOL
+        created = wintypes.FILETIME(0, 0x1C00000)
+        handle = open_handle(path, access=GENERIC_WRITE)
+        try:
+            self.assertTrue(set_time(handle, ctypes.byref(created), None, None))
+        finally:
+            CloseHandle(handle)
+        self.assertTrue(set_attrs(str(path), 0x2 | 0x20))  # hidden, archive
+        original = self.dacl(path)
+        backend.atomic_write_bytes(path, b'updated', private=False)
+        self.assertEqual(path.read_bytes(), b'updated')
+        self.assertEqual(self.dacl(path), original)
+        handle = open_handle(path)
+        try:
+            actual = information(handle)
+            self.assertEqual((actual.created.dwLowDateTime, actual.created.dwHighDateTime),
+                             (0, 0x1C00000))
+            self.assertTrue(actual.attributes & 0x2)
+        finally:
+            CloseHandle(handle)
 
     def test_lock_pins_ancestors_while_lease_is_held(self):
         from nailong.core.file_locks import file_lock

@@ -30,7 +30,7 @@ class UnrestrictedServiceTests(unittest.IsolatedAsyncioTestCase):
         self.root = self.base / 'project'
         self.root.mkdir()
         self.external = self.base / 'external.py'
-        self.external.write_text('value = 1\n')
+        self.external.write_text('value = 1\n', newline='\n')
         self.factories = []
 
     async def asyncTearDown(self):
@@ -110,7 +110,7 @@ class UnrestrictedServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_full_review_reads_protected_file_without_project_task_registration(self):
         protected = self.root / '.env'
-        protected.write_text('DEMO_VALUE=1\n')
+        protected.write_text('DEMO_VALUE=1\n', newline='\n')
         service, factory = self.service([
             AIMessage(content='', tool_calls=[{'name': 'read_file',
                 'args': {'path': str(protected)}, 'id': 'read-protected'}]),

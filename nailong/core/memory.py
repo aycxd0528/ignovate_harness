@@ -212,7 +212,11 @@ class MemoryStore:
                 after = os.fstat(stream.fileno())
                 signature = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
                 revalidate()
-                current = path.stat(follow_symlinks=False)
+                # Windows CRT fstat and pathname stat expose different inode,
+                # device and timestamp fields. Compare like-for-like handles;
+                # the first stream still pins the file and every ancestor.
+                with open_regular_file(path) as current_stream:
+                    current = os.fstat(current_stream.fileno())
                 if signature(before) != signature(after) or signature(after) != signature(current):
                     raise ValueError('记忆或来源文件读取期间发生变化。')
                 if len(raw) > max_bytes:

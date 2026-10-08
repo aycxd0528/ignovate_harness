@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def checksums(directory: Path, files: list[Path]) -> None:
     (directory/'SHA256SUMS').write_text(''.join(
         f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n'
-        for path in sorted(files)), encoding='utf-8')
+        for path in sorted(files)), encoding='utf-8', newline='\n')
 
 
 def build_release(wheel: Path, output: Path) -> list[Path]:
@@ -47,7 +47,10 @@ def build_release(wheel: Path, output: Path) -> list[Path]:
         checksums(bundle, list(bundle.iterdir()))
         unix = output/f'ignovate-{version}-unix.tar.gz'
         with tarfile.open(unix, 'w:gz') as archive:
-            archive.add(bundle, arcname=bundle.name)
+            def portable_mode(info):
+                info.mode = 0o755 if info.isdir() or info.name.endswith(('/install.sh', '/launch.sh')) else 0o644
+                return info
+            archive.add(bundle, arcname=bundle.name, filter=portable_mode)
         windows = output/f'ignovate-{version}-windows.zip'
         with zipfile.ZipFile(windows, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
             for path in sorted(bundle.iterdir()):

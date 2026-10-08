@@ -124,7 +124,7 @@ asyncio.run(main())
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             project = root/'project'; project.mkdir()
-            result = subprocess.run([sys.executable, 'main.py', '--plain', '--project', str(project)],
+            result = subprocess.run([sys.executable, '-m', 'nailong.cli', '--plain', '--project', str(project)],
                 input='/help\n/exit\n', capture_output=True, text=True, encoding='utf-8', timeout=20,
                 env={**os.environ, 'DEEPSEEK_API_KEY': 'plain-fixture-key',
                      'DEEPSEEK_BASE_URL': 'https://api.invalid', 'DEEPSEEK_MODEL': 'deepseek-flash',

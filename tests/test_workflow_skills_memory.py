@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import hashlib
 import importlib
 import tempfile
@@ -10,7 +11,7 @@ from nailong.core.skills import SkillRegistry
 def skill(root,name,description='first'):
     path=root/name/'SKILL.md'
     path.parent.mkdir(parents=True,exist_ok=True)
-    path.write_text(f'---\nname: {name}\ndescription: {description}\n---\nbody {description}\n')
+    path.write_text(f'---\nname: {name}\ndescription: {description}\n---\nbody {description}\n', newline='\n')
     return path
 
 
@@ -22,16 +23,16 @@ class WorkflowSkillsMemoryTests(unittest.TestCase):
             reload=getattr(registry,'reload',None)
             self.assertTrue(callable(reload),'Skill hot reload is not implemented')
             path=skill(root/'.agents/skills','probe')
-            (root/'.agents/skills/SUPERPOWERS-LICENSE').write_text('license notice')
+            (root/'.agents/skills/SUPERPOWERS-LICENSE').write_text('license notice', newline='\n')
             bad=root/'.agents/skills/bad/SKILL.md'
             bad.parent.mkdir(parents=True)
-            bad.write_text('no frontmatter')
+            bad.write_text('no frontmatter', newline='\n')
             result=reload()
             self.assertIn('probe',result['added'])
             self.assertTrue(registry.diagnostics)
             self.assertIn('frontmatter',str(registry.diagnostics))
             self.assertNotIn('SUPERPOWERS-LICENSE',str(registry.diagnostics))
-            path.write_text(path.read_text().replace('first','second'))
+            path.write_text(path.read_text().replace('first','second'), newline='\n')
             self.assertIn('probe',reload()['changed'])
             self.assertIn('second',registry.catalog())
             path.unlink()
@@ -60,16 +61,16 @@ class WorkflowSkillsMemoryTests(unittest.TestCase):
             root=Path(directory)
             path=root/'.nailong/context.md'
             path.parent.mkdir()
-            path.write_text('original')
+            path.write_text('original', newline='\n')
             store=cls(root,user_file=root/'user/context.md')
             staged=store.stage('project','updated')
             self.assertEqual(path.read_text(),'original')
-            path.write_text('concurrent')
+            path.write_text('concurrent', newline='\n')
             with self.assertRaisesRegex(ValueError,'冲突'): store.commit(staged)
             self.assertEqual(path.read_text(),'concurrent')
             store.commit(store.stage('project','updated'))
             self.assertEqual(path.read_text(),'updated')
-            self.assertEqual(path.stat().st_mode & 0o777,0o600)
+            assert_private(self, path)
 
     def test_memory_scope_and_symlink_cannot_read_unrelated_files(self):
         try: cls=importlib.import_module('nailong.core.memory').MemoryStore
@@ -81,6 +82,6 @@ class WorkflowSkillsMemoryTests(unittest.TestCase):
             target=root/'.nailong/context.md'
             target.parent.mkdir()
             outside=root/'unrelated'
-            outside.write_text('unchanged')
+            outside.write_text('unchanged', newline='\n')
             target.symlink_to(outside)
             with self.assertRaises(ValueError): store.stage('project','text')

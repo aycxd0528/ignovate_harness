@@ -352,7 +352,7 @@ asyncio.run(main())
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name).resolve()
         target = root / "hello.txt"
-        target.write_text("before\n", encoding="utf-8")
+        target.write_text("before\n", encoding="utf-8", newline='\n')
         fake_model = ToolCallingFakeModel(
             responses=[file_read_request(), edit_request(), AIMessage(content="已修改。")]
         )
@@ -384,7 +384,7 @@ asyncio.run(main())
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name).resolve()
         target = root / "hello.txt"
-        target.write_text("before\n", encoding="utf-8")
+        target.write_text("before\n", encoding="utf-8", newline='\n')
         fake_model = ToolCallingFakeModel(
             responses=[file_read_request(), edit_request(), AIMessage(content="修改已拒绝。")]
         )
@@ -412,7 +412,7 @@ asyncio.run(main())
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name).resolve()
         target = root / "hello.txt"
-        target.write_text("before\n", encoding="utf-8")
+        target.write_text("before\n", encoding="utf-8", newline='\n')
         fake_model = ToolCallingFakeModel(
             responses=[
                 file_read_request(),

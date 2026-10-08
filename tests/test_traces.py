@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import importlib
 import json
 import stat
@@ -249,13 +250,13 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
     async def test_deny_rule_and_changed_approval_policy_leave_destination_untouched(self):
         settings = self.root / '.nailong/settings.json'
         settings.parent.mkdir()
-        settings.write_text(json.dumps({'permissions': {'deny': ['Write(trace.jsonl)']}}))
+        settings.write_text(json.dumps({'permissions': {'deny': ['Write(trace.jsonl)']}}), newline='\n')
         engine = PermissionEngine(self.root)
         result = await self.traces().export('one', 'trace.jsonl', approval=self.approve,
                                            permission_engine=engine)
         self.assertFalse(result['written'])
         self.assertFalse((self.root / 'trace.jsonl').exists())
-        settings.write_text('{}')
+        settings.write_text('{}', newline='\n')
         engine = PermissionEngine(self.root)
         async def change_policy(action, index, total):
             engine.add_rule('deny', 'Write(trace.jsonl)')
@@ -290,7 +291,7 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row['event_id'] for row in lines[1:]],
                          [row['event_id'] for row in report['events']])
         self.assertNotIn('RAW_', path.read_text())
-        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        assert_private(self, path)
         self.assertEqual(decisions[0]['name'], 'write_file')
         self.assertEqual(decisions[0]['preview']['event_count'], 3)
         self.assertIn('trace_manifest', decisions[0]['preview']['diff'])
@@ -339,9 +340,9 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_target_changed_during_approval_is_not_overwritten(self):
         destination = self.root / 'trace.jsonl'
-        destination.write_text('original')
+        destination.write_text('original', newline='\n')
         async def change(action, index, total):
-            destination.write_text('concurrent change')
+            destination.write_text('concurrent change', newline='\n')
             return 'approve_once'
         with self.assertRaises(ValueError):
             await self.traces().export('one', str(destination), approval=change)

@@ -28,11 +28,11 @@ class NativeToolsTests(unittest.TestCase):
         self.assertTrue(edit['ok'], edit)
         self.assertEqual(self.session.glob('nested/*.py')['files'], ['nested/你好.py'])
         self.assertTrue(self.session.read_file('nested/你好.py')['ok'])
-        (self.root/'nested/你好.py').write_text('externally changed', encoding='utf-8')
+        (self.root/'nested/你好.py').write_text('externally changed', encoding='utf-8', newline='\n')
         self.assertFalse(self.session.write_file('nested/你好.py', 'replacement')['ok'])
 
     def test_literal_and_native_ripgrep_regex(self):
-        (self.root/'hello.txt').write_text('你好 123\nnext\n', encoding='utf-8')
+        (self.root/'hello.txt').write_text('你好 123\nnext\n', encoding='utf-8', newline='\n')
         literal = self.session.search_text('你好')
         self.assertTrue(literal['ok'], literal)
         self.assertTrue(literal['matches'], literal)
@@ -46,7 +46,7 @@ class NativeToolsTests(unittest.TestCase):
             self.assertFalse(self.session.read_file(path)['ok'], path)
         outside = self.root/'outside'
         outside.mkdir()
-        (outside/'hidden.txt').write_text('hidden', encoding='utf-8')
+        (outside/'hidden.txt').write_text('hidden', encoding='utf-8', newline='\n')
         junction = self.root/'linked'
         subprocess.run(['cmd.exe','/d','/c','mklink','/J',str(junction),str(outside)], check=True,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -59,7 +59,7 @@ class NativeToolsTests(unittest.TestCase):
         atomic_json(config, {'theme':'light'}, self.root)
         self.assertEqual(read_config(config, self.root), {'theme':'light'})
         target = self.root/'readonly.txt'
-        target.write_text('original', encoding='utf-8')
+        target.write_text('original', encoding='utf-8', newline='\n')
         self.assertTrue(self.session.read_file('readonly.txt')['ok'])
         target.chmod(0o444)
         self.addCleanup(lambda: target.chmod(0o666))

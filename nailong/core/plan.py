@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from nailong.core.process_io import OwnedProcess, command_environment, join_cleanup, split_editor_command
+from nailong.core.safe_files import atomic_write_bytes, private_file_permissions
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,9 @@ class PlanStore:
             raise ValueError("计划不能超过 80,000 个字符。")
 
         plans_dir = self.project_root / ".nailong" / "plans"
+        if os.name == 'nt':
+            from nailong.core.preferences import safe_config_path
+            safe_config_path(plans_dir, self.project_root)
         plans_dir.mkdir(parents=True, exist_ok=True)
         resolved_dir = plans_dir.resolve(strict=True)
         if not resolved_dir.is_relative_to(self.project_root):
@@ -63,6 +67,10 @@ class PlanStore:
             raise ValueError("计划目录不能指向密钥或项目内部目录。")
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         path = resolved_dir / f"{stamp}-{plan_id[:12]}.md"
+        if os.name == 'nt':
+            atomic_write_bytes(path, content.encode('utf-8'), replace=False)
+            self._pending.pop(plan_id, None)
+            return ApprovedPlan(plan_id, path, content)
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         descriptor = os.open(path, flags, 0o600)
         try:
@@ -92,6 +100,8 @@ def edit_plan_with_editor(markdown: str, *, editor: str | None = None) -> str:
     owner = None
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            if os.name == 'nt':
+                private_file_permissions(path)
             output.write(markdown)
         if os.name == 'nt':
             owner = OwnedProcess([*command, str(path)], env=command_environment())
@@ -123,6 +133,8 @@ async def edit_plan_with_editor_async(markdown: str) -> str:
     cancelled = False
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as output:
+            if os.name == 'nt':
+                private_file_permissions(path)
             output.write(markdown)
         owner = OwnedProcess([*command, str(path)], env=command_environment())
         while owner.process.poll() is None:

@@ -26,7 +26,7 @@ class SkillRegistryTests(unittest.TestCase):
         (skill / "SKILL.md").write_text(
             f"---\nname: {name}\ndescription: Review source files.\n---\n\n{body}\n",
             encoding="utf-8",
-        )
+         newline='\n')
         return skill
 
     def registry(self):
@@ -47,8 +47,8 @@ class SkillRegistryTests(unittest.TestCase):
     def test_resource_read_stays_inside_skill_and_blocks_protected_paths(self):
         skill = self.write_skill(self.project / ".agents" / "skills", "review-code", "body")
         (skill / "references").mkdir()
-        (skill / "references" / "guide.md").write_text("safe reference", encoding="utf-8")
-        (skill / ".env").write_text("private", encoding="utf-8")
+        (skill / "references" / "guide.md").write_text("safe reference", encoding="utf-8", newline='\n')
+        (skill / ".env").write_text("private", encoding="utf-8", newline='\n')
         (skill / "references" / "linked.md").symlink_to(skill / ".env")
         registry = self.registry()
 

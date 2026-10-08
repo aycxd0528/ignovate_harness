@@ -1,5 +1,5 @@
-from platform_fixtures import python_command, shell_join, editor_command
 """Local execution-boundary contracts; no model/provider calls are made."""
+from platform_fixtures import assert_private, editor_command, kill_process_if_alive, process_exists, python_command, shell_join
 
 import asyncio
 import json
@@ -33,7 +33,7 @@ class Workspace:
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
         self.session = FileSession(self.root)
-        (self.root / 'sample.txt').write_text('before\nsecond\n', encoding='utf-8')
+        (self.root / 'sample.txt').write_text('before\nsecond\n', encoding='utf-8', newline='\n')
         self.observations = []
         self.engine = PermissionEngine(self.root, rules={})
         self.execution = ToolExecutionContext(self.root, permission_engine=self.engine,
@@ -117,7 +117,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.assertNotEqual(second['arguments_digest'], self.observations[-1]['arguments_digest'])
 
     def test_observation_hash_of_bounded_result_does_not_depend_on_new_archive_reference(self):
-        (self.root / 'sample.txt').write_text('"' * 10000)
+        (self.root / 'sample.txt').write_text('"' * 10000, newline='\n')
         first = self.body(self.call('read_file', {'path': 'sample.txt'}, call_id='first-id'))
         first_observation = self.observations[-1]
         second = self.body(self.call('read_file', {'path': 'sample.txt'}, call_id='second-id'))
@@ -249,14 +249,14 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.call('read_file', {'path': 'sample.txt', 'offset': 2})
         result = self.body(self.call('write_file', {'path': 'sample.txt', 'content': 'bad'}))
         self.assertEqual(result['error_code'], 'read_required')
-        (self.root / 'sample.txt').write_text('changed\nsecond\n')
+        (self.root / 'sample.txt').write_text('changed\nsecond\n', newline='\n')
         self.call('read_file', {'path': 'sample.txt', 'offset': 2})
         result = self.body(self.call('write_file', {'path': 'sample.txt', 'content': 'bad'}))
         self.assertEqual(result['error_code'], 'read_required')
         self.assertEqual((self.root / 'sample.txt').read_text(), 'changed\nsecond\n')
 
     def test_content_offset_is_absolute_for_unicode_line_and_empty_selection(self):
-        (self.root / 'sample.txt').write_text('甲乙\n丙丁戊\n尾')
+        (self.root / 'sample.txt').write_text('甲乙\n丙丁戊\n尾', newline='\n')
         result = self.body(self.call('read_file', {'path': 'sample.txt', 'offset': 2, 'char_offset': 1, 'max_chars': 2}))
         self.assertEqual((result['content'], result['content_offset']), ('丁戊', 4))
         beyond = self.body(self.call('read_file', {'path': 'sample.txt', 'offset': 20}))
@@ -267,7 +267,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
 
     def test_json_budget_clipping_revokes_full_read(self):
         self.engine.add_rule('allow', 'Write(*)')
-        (self.root / 'sample.txt').write_text('"' * 10000)
+        (self.root / 'sample.txt').write_text('"' * 10000, newline='\n')
         page = self.body(self.call('read_file', {'path': 'sample.txt'}))
         self.assertTrue(page['result_truncated'])
         self.assertFalse(page['read_complete'])
@@ -277,7 +277,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
     def test_approval_time_external_change_cannot_be_overwritten(self):
         self.call('read_file', {'path': 'sample.txt'})
         def approve(action, permission):
-            (self.root / 'sample.txt').write_text('external user edit')
+            (self.root / 'sample.txt').write_text('external user edit', newline='\n')
             self.session.read_file('sample.txt')
             return {'type': 'approve'}
         self.execution.approval_handler = approve
@@ -290,7 +290,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.execution.approval_handler = lambda *args: (_ for _ in ()).throw(GraphInterrupt(()))
         with self.assertRaises(GraphInterrupt):
             self.call('write_file', {'path': 'sample.txt', 'content': 'bad'}, call_id='pending')
-        (self.root / 'sample.txt').write_text('external after interrupt')
+        (self.root / 'sample.txt').write_text('external after interrupt', newline='\n')
         self.call('read_file', {'path': 'sample.txt'}, call_id='reread')
         self.execution.approval_handler = lambda *args: {'type': 'approve'}
         entered = self.spy('write_file')
@@ -301,7 +301,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
 
     def test_new_target_appearing_during_approval_is_preserved(self):
         def approve(*args):
-            (self.root / 'new.txt').write_text('user created')
+            (self.root / 'new.txt').write_text('user created', newline='\n')
             return 'approve_once'
         self.execution.approval_handler = approve
         result = self.body(self.call('write_file', {'path': 'new.txt', 'content': 'bad'}))
@@ -320,8 +320,8 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.assertEqual(approvals, [])
 
     def test_candidate_read_denies_apply_to_listing_glob_and_literal_search(self):
-        (self.root / 'blocked.txt').write_text('secret needle')
-        (self.root / 'allowed.txt').write_text('visible needle')
+        (self.root / 'blocked.txt').write_text('secret needle', newline='\n')
+        (self.root / 'allowed.txt').write_text('visible needle', newline='\n')
         self.engine.add_rule('deny', 'Read(blocked.txt)')
         for name, args in (('list_files', {}), ('glob', {'pattern': '*.txt'}),
                            ('search_text', {'query': 'needle'}),
@@ -335,7 +335,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
                 self.assertNotIn('secret needle', json.dumps(result))
 
     def test_review_selected_file_listing_obeys_individual_permissions(self):
-        (self.root / 'blocked.txt').write_text('secret')
+        (self.root / 'blocked.txt').write_text('secret', newline='\n')
         self.engine.add_rule('deny', 'Read(blocked.txt)')
         review = self.make_tools('review', target_path='.', review_paths=frozenset({'blocked.txt', 'sample.txt'}))
         result = self.body(self.call('list_files', {}, tools=review))
@@ -343,7 +343,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.assertEqual(result['coverage'], 'partial')
 
     def test_candidate_ask_is_skipped_without_requesting_broad_approval(self):
-        (self.root / 'ask.txt').write_text('pending needle')
+        (self.root / 'ask.txt').write_text('pending needle', newline='\n')
         self.engine.add_rule('ask', 'Read(ask.txt)')
         approvals = []
         self.execution.approval_handler = lambda *args: approvals.append(args) or 'approve_once'
@@ -358,7 +358,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.call('read_file', {'path': 'sample.txt'})
         def approve(*args):
             alternate = self.root / 'replacement.txt'
-            alternate.write_text('before\nsecond\n')
+            alternate.write_text('before\nsecond\n', newline='\n')
             alternate.replace(self.root / 'sample.txt')
             return 'approve_once'
         self.execution.approval_handler = approve
@@ -379,8 +379,8 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
 
     @unittest.skipUnless(shutil.which('rg'), 'ripgrep executable unavailable')
     def test_real_regex_search_filters_denied_files_and_bounds_context(self):
-        (self.root / 'blocked.txt').write_text('SECRET needle42')
-        (self.root / 'allowed.txt').write_text('x' * 5000 + '\nneedle42\n' + 'y' * 5000)
+        (self.root / 'blocked.txt').write_text('SECRET needle42', newline='\n')
+        (self.root / 'allowed.txt').write_text('x' * 5000 + '\nneedle42\n' + 'y' * 5000, newline='\n')
         self.engine.add_rule('deny', 'Read(blocked.txt)')
         result = self.body(self.call('grep', {'pattern': r'needle\d+', 'context': 1}))
         self.assertTrue(result['ok'])
@@ -391,7 +391,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.assertLess(len(json.dumps(result)), 5000)
 
     def test_oversized_search_file_is_reported_as_partial_zero_match(self):
-        (self.root / 'large.txt').write_text('needle' + 'x' * 200001)
+        (self.root / 'large.txt').write_text('needle' + 'x' * 200001, newline='\n')
         result = self.body(self.call('search_text', {'query': 'needle'}))
         self.assertEqual(result['matches'], [])
         self.assertEqual(result['coverage'], 'partial')
@@ -400,7 +400,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
 
     def test_tool_result_paging_does_not_restore_full_read_eligibility(self):
         self.engine.add_rule('allow', 'Write(*)')
-        (self.root / 'sample.txt').write_text('"' * 10000)
+        (self.root / 'sample.txt').write_text('"' * 10000, newline='\n')
         clipped = self.body(self.call('read_file', {'path': 'sample.txt'}))
         self.assertTrue(clipped['result_truncated'])
         reference = clipped['reference']
@@ -465,7 +465,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
 
     def test_real_sync_command_failure_has_error_message_status(self):
         self.execution.approval_handler = lambda *args: 'approve_once'
-        message = self.call('run_command', {'command': "printf 'diagnostic'; exit 7"})
+        message = self.call('run_command', {'command': python_command("print('diagnostic'); raise SystemExit(7)")})
         result = self.body(message)
         self.assertEqual(message.status, 'error')
         self.assertEqual(result['exit_code'], 7)
@@ -510,7 +510,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
         self.assertFalse(ResultArchive().read(reference)['ok'])
         self.assertFalse(archive.read(reference, -1)['ok'])
         self.assertFalse(archive.read(reference, 0, 6001)['ok'])
-        self.assertEqual(os.stat(self.root / 'paged' / (reference + '.json')).st_mode & 0o777, 0o600)
+        assert_private(self, self.root / 'paged' / (reference + '.json'))
 
     def test_dynamic_read_metadata_is_honored_in_plan_mode(self):
         class Memory:
@@ -584,7 +584,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
         self.execution.approval_handler = approve
         operation = asyncio.create_task(self.acall('write_file', {'path': 'sample.txt', 'content': 'bad'}))
         await asyncio.wait_for(pending.wait(), 2)
-        (self.root / 'sample.txt').write_text('changed during async approval')
+        (self.root / 'sample.txt').write_text('changed during async approval', newline='\n')
         await self.acall('read_file', {'path': 'sample.txt'}, call_id='new-read')
         release.set()
         result = self.body(await asyncio.wait_for(operation, 2))
@@ -597,7 +597,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
         entered = asyncio.Event()
         release = asyncio.Event()
         async def process(command, cwd, *, timeout):
-            (self.root / 'command.txt').write_text('command entered')
+            (self.root / 'command.txt').write_text('command entered', newline='\n')
             entered.set()
             await release.wait()
             return {'ok': True, 'exit_code': 0, 'output': 'done', 'timed_out': False, 'output_truncated': False}
@@ -618,7 +618,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
         async with coordinator.async_scope():
             async def wait_for_gate():
                 async with coordinator.async_scope():
-                    (self.root / 'bad.txt').write_text('should not happen')
+                    (self.root / 'bad.txt').write_text('should not happen', newline='\n')
             waiter = asyncio.create_task(wait_for_gate())
             await asyncio.sleep(.02)
             waiter.cancel()
@@ -637,7 +637,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
             started.set()
             if not release.wait(2):
                 raise RuntimeError('test release timed out')
-            (self.root / 'worker-finished.txt').write_text('completed once')
+            (self.root / 'worker-finished.txt').write_text('completed once', newline='\n')
             finished.set()
             return {'ok': True}
         self.tools['read_file'].spec = replace(self.tools['read_file'].spec, handler=handler)
@@ -678,7 +678,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
 
     async def test_real_async_command_failure_has_error_toolmessage(self):
         self.execution.approval_handler = lambda *args: 'approve_once'
-        message = await self.acall('run_command', {'command': "printf 'async diagnostic'; exit 9"})
+        message = await self.acall('run_command', {'command': python_command("print('async diagnostic'); raise SystemExit(9)")})
         result = self.body(message)
         self.assertEqual(message.status, 'error')
         self.assertEqual(result['exit_code'], 9)
@@ -699,8 +699,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
             operation.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await asyncio.wait_for(operation, 2)
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
+            self.assertFalse(process_exists(pid))
             await asyncio.sleep(.45)
             self.assertFalse((self.root / 'late').exists())
             self.assertEqual(self.observations[-1]['status'], 'interrupted')

@@ -91,6 +91,12 @@ class ProjectSessionStore:
         return self.sessions_dir / f"{thread_id}.jsonl"
 
     def ensure_directories(self) -> None:
+        if os.name == 'nt':
+            from nailong.core.safe_files import pinned_directory, private_directory_permissions
+            for directory in (self.root, self.sessions_dir):
+                with pinned_directory(directory, create=True):
+                    private_directory_permissions(directory)
+            return
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.sessions_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:

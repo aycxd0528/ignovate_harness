@@ -1,3 +1,4 @@
+from platform_fixtures import process_exists
 import asyncio
 import importlib
 import json
@@ -73,8 +74,7 @@ class MCPClientTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(asyncio.CancelledError):
             await call
         self.assertEqual(self.manager.tools('local'), ())
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
+        self.assertFalse(process_exists(pid))
 
     async def test_timeout_closes_connection_without_call_replay(self):
         self.store.add('short', {'transport': 'stdio', 'command': sys.executable,

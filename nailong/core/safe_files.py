@@ -121,6 +121,40 @@ def private_directory_permissions(path):
         os.chmod(path, 0o700, follow_symlinks=False)
 
 
+def _atomic_write_windows(path, data, temporary, *, replace, private):
+    import msvcrt
+    from nailong.core._win32_files import (open_handle, private_security, GENERIC_WRITE,
+        DELETE, WRITE_DAC, CREATE_NEW, CloseHandle, copy_project_metadata, publish_same_directory)
+    target = path.parent / temporary
+    with private_security() if private else nullcontext() as attributes:
+        handle = open_handle(target, access=GENERIC_WRITE | DELETE | WRITE_DAC,
+                             creation=CREATE_NEW, attributes=attributes)
+    try:
+        descriptor = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+    except BaseException:
+        CloseHandle(handle)
+        target.unlink(missing_ok=True)
+        raise
+    try:
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+            publish_replace = replace
+            if replace and not private:
+                try:
+                    copy_project_metadata(handle, path)
+                except FileNotFoundError:
+                    # A new project file inherits its parent's DACL. Preserve
+                    # any destination that appears after the existence check.
+                    publish_replace = False
+            # Keep this DELETE-capable handle alive through publication. The
+            # simple name lets NT rename within its original pinned directory.
+            publish_same_directory(handle, path.name, replace=publish_replace)
+    finally:
+        target.unlink(missing_ok=True)
+
+
 def atomic_write_bytes(path, data, *, replace=True, private=True):
     """Publish flushed bytes under pinned parents; project edits preserve ACLs."""
     path = _path(path)
@@ -129,60 +163,30 @@ def atomic_write_bytes(path, data, *, replace=True, private=True):
         if is_link_or_reparse(path):
             raise ValueError('安全文件写入不能替换符号链接或重解析点。')
         if os.name == 'nt':
-            import msvcrt
-            from nailong.core._win32_files import (open_handle, private_security, GENERIC_WRITE,
-                                                  CREATE_NEW, CloseHandle)
-            target = path.parent / temporary
-            with private_security() if private else nullcontext() as attributes:
-                handle = open_handle(target, access=GENERIC_WRITE, creation=CREATE_NEW, attributes=attributes)
+            _atomic_write_windows(path, data, temporary, replace=replace, private=private)
+            return
+        existing_mode = None
+        if not private:
             try:
-                descriptor = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
-            except BaseException:
-                CloseHandle(handle)
-                raise
-        else:
-            existing_mode = None
-            if not private:
-                try:
-                    existing_mode = stat.S_IMODE(os.stat(path.name, dir_fd=directory, follow_symlinks=False).st_mode)
-                except FileNotFoundError:
-                    pass
-            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                                 0o600 if private else 0o666, dir_fd=directory)
+                existing_mode = stat.S_IMODE(os.stat(path.name, dir_fd=directory, follow_symlinks=False).st_mode)
+            except FileNotFoundError:
+                pass
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600 if private else 0o666, dir_fd=directory)
         try:
             with os.fdopen(descriptor, 'wb') as stream:
                 stream.write(data)
                 stream.flush()
                 os.fsync(stream.fileno())
-                if os.name != 'nt' and existing_mode is not None:
+                if existing_mode is not None:
                     os.fchmod(stream.fileno(), existing_mode)
-            if os.name == 'nt':
-                if replace:
-                    if not private and path.exists():
-                        if path.stat(follow_symlinks=False).st_file_attributes & 1:
-                            raise PermissionError('项目文件为只读文件，保留原文件和权限。')
-                        from nailong.core._win32_files import replace_project_file
-                        replace_project_file(target, path)
-                    elif private:
-                        os.replace(target, path)
-                    else:
-                        # A new project file inherits its parent's ACL. Do not
-                        # overwrite a file that appeared after the existence check.
-                        os.rename(target, path)
-                else:
-                    # Windows rename fails if destination exists; no overwrite race.
-                    os.rename(target, path)
-            elif replace:
+            if replace:
                 os.replace(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory)
             else:
                 os.link(temporary, path.name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
-            if os.name != 'nt':
-                os.fsync(directory)
+            os.fsync(directory)
         finally:
-            if os.name == 'nt':
-                target.unlink(missing_ok=True)
-            else:
-                try:
-                    os.unlink(temporary, dir_fd=directory)
-                except FileNotFoundError:
-                    pass
+            try:
+                os.unlink(temporary, dir_fd=directory)
+            except FileNotFoundError:
+                pass

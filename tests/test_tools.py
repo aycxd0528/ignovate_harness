@@ -76,7 +76,7 @@ class LangChainToolsTests(unittest.TestCase):
         )
 
     def test_tool_result_is_json_and_preserves_chinese_text(self):
-        (self.root / 'notes.txt').write_text('中文内容', encoding='utf-8')
+        (self.root / 'notes.txt').write_text('中文内容', encoding='utf-8', newline='\n')
         result = self.build()['read_file'].invoke({'path': 'notes.txt'})
         payload = json.loads(result)
         self.assertTrue(payload['ok'])
@@ -112,7 +112,7 @@ class LangChainToolsTests(unittest.TestCase):
             context_dir = root / ".nailong"
             context_dir.mkdir()
             readme = root / "README.md"
-            readme.write_text("keep this file", encoding="utf-8")
+            readme.write_text("keep this file", encoding="utf-8", newline='\n')
             (context_dir / "context.md").symlink_to(readme)
 
             write_tool = self.build(profile='init', approved=True, file_session=FileSession(root))['write_file']
@@ -126,7 +126,7 @@ class LangChainToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             readme = root / "README.md"
-            readme.write_text("keep this file", encoding="utf-8")
+            readme.write_text("keep this file", encoding="utf-8", newline='\n')
             (root / ".env").symlink_to(readme)
 
             write_tool = self.build(approved=True, file_session=FileSession(root))['write_file']
@@ -140,7 +140,7 @@ class LangChainToolsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
             for index in range(21):
-                (root / f"file-{index:02}.py").write_text("print('ok')\n")
+                (root / f"file-{index:02}.py").write_text("print('ok')\n", newline='\n')
 
             tools = self.build(profile='review', target_path='.', file_session=FileSession(root))
             self.assertEqual(set(tools), {'list_files', 'read_file', 'read_tool_result'})
@@ -161,8 +161,8 @@ class LangChainToolsTests(unittest.TestCase):
             outside = root / "other"
             target.mkdir()
             outside.mkdir()
-            (target / "safe.py").write_text("pass\n")
-            (outside / "private.py").write_text("secret\n")
+            (target / "safe.py").write_text("pass\n", newline='\n')
+            (outside / "private.py").write_text("secret\n", newline='\n')
 
             tools = self.build(profile='review', target_path='review-me', file_session=FileSession(root))
             result = json.loads(tools['read_file'].invoke({'path': 'other/private.py'}))
@@ -180,7 +180,7 @@ class LangChainToolsTests(unittest.TestCase):
 
     def test_approved_existing_file_overwrite_requires_complete_read_first(self):
         target = self.root / 'existing.txt'
-        target.write_text('keep this original')
+        target.write_text('keep this original', newline='\n')
         tools = self.build(approved=True)
         unread = json.loads(tools['write_file'].invoke({'path': 'existing.txt', 'content': 'bad'}))
         self.assertEqual(unread['error_code'], 'read_required')
@@ -201,7 +201,7 @@ class LangChainToolsTests(unittest.TestCase):
         second = self.root / 'second-project'
         for root, content in ((first, 'first marker'), (second, 'second marker')):
             root.mkdir()
-            (root / 'identity.txt').write_text(content)
+            (root / 'identity.txt').write_text(content, newline='\n')
         original_root = local_tools.selected_project_root()
         original_global = local_tools.PROJECT_ROOT
         ready = threading.Barrier(2)

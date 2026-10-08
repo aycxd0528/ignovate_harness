@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import asyncio
 import json
 import os
@@ -28,7 +29,7 @@ class ModelPreferenceTests(unittest.TestCase):
         path = self.store.local_path
         path.parent.mkdir()
         path.write_text(json.dumps({'theme': 'light', 'permissions': {'allow': ['read_file']},
-                                   'models': {'fast': {'model': 'existing-model'}}}))
+                                   'models': {'fast': {'model': 'existing-model'}}}), newline='\n')
         result = self.store.add_model('pro', 'new-model')
         self.assertEqual(result['model_name'], 'pro')
         self.assertEqual(result['model'], 'new-model')
@@ -36,7 +37,7 @@ class ModelPreferenceTests(unittest.TestCase):
         self.assertEqual(saved['permissions'], {'allow': ['read_file']})
         self.assertEqual(saved['models'], {'fast': {'model': 'existing-model'}, 'pro': {'model': 'new-model'}})
         self.assertEqual(saved['model'], 'pro')
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        assert_private(self, path)
         restarted = PreferenceStore(self.root, user_path=self.store.user_path)
         self.assertEqual(restarted.effective()['model'], 'new-model')
 

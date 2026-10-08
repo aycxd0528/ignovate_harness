@@ -76,7 +76,7 @@ def use_file_access(root: Path, *, unrestricted: bool = False):
 
 def display_file_path(path: Path, root: Path | None = None) -> str:
     root = Path(root or selected_project_root()).resolve()
-    return path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
+    return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
 
 
 def open_regular_file(path: Path, *, binary: bool = True):

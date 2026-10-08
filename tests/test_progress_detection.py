@@ -172,8 +172,8 @@ class ToolObservationCycleTests(unittest.TestCase):
         self.assertTrue(json.loads(message.content)['ok'])
 
     def test_real_two_file_read_observations_pause_task_before_final_tool_returns(self):
-        (self.root / 'a.py').write_text('alpha\n')
-        (self.root / 'b.py').write_text('beta\n')
+        (self.root / 'a.py').write_text('alpha\n', newline='\n')
+        (self.root / 'b.py').write_text('beta\n', newline='\n')
         for index, path in enumerate(['a.py', 'b.py'] * 4):
             self.call({'path': path}, index)
             if index < 7:
@@ -183,7 +183,7 @@ class ToolObservationCycleTests(unittest.TestCase):
         self.assertEqual(self.decisions[-1]['repeats'], 8)
 
     def test_real_new_pages_keep_task_active(self):
-        (self.root / 'pages.py').write_text('line\n' * 30)
+        (self.root / 'pages.py').write_text('line\n' * 30, newline='\n')
         for index in range(20):
             self.call({'path': 'pages.py', 'offset': index + 1, 'limit': 1}, index)
         self.assertEqual(self.tasks.snapshot('owner')['lifecycle'], 'active')

@@ -205,8 +205,8 @@ class ChildRuntimeBudgetTests(unittest.IsolatedAsyncioTestCase):
                         "output_tokens": 126, "total_tokens": 3971})
                 return ChatResult(generations=[ChatGeneration(message=message)])
 
-        (self.root / "README.md").write_text("Tiny calculator entry: calc.py")
-        (self.root / "calc.py").write_text("def add(a,b): return a+b")
+        (self.root / "README.md").write_text("Tiny calculator entry: calc.py", newline='\n')
+        (self.root / "calc.py").write_text("def add(a,b): return a+b", newline='\n')
         model = ReadThenAnswer(responses=[])
         self.factory.model = model
         replies = await asyncio.wait_for(asyncio.gather(
@@ -222,7 +222,7 @@ class ChildRuntimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["reserved_tokens"], 0)
 
     async def test_large_read_keeps_a_bounded_tools_disabled_final_answer(self):
-        (self.root / "probe.txt").write_text("visible evidence\n" + "x" * 20000)
+        (self.root / "probe.txt").write_text("visible evidence\n" + "x" * 20000, newline='\n')
         model = RecordingModel(responses=[
             paid_response("", tool_calls=[{"name": "read_file", "args": {"path": "probe.txt"}, "id": "r"}]),
             paid_response("部分读取：visible evidence，未核实其余内容。"),
@@ -240,7 +240,7 @@ class ChildRuntimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runner.remaining_budget("finish"), 19780)
 
     async def test_tools_returned_in_bounded_final_are_charged_and_never_executed(self):
-        (self.root / 'probe.txt').write_text('x' * 20000)
+        (self.root / 'probe.txt').write_text('x' * 20000, newline='\n')
         model = RecordingModel(responses=[
             paid_response('', tool_calls=[{'name': 'read_file', 'args': {'path': 'probe.txt'}, 'id': 'first'}]),
             paid_response('', tool_calls=[{'name': 'read_file', 'args': {'path': 'must-not-read.txt'}, 'id': 'late'}]),

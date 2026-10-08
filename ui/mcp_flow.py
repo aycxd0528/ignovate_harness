@@ -1,5 +1,5 @@
 """Shared, local slash-command flow for project MCP services."""
-import shlex
+from ui.arguments import split_arguments
 
 from ui.actions import CommandResult
 
@@ -9,7 +9,7 @@ USAGE = ('用法：/mcp [list | add <名称> --transport http <URL> | '
 
 
 async def execute_mcp(argument, manager, *, permission_mode='default'):
-    args = shlex.split(argument)
+    args = split_arguments(argument)
     operation = args[0] if args else 'list'
     if operation == 'list' and len(args) <= 1:
         servers = manager.store.list_servers()
