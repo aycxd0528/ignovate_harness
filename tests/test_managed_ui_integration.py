@@ -114,8 +114,13 @@ class ManagedUiIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn('调查已暂停', text)
                 self.assertNotIn('队列输入已执行', text)
                 app._dispatch('/queue resume')
-                await pilot.pause()
-                await app.session_runner.wait_idle()
+                async def resumed_reply():
+                    while True:
+                        await pilot.pause()
+                        text='\n'.join(line.text for line in app.query_one('#transcript',RichLog).lines)
+                        if app.session_runner.state=='idle' and '队列输入已执行' in text:
+                            return
+                await asyncio.wait_for(resumed_reply(),3)
                 self.assertEqual(app.session_runner.state, 'idle')
                 self.assertEqual(app.session_runner.queue, [])
                 text = '\n'.join(line.text for line in app.query_one('#transcript', RichLog).lines)

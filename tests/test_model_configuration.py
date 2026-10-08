@@ -203,6 +203,45 @@ class ModelPromptTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ModelTextualTests(unittest.IsolatedAsyncioTestCase):
+    async def wait_for_condition(self, pilot, condition, description):
+        async def ready():
+            while True:
+                await pilot.pause()
+                if condition():
+                    return
+        try:
+            await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for {description}; '
+                      f'focus={getattr(pilot.app.focused, "id", None)!r}, '
+                      f'panel={pilot.app._interaction_panel!r}')
+
+    async def wait_for_target(self, pilot, selector, *, focus_id):
+        from textual.errors import NoWidget
+        def ready():
+            matches = pilot.app.query(selector)
+            if not matches:
+                return False
+            target = matches[0]
+            if (not target.is_attached or target.content_region.width <= 0
+                    or target.content_region.height <= 0
+                    or target.disabled or target.has_class('-active')
+                    or getattr(pilot.app.focused, 'id', None) != focus_id):
+                return False
+            try:
+                hit, _ = pilot.app.get_widget_at(*target.region.offset)
+            except NoWidget:
+                return False
+            return hit is target
+        await self.wait_for_condition(pilot, ready, f'visible {selector} with focus {focus_id}')
+
+    async def wait_for_composer(self, pilot):
+        composer = pilot.app.query_one('#composer')
+        await self.wait_for_condition(pilot,
+            lambda: (pilot.app._interaction_panel is None and not composer.disabled
+                     and pilot.app.focused is composer),
+            'the model panel to close and restore composer focus')
+
     async def test_model_menu_add_and_escape_preserve_thread(self):
         from agent import AgentRuntimeFactory
         from agent_service import AgentService
@@ -218,27 +257,31 @@ class ModelTextualTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 24)) as pilot:
                 thread = app.thread_id
                 app._dispatch('/model')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
                 self.assertIsInstance(app._interaction_panel, ModelScreen)
                 self.assertTrue(await pilot.click('#model-add'))
+                await self.wait_for_target(pilot, '#model-save', focus_id='model-name')
                 app.query_one('#model-name', Input).value = 'pro'
                 app.query_one('#model-id', Input).value = 'new-model'
                 self.assertTrue(await pilot.click('#model-save'))
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
                 self.assertEqual(app.settings.model, 'new-model')
                 self.assertEqual(app.thread_id, thread)
                 before = factory.preferences.local_path.read_bytes()
                 app._dispatch('/model')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-options', focus_id='model-options')
                 await pilot.press('escape')
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
                 self.assertEqual(factory.preferences.local_path.read_bytes(), before)
                 self.assertEqual(app.thread_id, thread)
                 app._dispatch('/model')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-options', focus_id='model-options')
                 app.query_one('#model-options', OptionList).highlighted = 0
                 await pilot.press('enter')
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
                 self.assertEqual(app.settings.model, 'deepseek-flash')
                 self.assertEqual(app.thread_id, thread)
 
@@ -251,15 +294,21 @@ class ModelTextualTests(unittest.IsolatedAsyncioTestCase):
             app = TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None), settings)
             async with app.run_test(size=(60, 18)) as pilot:
                 app._dispatch('/model add')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-save', focus_id='model-name')
                 self.assertIsInstance(app._interaction_panel, ModelScreen)
                 app.query_one('#model-name', Input).value = 'default'
                 app.query_one('#model-id', Input).value = 'new-model'
                 self.assertTrue(await pilot.click('#model-save'))
+                await self.wait_for_condition(pilot,
+                    lambda: (app.query_one('#model-error', Static).display
+                             and 'default' in str(app.query_one('#model-error', Static).content)
+                             and getattr(app.focused, 'id', None) == 'model-name'),
+                    'duplicate model validation to show its message and preserve form focus')
                 self.assertIn('default', str(app.query_one('#model-error', Static).content))
                 self.assertFalse(app.actions.preferences.local_path.exists())
                 await pilot.press('escape')
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
                 self.assertFalse(app.actions.preferences.local_path.exists())
 
 
