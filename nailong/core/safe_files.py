@@ -124,9 +124,19 @@ def private_directory_permissions(path):
 def _atomic_write_windows(path, data, temporary, *, replace, private):
     import msvcrt
     from nailong.core._win32_files import (open_handle, private_security, GENERIC_WRITE,
-        DELETE, WRITE_DAC, CREATE_NEW, CloseHandle, copy_project_metadata, publish_same_directory)
+        DELETE, WRITE_DAC, CREATE_NEW, CloseHandle, copy_project_metadata,
+        publish_same_directory, discard_on_close)
     target = path.parent / temporary
-    with private_security() if private else nullcontext() as attributes:
+    existing_project = False
+    if replace and not private:
+        try:
+            path.stat(follow_symlinks=False)
+            existing_project = True
+        except FileNotFoundError:
+            pass
+    # An inherited reader can retain access after a later ACL change. Existing
+    # project replacements therefore start private, before any handle exists.
+    with private_security() if private or existing_project else nullcontext() as attributes:
         handle = open_handle(target, access=GENERIC_WRITE | DELETE | WRITE_DAC,
                              creation=CREATE_NEW, attributes=attributes)
     try:
@@ -135,24 +145,26 @@ def _atomic_write_windows(path, data, temporary, *, replace, private):
         CloseHandle(handle)
         target.unlink(missing_ok=True)
         raise
-    try:
-        with os.fdopen(descriptor, 'wb') as stream:
+    with os.fdopen(descriptor, 'wb') as stream:
+        try:
+            # A file missing before creation is a new publication even when a
+            # competing destination appears later. Never merge or replace it.
+            publish_replace = replace and (private or existing_project)
+            if existing_project:
+                # Finalize the target DACL before writing. Disappearance of
+                # the checked target is a conflict, rather than a new file.
+                copy_project_metadata(handle, path)
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-            publish_replace = replace
-            if replace and not private:
-                try:
-                    copy_project_metadata(handle, path)
-                except FileNotFoundError:
-                    # A new project file inherits its parent's DACL. Preserve
-                    # any destination that appears after the existence check.
-                    publish_replace = False
             # Keep this DELETE-capable handle alive through publication. The
             # simple name lets NT rename within its original pinned directory.
             publish_same_directory(handle, path.name, replace=publish_replace)
-    finally:
-        target.unlink(missing_ok=True)
+        except BaseException:
+            # Copied ACLs can deny pathname deletion. Our original DELETE
+            # access remains valid, so cleanup also uses the verified handle.
+            discard_on_close(handle)
+            raise
 
 
 def atomic_write_bytes(path, data, *, replace=True, private=True):

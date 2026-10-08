@@ -444,6 +444,87 @@ class WindowsHandleTests(NativeFileBackendTests):
         finally:
             CloseHandle(handle)
 
+    def test_project_write_refuses_to_strip_existing_named_stream(self):
+        backend = self.backend()
+        path = self.root / 'downloaded.txt'
+        path.write_bytes(b'original')
+        with open(str(path) + ':Zone.Identifier', 'wb') as stream:
+            stream.write(b'preserve stream')
+        original = self.dacl(path)
+        with self.assertRaises(ValueError):
+            backend.atomic_write_bytes(path, b'updated', private=False)
+        self.assertEqual(path.read_bytes(), b'original')
+        with open(str(path) + ':Zone.Identifier', 'rb') as stream:
+            self.assertEqual(stream.read(), b'preserve stream')
+        self.assertEqual(self.dacl(path), original)
+        self.assertFalse(list(self.root.glob('.*.tmp')))
+
+    def test_permission_setter_keeps_its_leaf_pinned_during_acl_update(self):
+        import ctypes
+        from nailong.core import _win32_files as native
+        backend = self.backend()
+        path = self.root / 'private-file'
+        path.write_bytes(b'private')
+        real_set = native.SetSecurityInfo
+        seen = []
+        def setting(*arguments):
+            handle = native.CreateFile(native.extended(path), native.DELETE, 7, None,
+                native.OPEN_EXISTING, native.OPEN_REPARSE_POINT | native.BACKUP_SEMANTICS, None)
+            error = ctypes.get_last_error()
+            if handle != native.INVALID_HANDLE_VALUE:
+                native.CloseHandle(handle)
+            self.assertEqual(handle, native.INVALID_HANDLE_VALUE)
+            self.assertEqual(error, 32)
+            seen.append(True)
+            return real_set(*arguments)
+        with patch.object(native, 'SetSecurityInfo', side_effect=setting):
+            backend.private_file_permissions(path)
+        self.assertEqual(seen, [True])
+
+    def test_existing_private_project_file_has_private_temporary_from_creation(self):
+        from nailong.core._win32_files import open_handle, CREATE_NEW
+        backend = self.backend()
+        path = self.root / 'private.txt'
+        path.write_bytes(b'private original')
+        backend.private_file_permissions(path)
+        result = subprocess.run(['icacls', str(self.root), '/grant', '*S-1-1-0:(OI)(CI)(R)'],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('S-1-1-0', {sid for sid, _ in self.trustees(self.root)})
+        original = self.dacl(path)
+        temporaries = []
+        def inspect_creation(target, *args, **kwargs):
+            handle = open_handle(target, *args, **kwargs)
+            if kwargs.get('creation') == CREATE_NEW:
+                try:
+                    self.assertTrue(self.dacl(target).startswith('D:P'))
+                    self.assertNotIn('S-1-1-0', {sid for sid, _ in self.trustees(target)})
+                    temporaries.append(target)
+                except BaseException:
+                    from nailong.core._win32_files import CloseHandle
+                    CloseHandle(handle)
+                    raise
+            return handle
+        with patch('nailong.core._win32_files.open_handle', side_effect=inspect_creation):
+            backend.atomic_write_bytes(path, b'private update', private=False)
+        self.assertEqual(len(temporaries), 1)
+        self.assertEqual(path.read_bytes(), b'private update')
+        self.assertEqual(self.dacl(path), original)
+
+    def test_project_creation_does_not_replace_file_that_appears_before_temporary_creation(self):
+        from nailong.core._win32_files import open_handle, CREATE_NEW
+        backend = self.backend()
+        path = self.root / 'new.txt'
+        def create_competing_destination(target, *args, **kwargs):
+            if kwargs.get('creation') == CREATE_NEW:
+                path.write_bytes(b'competing original')
+            return open_handle(target, *args, **kwargs)
+        with patch('nailong.core._win32_files.open_handle', side_effect=create_competing_destination):
+            with self.assertRaises(FileExistsError):
+                backend.atomic_write_bytes(path, b'planned new data', private=False)
+        self.assertEqual(path.read_bytes(), b'competing original')
+        self.assertFalse(list(self.root.glob('.*.tmp')))
+
     def test_lock_pins_ancestors_while_lease_is_held(self):
         from nailong.core.file_locks import file_lock
         parent = self.root / 'leases'

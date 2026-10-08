@@ -225,6 +225,14 @@ def publish_same_directory(handle, name, *, replace=True):
         raise ctypes.WinError(NtStatusToDosError(status & 0xffffffff))
 
 
+def discard_on_close(handle):
+    """Delete a failed temporary through its already granted DELETE handle."""
+    delete = wintypes.BYTE(1)
+    status = NtSetInformation(handle, ctypes.byref(IOStatus()), ctypes.byref(delete), 1, 13)
+    if status < 0:
+        raise ctypes.WinError(NtStatusToDosError(status & 0xffffffff))
+
+
 def _check_basic_metadata(handle, data):
     # These need dedicated encryption/compression/sparse and stream-copy APIs.
     # Refuse edits rather than quietly stripping metadata from an existing file.
@@ -250,7 +258,7 @@ def _check_basic_metadata(handle, data):
                 offset += next_offset
         elif ctypes.get_last_error() in {38}:  # ERROR_HANDLE_EOF: no streams
             return
-        elif ctypes.get_last_error() in {234} and size < 1024 * 1024:
+        elif ctypes.get_last_error() in {122, 234} and size < 1024 * 1024:
             size *= 2
         else:
             raise _error()
@@ -292,7 +300,10 @@ def set_private_permissions(path, *, directory=False):
     with pin_directory(path.parent):
         # SetSecurityInfo also queries the existing descriptor while handling
         # inheritance/protection. WRITE_DAC alone cannot grant that query.
-        handle = open_handle(path, directory=directory, access=READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC)
+        # Include data/list read access so the leaf also participates in share
+        # accounting and cannot be replaced while its descriptor is changed.
+        access = READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC | (LIST_DIRECTORY if directory else GENERIC_READ)
+        handle = open_handle(path, directory=directory, access=access)
         try:
             with private_security(directory=directory) as attributes:
                 present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), wintypes.LPVOID()

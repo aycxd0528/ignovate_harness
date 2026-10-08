@@ -75,6 +75,12 @@ class MCPCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(definition['command'], r'C:\Tools\python.exe')
         self.assertEqual(definition['args'], [r'C:\项目 文件\server.py'])
 
+    async def test_windows_mcp_arguments_keep_embedded_quotes_empty_values_and_trailing_slashes(self):
+        with patch('ui.arguments._WINDOWS', True):
+            await self.command(r'/mcp add quoted --transport stdio -- python.exe -c "print(\"hi\")" "" "C:\尾\\"')
+        definition = self.manager.store.list_servers()['quoted']
+        self.assertEqual(definition['args'], ['-c', 'print("hi")', '', 'C:\\尾\\'])
+
     async def test_plan_mode_allows_listing_but_refuses_connection(self):
         await self.command('/mcp add docs --transport http https://example.com/mcp')
         self.service.permission_mode = 'plan'
