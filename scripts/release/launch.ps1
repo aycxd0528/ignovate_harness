@@ -10,7 +10,7 @@ $python = Join-Path $runtime 'Scripts\python.exe'
 $tools = Join-Path $installHome 'tools'
 $env:Path = "$tools;$env:Path"
 if ($forward.Count -ge 3 -and $forward[0] -eq 'set' -and $forward[1] -eq 'up') {
-    if ($forward[2] -in @('--help', '-h')) { Write-Host 'Usage: ignovate set up [--environment-only] [configuration arguments]'; exit 0 }
+    if ($forward[2] -in @('--help', '-h')) { Write-Output 'Usage: ignovate set up [--environment-only] [configuration arguments]'; exit 0 }
     if ($forward[2] -eq '--environment-only' -and $forward.Count -ne 3) { throw '--environment-only does not accept extra arguments.' }
 }
 Assert-IgnovateBundle $PSScriptRoot
@@ -26,7 +26,7 @@ try {
     $uv = Get-Command uv.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($uv) { $uv = $uv.Path }
     else {
-        Write-Host 'Downloading environment manager...'
+        Write-Output 'Downloading environment manager...'
         $uvScript = Join-Path $work 'uv-install.ps1'
         Get-IgnovateDownload 'https://astral.sh/uv/0.12.23/install.ps1' $uvScript
         $previousUnmanaged = $env:UV_UNMANAGED_INSTALL
@@ -42,10 +42,10 @@ try {
     $env:UV_PYTHON_DOWNLOADS = 'automatic'
     if (-not $env:UV_PYTHON_PREFERENCE) { $env:UV_PYTHON_PREFERENCE = 'system' }
     if (-not (Test-Path -LiteralPath $python)) {
-        Write-Host 'Preparing Python 3.11-3.13; a missing interpreter will be downloaded...'
+        Write-Output 'Preparing Python 3.11-3.13; a missing interpreter will be downloaded...'
         Invoke-IgnovateChecked $uv @('--no-config', 'venv', '--no-project', '--python', '>=3.11,<3.14', $runtime)
     }
-    Write-Host 'Installing and verifying application dependencies...'
+    Write-Output 'Installing and verifying application dependencies...'
     Invoke-IgnovateChecked $uv @('--no-config', 'pip', 'install', '--python', $python, '--require-hashes', '-r', (Join-Path $PSScriptRoot 'requirements-release.lock'))
     Invoke-IgnovateChecked $uv @('--no-config', 'pip', 'install', '--python', $python, '--no-deps', '--reinstall-package', 'ignovate-harness', (Join-Path $PSScriptRoot "ignovate_harness-$version-py3-none-any.whl"))
     Invoke-IgnovateChecked $uv @('--no-config', 'pip', 'check', '--python', $python)
@@ -53,10 +53,10 @@ try {
     $rgReady = $false
     if ($rg) {
         try { Invoke-IgnovateChecked $rg.Path @('--version'); $rgReady = $true }
-        catch { Write-Host 'Existing ripgrep is unusable; downloading a replacement...' }
+        catch { Write-Output 'Existing ripgrep is unusable; downloading a replacement...' }
     }
     if (-not $rgReady) {
-        Write-Host 'Downloading ripgrep...'
+        Write-Output 'Downloading ripgrep...'
         $archive = 'ripgrep-15.2.0-x86_64-pc-windows-msvc.zip'
         $url = "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/$archive"
         $zip = Join-Path $work $archive
@@ -78,8 +78,8 @@ try {
     }
     Invoke-IgnovateChecked $python @('-c', 'import main, textual, mcp, langchain_deepseek; import sys; assert sys.platform == "win32"')
     [IO.File]::WriteAllText($ready, $version + "`n", (New-Object Text.UTF8Encoding $false))
-    Write-Host 'Environment ready. Model configuration is the next step.'
-    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { Write-Host 'Git is optional. Install Git for Windows before using diff/review.' }
+    Write-Output 'Environment ready. Model configuration is the next step.'
+    if (-not (Get-Command git.exe -ErrorAction SilentlyContinue)) { Write-Output 'Git is optional. Install Git for Windows before using diff/review.' }
 } finally {
     if (Test-Path -LiteralPath $work) { Remove-Item -LiteralPath $work -Recurse -Force }
     $lock.Dispose()

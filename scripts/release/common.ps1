@@ -1,5 +1,6 @@
 #Requires -Version 5.1
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $OutputEncoding = New-Object Text.UTF8Encoding $false
 [Console]::OutputEncoding = $OutputEncoding
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12

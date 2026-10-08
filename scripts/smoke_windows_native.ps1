@@ -39,7 +39,8 @@ foreach ($name in @('test_native_tools.py','test_native_file_backend.py','test_n
 }
 Push-Location $root
 try {
-    & $python -c 'import sys, local_tools; assert sys.platform == "win32"; assert sys.prefix != sys.base_prefix; print(local_tools.__file__)'
+    . (Join-Path $bundle.FullName 'common.ps1')
+    Invoke-IgnovateChecked $python @('-c', 'import sys, local_tools; assert sys.platform == "win32"; assert sys.prefix != sys.base_prefix; print(local_tools.__file__)')
     if ($LASTEXITCODE -ne 0) { throw 'Native wheel import failed.' }
     & $python -m unittest discover -s $tests -v
     if ($LASTEXITCODE -ne 0) { throw 'Native installed-wheel acceptance failed.' }
