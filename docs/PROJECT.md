@@ -1,6 +1,6 @@
 # ignovate harness 项目说明
 
-本文面向首次使用或维护项目的开发者，说明如何安装、连接模型、选择工作项目，以及核对工具权限和验证结果。适用版本为 1.0.1，维护日期为 2026-10-08。支持 macOS、Linux 和 Windows（通过 WSL2 运行）；Release 安装器会自动准备缺少的 Python 和应用依赖。
+本文面向首次使用或维护项目的开发者，说明如何安装、连接模型、选择工作项目，以及核对工具权限和验证结果。适用版本为 1.0.2，维护日期为 2026-10-08。支持 macOS、Linux 和 Windows 11 x64（原生运行，无需 WSL）；Release 安装器会自动准备缺少的 Python 和应用依赖。
 
 仓库：[aycxd0528/ignovate_harness](https://github.com/aycxd0528/ignovate_harness)。完整命令与界面细节见 [README](../README.md)，本次问题与验证记录见 [项目审查报告](reviews/2026-10-08-project-audit.md)。
 
@@ -14,37 +14,37 @@ ignovate harness 是在本地终端运行的编码助手。它用 Python、LangC
 
 ## 快速开始
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包，无需预装 Python 或克隆源码。当前版本为 [v1.0.1](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.1)。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包，无需预装 Python 或克隆源码。当前版本为 [v1.0.2](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.2)。
 
 ### macOS / Linux
 
-下载 [ignovate-1.0.1-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.1/ignovate-1.0.1-unix.tar.gz)，支持 Intel / Apple Silicon macOS 和 x86_64 / ARM64 Linux。在下载目录执行：
+下载 [ignovate-1.0.2-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-unix.tar.gz)，支持 Intel / Apple Silicon macOS 和 x86_64 / ARM64 Linux。在下载目录执行：
 
 ```sh
-tar -xzf ignovate-1.0.1-unix.tar.gz
-cd ignovate-1.0.1
+tar -xzf ignovate-1.0.2-unix.tar.gz
+cd ignovate-1.0.2
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
 ```
 
-### Windows（WSL2）
+### Windows 11
 
-下载 [ignovate-1.0.1-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.1/ignovate-1.0.1-windows.zip)，在 PowerShell 中执行：
+下载 [ignovate-1.0.2-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-windows.zip)，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.0.1-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.0.1
+Expand-Archive .\ignovate-1.0.2-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.0.2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-支持 Windows 11 或 Windows 10 2004 及以后版本，需要启用硬件虚拟化。缺少 WSL / Ubuntu 时，脚本会启动安装；已有 WSL1 发行版会尝试转换为 WSL2。系统要求重启时，重启后再运行同一个安装脚本；Ubuntu 首次启动可能要求创建 Linux 用户。安装完成后打开新的 PowerShell 或命令提示符：
+支持 Windows 11 x64 原生运行，无需 WSL、Linux 环境或虚拟化。安装在当前用户目录，无需管理员权限。安装完成后打开新的 PowerShell 或命令提示符，运行：
 
 ```powershell
 ignovate set up
 ```
 
-Windows 启动器将当前目录和显式的 Windows `--project` 路径传入 WSL；应用、Git 和 MCP stdio 服务在 Linux 中运行，需使用 Linux 可执行文件。
+Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。
 
 ### 自动配置与日常启动
 
@@ -74,7 +74,7 @@ ignovate doctor --project /path/to/work-project --output-format json
 
 ### 从源码安装（开发者）
 
-在已安装 Git、Python 3.11 或更新版本的 macOS/Linux 终端（Windows 使用 WSL2）执行：
+在已安装 Git、Python 3.11 或更新版本的 macOS/Linux 终端执行：
 
 ```bash
 git clone https://github.com/aycxd0528/ignovate_harness.git
@@ -85,11 +85,19 @@ python -m pip install -e .
 ignovate --setup
 ```
 
+Windows 11 开发者在原生 PowerShell 中安装对应版本源码后执行：
+
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\ignovate.exe --setup
+```
+
 ## 连接与配置
 
 | 配置或数据 | 默认位置 | 作用 |
 | --- | --- | --- |
-| 模型连接 | `~/.ignovate/config.json` | 模型地址、ID、API Key 和默认推理偏好；文件权限 0600 |
+| 模型连接 | `~/.ignovate/config.json` | 模型地址、ID、API Key 和默认推理偏好；Unix 权限 0600，Windows 使用私有 ACL |
 | 用户偏好 | `~/.nailong/preferences.json` | 模型、界面和其他用户默认值 |
 | 项目偏好 | `<project>/.nailong/settings.json` | 项目权限、模型、验证步骤和上下文设置 |
 | 本地覆盖 | `<project>/.nailong/settings.local.json` | 不提交 Git 的本机偏好 |
@@ -208,14 +216,14 @@ MCP 支持 stdio 和 Streamable HTTP；外部工具经过相同执行门，默�
 ```bash
 python -m unittest discover -s tests -v
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.0.1-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.0.2-py3-none-any.whl
 ```
 
 离线测试使用假模型、临时项目和本地 MCP 服务，不调用真实模型 API。wheel smoke 从源码目录之外加载实际发行内容，验证 `--help`、JSON doctor 和依赖检查，避免仅验证 editable 安装。
 
 GitHub Actions 已启用，工作流位于 .github/workflows/tests.yml，参考副本位于 docs/ci/github-actions-tests.yml。每次 push、pull request 或手动触发都会在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试及 wheel smoke。实际运行结果以仓库对应提交的检查记录为准。
 
-推送与 `pyproject.toml` 版本一致的 `v*` tag 后，[Release 工作流](../.github/workflows/release.yml) 会运行 Python 3.11/3.13 完整测试、构建发行包、在 macOS/Linux 执行实际安装及重复配置检查，并在 Windows 验证 PowerShell 启动器的参数、项目路径、退出码和校验失败处理。全部检查通过后才发布 Unix 安装包、Windows 安装包、wheel 和 `SHA256SUMS`。[v1.0.1 发布检查](https://github.com/aycxd0528/ignovate_harness/actions/runs/37727294533) 已通过；WSL 系统安装、管理员授权和重启流程仍需实机验证。
+推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；全部检查通过后发布两个安装包、wheel 和 `SHA256SUMS`。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
 
 真实模型验证通过本机手动执行 python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json。脚本使用已配置的模型连接和临时项目，限制调用次数、输出和 managed 预算，保存脱敏元数据。本次 deepseek-flash 的回答、读取、编辑后验证、只读审查、审批拒绝和无头 JSON 六类检查均获得通过结果；首次无头答案断言失败与成功补测保留在验证记录中。第三方 MCP、Windows 实机与不同终端剪贴板协议仍需另行验证。 详见 [CI 与真实 API 验证记录](reviews/2026-10-08-ci-real-api-verification.md)。
 

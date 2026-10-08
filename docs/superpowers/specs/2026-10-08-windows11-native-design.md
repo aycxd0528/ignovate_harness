@@ -2,7 +2,7 @@
 
 The requested outcome is a Windows 11 CLI installation that never invokes WSL or requires Linux. Download the GitHub Release ZIP, run install.ps1, reopen the terminal, and run `ignovate set up`. Missing Python 3.11–3.13, locked dependencies and ripgrep are installed automatically in the user's application directory. macOS/Linux remain supported.
 
-Use a native PowerShell bootstrap and an ignovate.cmd launcher, rather than freezing the application first. This preserves repairable environments and the existing setup command. Windows 11 x64 is the release validation target; native ARM64 can use the x64 package through Windows emulation and is not separately advertised as validated.
+Use a native PowerShell bootstrap and a small .NET ignovate.exe launcher compiled using built-in Windows PowerShell, that launches Python directly on the current console. This preserves repairable environments and the existing setup command. Windows 11 x64 is the release validation target; native ARM64 can use the x64 package through Windows emulation and is not separately advertised as validated.
 
 Introduce narrow OS implementations for safe regular-file access, history storage, interprocess locks and process cleanup. Windows paths must reject reparse points (including junctions) and alternate data streams; parent directory handles must remain pinned while accessing files, preserving the existing protections against ancestor replacement. Use native Windows handles for file access and locking; retain the existing POSIX implementations on Unix. Windows command capture must not register pipe handles with selectors; cancellation must clean up child processes. Existing read-before-edit, version checking, protected files and approval semantics remain in force.
 

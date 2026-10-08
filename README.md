@@ -1,23 +1,23 @@
-# ignovate harness v1.0.1：本地 CLI 编码助手
+# ignovate harness v1.0.2：本地 CLI 编码助手
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
 
 ## 下载与快速安装
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.0.1](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.1)，无需预装 Python 或克隆源码。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.0.2](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.2)，无需预装 Python 或克隆源码。
 
 | 平台 | 安装包 | 运行环境 |
 | --- | --- | --- |
-| macOS / Linux | [ignovate-1.0.1-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.1/ignovate-1.0.1-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
-| Windows | [ignovate-1.0.1-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.1/ignovate-1.0.1-windows.zip) | 通过 WSL2 运行；支持 Windows 11、Windows 10 2004 及以后版本 |
+| macOS / Linux | [ignovate-1.0.2-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
+| Windows 11 x64 | [ignovate-1.0.2-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
 
 ### macOS / Linux
 
 下载后，在安装包所在目录执行：
 
 ```sh
-tar -xzf ignovate-1.0.1-unix.tar.gz
-cd ignovate-1.0.1
+tar -xzf ignovate-1.0.2-unix.tar.gz
+cd ignovate-1.0.2
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -25,17 +25,17 @@ ignovate set up
 
 安装器会把启动器加入 shell 的 PATH；也可在安装后重新打开终端，再运行 `ignovate set up`。
 
-### Windows（WSL2）
+### Windows 11
 
 下载后，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.0.1-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.0.1
+Expand-Archive .\ignovate-1.0.2-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.0.2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-缺少 WSL / Ubuntu 时，脚本会启动安装；已有 WSL1 发行版会尝试转换为 WSL2。系统要求重启时，重启后再运行同一个 `install.ps1` 续装；Ubuntu 首次启动可能要求创建 Linux 用户。安装完成后打开新的 PowerShell 或命令提示符，运行：
+支持 Windows 11 x64 原生运行，无需 WSL、Linux 环境或虚拟化。安装在当前用户目录，无需管理员权限。安装完成后打开新的 PowerShell 或命令提示符，运行：
 
 ```powershell
 ignovate set up
@@ -52,7 +52,7 @@ ignovate set up --environment-only
 ignovate doctor --output-format json
 ```
 
-未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 启动器会将当前目录和显式的 Windows 项目路径传入 WSL。
+未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 保留当前目录和 `--project` 的原生路径。Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。
 
 完整的安装位置、PATH、校验、升级和源码构建说明见 [Release 安装说明](docs/INSTALL.md)。
 
@@ -66,7 +66,7 @@ ignovate set up
 
 旧命令 `ignovate --setup` 继续兼容；Release 启动器使用 `set up` 时也会检查和修复环境。
 
-模型连接保存在用户目录 `~/.ignovate/config.json`，文件权限为 0600，优先于原有 `.env`，不进入项目或会话日志。API Key 使用隐藏输入；此文件是本地明文连接配置。`IGNOVATE_CONFIG_DIR` 可指定配置目录。推理偏好仍按用户/项目/本地/CLI/会话覆盖顺序生效。无头模式与非交互终端不弹欢迎，缺失配置时会给出配置指引。
+模型连接保存在用户目录 `~/.ignovate/config.json`，Unix 文件权限为 0600；Windows 使用仅当前用户、SYSTEM 和管理员可访问的私有 ACL，优先于原有 `.env`，不进入项目或会话日志。API Key 使用隐藏输入；此文件是本地明文连接配置。`IGNOVATE_CONFIG_DIR` 可指定配置目录。推理偏好仍按用户/项目/本地/CLI/会话覆盖顺序生效。无头模式与非交互终端不弹欢迎，缺失配置时会给出配置指引。
 
 产品名称已更改，现有 `nailong` 命令、Python 包、`.nailong` 项目目录和会话数据继续兼容。
 
@@ -562,7 +562,7 @@ check_config.py  环境变量读取示例
 
 会话的 `context_request.performance` 记录预检查和最终请求的分阶段耗时、归档保存/复用次数、压缩尝试次数及运行时累计缓存计数；检查失败时保存 `context_performance` 事件。计时不包含提供商请求和报表事件写入，压缩阶段包含其内部重新核算的耗时，分阶段数值不能简单相加。本地基准可运行 `python scripts/benchmark_context.py`，不调用模型 API。
 
-省略前的原始工具结果和旧用户要求脱敏保存在会话私有 `history-results/` 归档中，目录权限 0700、文件权限 0600。聊天模型可用 `read_history_result(reference, offset, max_chars)` 分页读取摘要引用（每页最多 6,000 字符），不能传任意路径或查询其他会话。单条归档上限 2 MiB，超出会明确标记 `archive_truncated`；归档失败会保留原正文。文件内容带历史版本和行范围，使用前应核对当前文件。摘要保存完整任务索引的引用，早期要求不会因超过八条而被自动淘汰；索引自身无法完整归档时不执行回合摘要。
+省略前的原始工具结果和旧用户要求脱敏保存在会话私有 `history-results/` 归档中，Unix 目录权限 0700、文件权限 0600；Windows 使用私有 ACL。聊天模型可用 `read_history_result(reference, offset, max_chars)` 分页读取摘要引用（每页最多 6,000 字符），不能传任意路径或查询其他会话。单条归档上限 2 MiB，超出会明确标记 `archive_truncated`；归档失败会保留原正文。文件内容带历史版本和行范围，使用前应核对当前文件。摘要保存完整任务索引的引用，早期要求不会因超过八条而被自动淘汰；索引自身无法完整归档时不执行回合摘要。
 
 `/context` 的分类与工具集合来自最近送入模型的请求并随会话保存。估算区分 ASCII 与非 ASCII 内容，按同模型、同提供商的实际 usage 保守校准；它仍不是精确 tokenizer 或费用账单。手动压缩后，最近实际请求统计要等下一次调用才更新。Skill 正文被省略时保留名称、路径和版本及已加载状态，持续规则可按需恢复，一次性初始化不应重复。
 
@@ -570,15 +570,15 @@ check_config.py  环境变量读取示例
 
 ## 发布验证
 
-运行时使用 macOS/Linux 的文件描述符与进程组实现，Windows 安装包通过 WSL2 运行同一 Linux 运行时。新建文件遵循 umask；完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
+运行时使用 macOS/Linux 文件描述符与进程组，Windows 11 使用 Win32 文件句柄、ACL、文件锁和 Job Object。Unix 新建文件遵循 umask；Windows 项目文件继承父目录 ACL，替换时保留原权限，只读文件保持原状并返回错误。完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.0.1-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.0.2-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
 
-推送与 `pyproject.toml` 版本一致的 `v*` tag 后，[Release 工作流](.github/workflows/release.yml) 会执行 Python 3.11/3.13 完整测试、macOS/Linux 实际安装检查及 Windows PowerShell 启动器检查，全部通过后发布 Unix 安装包、Windows 安装包、wheel 和 `SHA256SUMS`。Windows CI 检查原生启动器的参数、路径和退出码传递；WSL 系统安装、管理员授权和重启流程仍需实机验证。
+推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；全部检查通过后发布两个安装包、wheel 和 `SHA256SUMS`。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
 
 真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](docs/reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 和 Windows 实机仍需另行验证。

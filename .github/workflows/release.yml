@@ -73,20 +73,7 @@ jobs:
           "$IGNOVATE_BIN_DIR/ignovate" doctor --output-format json > "$RUNNER_TEMP/doctor.json" || test "$?" = 1
           python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert all(c["status"]=="ok" for c in r["checks"] if c["name"] in ("python","textual","mcp","rg"))' "$RUNNER_TEMP/doctor.json"
   windows-smoke:
-    runs-on: windows-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
-        with:
-          python-version: '3.11'
-      - name: Build installer from the same source
-        run: |
-          python -m pip wheel --no-deps --wheel-dir dist .
-          python scripts/build_release.py --wheel (Get-Item dist/*.whl).FullName
-      - name: PowerShell installer and WSL command routing
-        shell: powershell
-        run: ./scripts/smoke_windows_installer.ps1 -Archive (Get-Item dist/release/*-windows.zip).FullName
+    uses: ./.github/workflows/windows-native.yml
   publish:
     if: github.ref_type == 'tag'
     needs: [install-smoke, windows-smoke]
