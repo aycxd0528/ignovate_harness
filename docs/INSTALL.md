@@ -57,7 +57,7 @@ $env:Path = "$env:LOCALAPPDATA\Ignovate\bin;$env:Path"
 ignovate set up
 ```
 
-启动器保留当前目录、原始参数和退出码，Python 应用直接使用当前控制台。命令工具使用 Windows PowerShell；Git 与 MCP stdio 服务应配置 Windows 可执行文件和路径。模型连接位于 Windows 用户目录 `~/.ignovate/config.json`，使用私有 ACL；项目文件替换保留原 ACL，只读文件不会被强制覆盖。文件工具支持本地盘符路径，拒绝目录联接、重解析点、备用数据流和设备路径；网络共享路径暂不支持。
+启动器保留当前目录、原始参数和退出码，Python 应用直接使用当前控制台。命令工具使用 Windows PowerShell；Git 与 MCP stdio 服务应配置 Windows 可执行文件和路径。模型连接位于 Windows 用户目录 `~/.ignovate/config.json`，使用私有 ACL；项目文件替换保留原 ACL，只读文件不会被强制覆盖。文件工具支持本地盘符路径，拒绝目录联接、重解析点、备用数据流和设备路径；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
 
 从旧 WSL 安装升级时，安装器会替换旧的 Windows 启动器。WSL 内原有模型连接和会话保留在那里，原生版使用 Windows 用户目录，首次需要重新配置模型。
 

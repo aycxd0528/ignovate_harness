@@ -52,7 +52,7 @@ ignovate set up --environment-only
 ignovate doctor --output-format json
 ```
 
-未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 保留当前目录和 `--project` 的原生路径。Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。
+未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 保留当前目录和 `--project` 的原生路径。Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
 
 完整的安装位置、PATH、校验、升级和源码构建说明见 [Release 安装说明](docs/INSTALL.md)。
 
@@ -492,7 +492,7 @@ description: 构建与验证方式
 
 项目 settings.json 或 settings.local.json 可以设置 `{"memory":{"max_tokens":4000}}`，范围 512–16384。三层摘要、目录、提示及记忆工具输出的 JSON 共用同一预算，默认给摘要与目录最多 75%，为读取预留余量；较小预算会进一步预留合法长 ID 与响应包装所需空间。每次模型调用也限制历史记忆工具结果，优先保留较新内容，不改写持久会话记录。预算按 ASCII 字符 / 4 向上取整、非 ASCII 字符按 2 tokens 保守估算；实际用量仍以 API usage 为准。分页响应返回 `version`、`truncated` 和 `next_offset`，必须继续读取才能取得尾部。同一运行内版本改变会返回 `changed`，下一轮刷新后重新读取，避免拼接不同版本的内容；目录元数据过长会精简描述和标题以保留分页进度，`metadata_truncated` 与 `diagnostics_truncated` 标记被缩短的元数据与诊断。标题索引截断时按全文读取，不能用截短标题作为精确 section 参数。
 
-Textual 使用编辑框，inline/plain 用 `$VISUAL` 或 `$EDITOR` 编辑权限 0600 的临时副本，再显示 diff 并审批应用；取消不会写原文件，外部并发修改会拒绝覆盖。没有编辑器时显示手动编辑和 `/memory reload` 的说明。下一轮自动刷新记忆；手动重载保留会话与历史费用。`/context` 显示统一记忆预算和各层状态，`doctor` 检查目录与预算配置。[自动提取与向量索引的评估](docs/design/2026-10-03-memory-storage-evaluation.md)记录了后续引入条件。
+Textual 使用编辑框，inline/plain 用 `$VISUAL` 或 `$EDITOR` 编辑临时副本（Unix 权限 0600，Windows 使用私有 ACL），再显示 diff 并审批应用；取消不会写原文件，外部并发修改会拒绝覆盖。没有编辑器时显示手动编辑和 `/memory reload` 的说明。下一轮自动刷新记忆；手动重载保留会话与历史费用。`/context` 显示统一记忆预算和各层状态，`doctor` 检查目录与预算配置。[自动提取与向量索引的评估](docs/design/2026-10-03-memory-storage-evaluation.md)记录了后续引入条件。
 
 `task` 子代理只使用只读工具，最多并行 3 个任务，同一父会话每轮共享 30,000 token 额度。每次模型调用前按完整输入保守预留额度，并收窄输出上限，返回后按实际用量结算；缺少完整用量时保留预留额度并停止新的子代理调用。取消任务仍保留此前成功调用的用量。
 

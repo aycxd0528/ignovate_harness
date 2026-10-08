@@ -10,7 +10,7 @@ ignovate set up
 
 自动检测或下载 uv、Python 3.11–3.13、固定版本的应用依赖和 ripgrep，然后进入模型连接配置向导。支持重复配置和依赖修复；无需手工激活虚拟环境。
 
-Windows 文件工具使用原生句柄和 ACL；命令使用 Windows PowerShell，并在取消或超时时清理子进程。MCP stdio 服务和 Git 使用 Windows 可执行文件。文件工具支持本地盘符路径，网络共享路径暂不支持。
+Windows 文件工具使用原生句柄和 ACL；命令使用 Windows PowerShell，并在取消或超时时清理子进程。MCP stdio 服务和 Git 使用 Windows 可执行文件。文件工具支持本地盘符路径，网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
 
 `ignovate set up --environment-only` 只准备环境；`ignovate doctor` 检查环境和配置。Git 是可选工具，diff / review 需要 Git for Windows。
 

@@ -21,20 +21,20 @@
 - Interrupted setup does not leave ready state; repeat installation preserves configuration.
 
 ### Task 1: Native filesystem and locking
-- [ ] Add regression tests for native regular files, archive replay, reparse points, path replacement, task/goal concurrent transactions.
-- [ ] Implement focused Windows handle-based file and lock helpers; adapt history_archive, memory, goal and task_state, retain POSIX paths.
-- [ ] Root integrates safe read helper into local_tools and rejects junctions in traversal/config paths; portable pipe capture in file search belongs to Task 2.
-- [ ] Run file/history/memory/task/goal tests locally; Windows CI executes real native regressions.
+- [x] Add regression tests for native regular files, archive replay, reparse points, path replacement, task/goal concurrent transactions.
+- [x] Implement focused Windows handle-based file and lock helpers; adapt history_archive, memory, goal and task_state, retain POSIX paths.
+- [x] Root integrates safe read helper into local_tools and rejects junctions in traversal/config paths; portable pipe capture in file search belongs to Task 2.
+- [x] Run file/history/memory/task/goal tests locally; Windows CI executes real native regressions.
 
 ### Task 2: Native processes
-- [ ] Add regression tests for bounded output, command timeout/cancel, parent/child cleanup, editor and hooks.
-- [ ] Implement portable process helpers (Windows jobs and bounded pipe capture) and adapt processes, hooks and plan.
-- [ ] Root integrates capture into local_tools and file-search pipe collection after helper signatures are agreed.
+- [x] Add regression tests for bounded output, command timeout/cancel, parent/child cleanup, editor and hooks.
+- [x] Implement portable process helpers (Windows jobs and bounded pipe capture) and adapt processes, hooks and plan.
+- [x] Root integrates capture into local_tools and file-search pipe collection after helper signatures are agreed.
 - [ ] Run covering process tests locally and native Windows CI.
 
 ### Task 3: Native installation and release
-- [ ] Add a Windows installer smoke that checks local checksums, launcher cwd/arguments/exit status, PATH opt-out and setup repeat/failure.
-- [ ] Replace WSL installer with Windows 11 user-level install and PowerShell launch script; automatically download pinned uv/rg and Python.
-- [ ] Run actual fresh `set up --environment-only`, imports, doctor and installed-tool smoke on Windows; repair twice, without WSL.
+- [x] Add a Windows installer smoke that checks local checksums, launcher cwd/arguments/exit status, PATH opt-out and setup repeat/failure.
+- [x] Replace WSL installer with Windows 11 user-level install and PowerShell launch script; automatically download pinned uv/rg and Python.
+- [x] Run actual fresh `set up --environment-only`, imports, doctor and installed-tool smoke on Windows; repair twice, without WSL.
 - [ ] Bump to 1.0.2, update CI and all install documentation, including Feishu.
 - [ ] Complete POSIX suite and native Windows validation, independent review, build clean tagged assets, push tag and verify published download.
