@@ -2,13 +2,69 @@
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
 
+## 下载与快速安装
+
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.0.1](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.1)，无需预装 Python 或克隆源码。
+
+| 平台 | 安装包 | 运行环境 |
+| --- | --- | --- |
+| macOS / Linux | [ignovate-1.0.1-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.1/ignovate-1.0.1-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
+| Windows | [ignovate-1.0.1-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.1/ignovate-1.0.1-windows.zip) | 通过 WSL2 运行；支持 Windows 11、Windows 10 2004 及以后版本 |
+
+### macOS / Linux
+
+下载后，在安装包所在目录执行：
+
+```sh
+tar -xzf ignovate-1.0.1-unix.tar.gz
+cd ignovate-1.0.1
+sh install.sh
+. "$HOME/.local/bin/ignovate-env.sh"
+ignovate set up
+```
+
+安装器会把启动器加入 shell 的 PATH；也可在安装后重新打开终端，再运行 `ignovate set up`。
+
+### Windows（WSL2）
+
+下载后，在 PowerShell 中执行：
+
+```powershell
+Expand-Archive .\ignovate-1.0.1-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.0.1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+缺少 WSL / Ubuntu 时，脚本会启动安装；已有 WSL1 发行版会尝试转换为 WSL2。系统要求重启时，重启后再运行同一个 `install.ps1` 续装；Ubuntu 首次启动可能要求创建 Linux 用户。安装完成后打开新的 PowerShell 或命令提示符，运行：
+
+```powershell
+ignovate set up
+```
+
+### 配置环境与开始使用
+
+`ignovate set up` 会检测 uv、Python 3.11–3.13、应用依赖和 ripgrep，自动下载缺少的组件并创建隔离环境，然后打开模型配置向导，填写 API 地址、模型 ID 和 API Key。应用依赖固定版本并校验哈希，无需手动激活虚拟环境。首次配置需要联网；下载失败后可重新运行此命令，重复安装会保留模型连接和项目数据。
+
+只准备环境、不打开模型配置向导：
+
+```sh
+ignovate set up --environment-only
+ignovate doctor --output-format json
+```
+
+未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 启动器会将当前目录和显式的 Windows 项目路径传入 WSL。
+
+完整的安装位置、PATH、校验、升级和源码构建说明见 [Release 安装说明](docs/INSTALL.md)。
+
 ## 欢迎与模型配置
 
 首次在交互终端运行 `ignovate`，会显示左对齐的品牌欢迎页。Textual 引导分为“连接模型 → 推理强度 → 本次权限”三步：Enter 前进、方向键选择，Esc 返回上一步，Ctrl+C 退出。模型连接页填写 API 地址、模型 ID 和隐藏的 API Key；已有密钥留空保留。最后确认权限后才保存并进入会话，中途退出不写配置。可随时重新打开指引：
 
 ```bash
-ignovate --setup
+ignovate set up
 ```
+
+旧命令 `ignovate --setup` 继续兼容；Release 启动器使用 `set up` 时也会检查和修复环境。
 
 模型连接保存在用户目录 `~/.ignovate/config.json`，文件权限为 0600，优先于原有 `.env`，不进入项目或会话日志。API Key 使用隐藏输入；此文件是本地明文连接配置。`IGNOVATE_CONFIG_DIR` 可指定配置目录。推理偏好仍按用户/项目/本地/CLI/会话覆盖顺序生效。无头模式与非交互终端不弹欢迎，缺失配置时会给出配置指引。
 
@@ -44,17 +100,7 @@ ignovate --reasoning-effort max --dangerously-skip-permissions
 
 这是一个用 Python、LangChain、LangGraph 和 DeepSeek 搭建的本地命令行编码助手。支持全屏的终端默认启动 Textual 仪表盘；其他交互终端使用保留滚动历史的 inline 界面；PyCharm 等非 TTY 控制台使用纯文本模式。默认情况下文件写入和命令执行需用户审批。
 
-## 环境准备
-
-推荐从 [GitHub Release](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包：macOS / Linux 使用 `*-unix.tar.gz`，Windows 使用 `*-windows.zip`（通过 WSL2 运行）。解压后运行 `sh install.sh` 或 PowerShell 的 `install.ps1`，重新打开终端，然后输入：
-
-```sh
-ignovate set up
-```
-
-命令会自动检测或下载 Python、隔离环境、固定版本的应用依赖和 ripgrep，然后进入模型配置向导。无需预装 Python 或手动激活虚拟环境；`ignovate set up --environment-only` 只准备环境。Windows 缺少 WSL / Ubuntu 时自动启动安装，系统要求重启时重启后运行同一个安装脚本续装。详细步骤与安装目录见 [Release 安装说明](docs/INSTALL.md)。
-
-从源码安装：
+## 从源码安装
 
 需要 Python 3.11 或更新的 Python 3 版本。macOS / Linux 下在项目根目录运行：
 
@@ -524,7 +570,7 @@ check_config.py  环境变量读取示例
 
 ## 发布验证
 
-macOS/Linux 下的文件描述符与进程组实现为本项目当前验证的平台边界。新建文件遵循 umask；完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
+运行时使用 macOS/Linux 的文件描述符与进程组实现，Windows 安装包通过 WSL2 运行同一 Linux 运行时。新建文件遵循 umask；完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
@@ -532,5 +578,7 @@ python scripts/smoke_wheel.py dist/ignovate_harness-1.0.1-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
+
+推送与 `pyproject.toml` 版本一致的 `v*` tag 后，[Release 工作流](.github/workflows/release.yml) 会执行 Python 3.11/3.13 完整测试、macOS/Linux 实际安装检查及 Windows PowerShell 启动器检查，全部通过后发布 Unix 安装包、Windows 安装包、wheel 和 `SHA256SUMS`。Windows CI 检查原生启动器的参数、路径和退出码传递；WSL 系统安装、管理员授权和重启流程仍需实机验证。
 
 真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](docs/reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 和 Windows 实机仍需另行验证。
