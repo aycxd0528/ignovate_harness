@@ -16,6 +16,8 @@ $env:Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell
 $exe = Join-Path $env:IGNOVATE_WINDOWS_BIN_DIR 'ignovate.exe'
 & $exe set up --environment-only
 if ($LASTEXITCODE -ne 0) { throw "Fresh setup failed: $LASTEXITCODE" }
+# A broken private tool must be repaired, even when its filename is present.
+[IO.File]::WriteAllText((Join-Path $env:IGNOVATE_INSTALL_HOME 'tools\rg.exe'), 'interrupted tool copy')
 & $exe set up --environment-only
 if ($LASTEXITCODE -ne 0) { throw "Repeat setup failed: $LASTEXITCODE" }
 & $exe --help

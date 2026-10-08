@@ -93,8 +93,12 @@ def edit_plan_with_editor(markdown: str, *, editor: str | None = None) -> str:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(markdown)
-        owner = OwnedProcess([*command, str(path)], env=command_environment())
-        returncode = owner.process.wait(timeout=3600)
+        if os.name == 'nt':
+            owner = OwnedProcess([*command, str(path)], env=command_environment())
+            returncode = owner.process.wait(timeout=3600)
+        else:
+            # A terminal editor must retain the caller's controlling terminal.
+            returncode = subprocess.run([*command, str(path)], env=command_environment(), timeout=3600).returncode
         if returncode:
             raise subprocess.CalledProcessError(returncode, [*command, str(path)])
         return path.read_text(encoding="utf-8")

@@ -49,7 +49,13 @@ try {
     Invoke-IgnovateChecked $uv @('--no-config', 'pip', 'install', '--python', $python, '--require-hashes', '-r', (Join-Path $PSScriptRoot 'requirements-release.lock'))
     Invoke-IgnovateChecked $uv @('--no-config', 'pip', 'install', '--python', $python, '--no-deps', '--reinstall-package', 'ignovate-harness', (Join-Path $PSScriptRoot "ignovate_harness-$version-py3-none-any.whl"))
     Invoke-IgnovateChecked $uv @('--no-config', 'pip', 'check', '--python', $python)
-    if (-not (Get-Command rg.exe -CommandType Application -ErrorAction SilentlyContinue)) {
+    $rg = Get-Command rg.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $rgReady = $false
+    if ($rg) {
+        try { Invoke-IgnovateChecked $rg.Path @('--version'); $rgReady = $true }
+        catch { Write-Host 'Existing ripgrep is unusable; downloading a replacement...' }
+    }
+    if (-not $rgReady) {
         Write-Host 'Downloading ripgrep...'
         $archive = 'ripgrep-15.2.0-x86_64-pc-windows-msvc.zip'
         $url = "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/$archive"
@@ -57,10 +63,18 @@ try {
         $hashFile = Join-Path $work 'rg.sha256'
         Get-IgnovateDownload $url $zip
         Get-IgnovateDownload "$url.sha256" $hashFile
-        $expected = ([IO.File]::ReadAllText($hashFile).Trim() -split '\s+')[0]
+        $hashes = [Regex]::Matches([IO.File]::ReadAllText($hashFile), '(?i)(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])')
+        if ($hashes.Count -ne 1) { throw 'Invalid ripgrep checksum file.' }
+        $expected = $hashes[0].Value.ToLowerInvariant()
         if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant() -ne $expected) { throw 'ripgrep download checksum failed.' }
         Expand-Archive -LiteralPath $zip -DestinationPath $work
-        Copy-Item -LiteralPath (Join-Path $work 'ripgrep-15.2.0-x86_64-pc-windows-msvc\rg.exe') -Destination $tools -Force
+        $downloadedRg = Join-Path $work 'ripgrep-15.2.0-x86_64-pc-windows-msvc\rg.exe'
+        Invoke-IgnovateChecked $downloadedRg @('--version')
+        $pendingRg = Join-Path $tools ('.rg-' + [Guid]::NewGuid().ToString('N') + '.exe')
+        try {
+            Copy-Item -LiteralPath $downloadedRg -Destination $pendingRg
+            Move-Item -LiteralPath $pendingRg -Destination (Join-Path $tools 'rg.exe') -Force
+        } finally { if (Test-Path -LiteralPath $pendingRg) { Remove-Item -LiteralPath $pendingRg -Force } }
     }
     Invoke-IgnovateChecked $python @('-c', 'import main, textual, mcp, langchain_deepseek; import sys; assert sys.platform == "win32"')
     [IO.File]::WriteAllText($ready, $version + "`n", (New-Object Text.UTF8Encoding $false))
