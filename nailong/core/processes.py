@@ -8,6 +8,7 @@ import os
 import signal
 from urllib.parse import urlsplit
 from nailong.tools.results import HeadTailBuffer
+from nailong.core.process_io import PipeCapture, command_environment, join_cleanup
 
 MAX_OUTPUT = 12_000
 
@@ -56,6 +57,9 @@ async def execute_process(command, cwd, *, timeout=30, stdout_contains=None,
             await writer.wait_closed()
             return {'ok':False,'exit_code':None,'output':'探测端口在启动前已被占用。',
                     'timed_out':False,'observed':False,'started':False}
+    if os.name == 'nt':
+        return await _execute_windows(command, cwd, timeout=timeout,
+            stdout_contains=stdout_contains, http_url=http_url, expected_status=expected_status)
     process = await asyncio.create_subprocess_shell(command, cwd=cwd,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True,
         env={key:value for key,value in os.environ.items() if key!='DEEPSEEK_API_KEY'})
@@ -127,4 +131,48 @@ async def execute_process(command, cwd, *, timeout=30, stdout_contains=None,
             'output_truncated':output.truncated,'cancelled':cancelled,
             'output':output.value()}
     if cancelled: raise ProcessCancelled(result)
+    return result
+
+
+async def _execute_windows(command, cwd, *, timeout, stdout_contains, http_url, expected_status):
+    """Native pipe readers and job ownership work independently of asyncio's loop."""
+    matched, window = False, ''
+    def observe(text):
+        nonlocal matched, window
+        if stdout_contains:
+            window = (window + text)[-max(8192, len(stdout_contains)*2):]
+            matched = matched or stdout_contains in window
+    capture = PipeCapture(command, cwd=cwd, shell=True, env=command_environment(),
+                          max_output_chars=MAX_OUTPUT, on_stdout=observe)
+    timed_out, observed, cancelled = False, False, False
+    loop = asyncio.get_running_loop()
+    deadline = loop.time()+timeout
+    try:
+        while True:
+            observed = (await asyncio.to_thread(_http_status, http_url) == expected_status
+                        if http_url else matched)
+            if (stdout_contains or http_url) and observed:
+                break
+            if capture.finished:
+                observed = observed or matched
+                break
+            if loop.time() >= deadline:
+                timed_out = True
+                break
+            await asyncio.sleep(.025)
+    except asyncio.CancelledError:
+        cancelled = True
+    finally:
+        cleanup = asyncio.create_task(asyncio.to_thread(capture.close))
+        cancelled = await join_cleanup(cleanup) or cancelled
+    if capture.errors:
+        raise capture.errors[0]
+    observed = observed or matched
+    is_run = stdout_contains is not None or http_url is not None
+    result = {'ok': not cancelled and not timed_out and (observed if is_run else capture.process.returncode == 0),
+              'started': True, 'exit_code': capture.process.returncode, 'timed_out': timed_out,
+              'observed': observed if is_run else None, 'output_truncated': capture.stdout.truncated,
+              'cancelled': cancelled, 'output': capture.stdout.value()}
+    if cancelled:
+        raise ProcessCancelled(result)
     return result

@@ -12,6 +12,8 @@ from pathlib import Path
 
 from nailong.core.preferences import atomic_json, read_config, safe_config_path
 from nailong.core.task_requirements import append_requirement, requirement_records
+from nailong.core.file_locks import file_lock
+from nailong.core.safe_files import _path, is_link_or_reparse
 
 PHASES = frozenset({'investigate', 'implement', 'verify', 'deliver'})
 LIFECYCLES = frozenset({'active', 'paused', 'blocked', 'completed'})
@@ -43,19 +45,14 @@ class TaskStore:
             if thread_id in self._held_locks:
                 yield
                 return
-            import fcntl
             self.sessions.session_path(thread_id)
             path = safe_config_path(self.directory / f'{thread_id}.lock', self.boundary)
-            path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
-                self._held_locks[thread_id] = descriptor
-                yield
-            finally:
-                self._held_locks.pop(thread_id, None)
-                fcntl.flock(descriptor, fcntl.LOCK_UN)
-                os.close(descriptor)
+            with file_lock(path) as descriptor:
+                try:
+                    self._held_locks[thread_id] = descriptor
+                    yield
+                finally:
+                    self._held_locks.pop(thread_id, None)
 
     def _path(self, thread_id):
         self.sessions.session_path(thread_id)  # Reuse the session ID validator.
@@ -185,6 +182,10 @@ class TaskStore:
         if '..' in path.parts:
             raise ValueError('任务范围不能穿越项目目录。')
         path = path if path.is_absolute() else self.project_root / path
+        if os.name == 'nt':
+            _path(path)
+            if any(is_link_or_reparse(item) for item in (path, *path.parents)):
+                raise ValueError('任务范围不能经过重解析点或目录联接。')
         resolved = path.resolve(strict=False)
         if not resolved.is_relative_to(self.project_root):
             raise ValueError('任务范围必须在当前项目内。')
@@ -192,7 +193,7 @@ class TaskStore:
         parts = resolved.relative_to(self.project_root).parts
         if any(FileSession._is_protected(part) for part in parts):
             raise ValueError('任务范围包含受保护路径。')
-        return str(resolved.relative_to(self.project_root)) or '.'
+        return resolved.relative_to(self.project_root).as_posix() or '.'
 
     def begin(self, thread_id, objective, *, profile='chat', scope=None, new=False, latest_request=None):
         if not isinstance(objective, str) or not objective.strip():

@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 import hashlib
 import os
-import tempfile
 import itertools
 import stat
 
 from nailong.core.preferences import safe_config_path
+from nailong.core.safe_files import atomic_write_bytes, open_regular_file, pinned_directory
 from nailong.core.memory_knowledge import (
     KnowledgeMetadataError, SourceValidator, declaration, invalid_knowledge,
     parse_frontmatter, project_identity, project_relative_path, EPISTEMIC_KEYS, KNOWLEDGE_DETAIL_KEYS,
@@ -202,6 +202,22 @@ class MemoryStore:
                 hashlib.sha256(raw).hexdigest())
 
     def _read_bytes_path(self,path,revalidate,max_bytes):
+        if os.name == 'nt':
+            with open_regular_file(path) as stream:
+                before = os.fstat(stream.fileno())
+                revalidate()
+                if before.st_size > max_bytes:
+                    raise ValueError('记忆或来源文件超过大小限制。')
+                raw = stream.read(max_bytes + 1)
+                after = os.fstat(stream.fileno())
+                signature = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+                revalidate()
+                current = path.stat(follow_symlinks=False)
+                if signature(before) != signature(after) or signature(after) != signature(current):
+                    raise ValueError('记忆或来源文件读取期间发生变化。')
+                if len(raw) > max_bytes:
+                    raise ValueError('记忆或来源文件超过大小限制。')
+                return raw
         # Nonblocking open avoids hanging on named pipes; only regular files are memory.
         # Pin every parent descriptor instead of trusting a pathname checked
         # earlier; concurrent ancestor symlink swaps must not redirect reads.
@@ -361,27 +377,23 @@ class MemoryStore:
         if not isinstance(content,str) or len(content.encode('utf-8'))>160_000:
             raise ValueError('记忆内容无效或超过大小限制。')
         path=self.path(scope)
-        raw=path.read_bytes() if path.exists() else None
+        raw=self._read_bytes_path(path, lambda: self.path(scope), MAX_MEMORY_BYTES) if path.exists() else None
         digest=hashlib.sha256(raw).hexdigest() if raw is not None else None
         return MemoryEdit(scope,path,digest,self.read(scope),content)
 
     def commit(self,edit):
         path=self.path(edit.scope)
         if path!=edit.path: raise ValueError('记忆编辑路径发生冲突。')
-        raw=path.read_bytes() if path.exists() else None
+        raw=self._read_bytes_path(path, lambda: self.path(edit.scope), MAX_MEMORY_BYTES) if path.exists() else None
         digest=hashlib.sha256(raw).hexdigest() if raw is not None else None
         if digest!=edit.before_digest: raise ValueError('记忆文件被其他进程修改，编辑发生冲突。')
         content=edit.content.replace(self.api_key,'[密钥已隐藏]') if self.api_key else edit.content
-        path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-        descriptor,temporary=tempfile.mkstemp(dir=path.parent,prefix='.memory-')
-        try:
-            with os.fdopen(descriptor,'w',encoding='utf-8') as stream: stream.write(content)
+        with pinned_directory(path.parent, create=True):
             self.path(edit.scope)
-            if (hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None)!=edit.before_digest:
+            current=self._read_bytes_path(path, lambda: self.path(edit.scope), MAX_MEMORY_BYTES) if path.exists() else None
+            if (hashlib.sha256(current).hexdigest() if current is not None else None)!=edit.before_digest:
                 raise ValueError('记忆文件保存前发生冲突。')
-            os.replace(temporary,path)
-        finally:
-            if os.path.exists(temporary): os.unlink(temporary)
+            atomic_write_bytes(path, content.encode('utf-8'))
 
 
 def load_project_memory(

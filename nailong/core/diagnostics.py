@@ -116,7 +116,7 @@ def diagnose(project_root,*,env=None):
         checks.append({'name':name,'status':status,'detail':detail,'repair':repair if status!='ok' else ''})
     add('python','ok' if sys.version_info>=(3,11) else 'error',sys.version.split()[0],'使用 Python 3.11 或更新版本创建虚拟环境')
     add('interpreter','ok',sys.executable)
-    add('virtualenv','ok' if sys.prefix!=sys.base_prefix else 'warning',sys.prefix,'python3.11 -m venv .venv && source .venv/bin/activate')
+    add('virtualenv','ok' if sys.prefix!=sys.base_prefix else 'warning',sys.prefix,'ignovate set up --environment-only' if os.name == 'nt' else 'python3.11 -m venv .venv && source .venv/bin/activate')
     add('entrypoint','ok' if shutil.which('ignovate') else 'warning',shutil.which('ignovate') or 'ignovate 不在 PATH',install)
     add('project','ok' if root.is_dir() else 'error',str(root))
     missing=[name for name in ('DEEPSEEK_API_KEY','DEEPSEEK_BASE_URL','DEEPSEEK_MODEL') if not str(env.get(name) or '').strip()]

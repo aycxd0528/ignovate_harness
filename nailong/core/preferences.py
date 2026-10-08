@@ -9,6 +9,12 @@ from pathlib import Path
 
 
 def safe_config_path(path: Path, boundary: Path) -> Path:
+    if os.name == "nt":
+        from nailong.core.safe_files import validate_windows_path, is_link_or_reparse
+        validate_windows_path(path.absolute())
+        for ancestor in (*reversed(path.absolute().parents), path.absolute()):
+            if is_link_or_reparse(ancestor):
+                raise ValueError('配置路径不能被链接或重解析点重定向。')
     path, boundary = path.absolute(), boundary.resolve()
     try:
         parts = path.relative_to(boundary).parts
@@ -31,7 +37,15 @@ def read_config(path: Path, boundary: Path) -> dict:
     try:
         if path.stat().st_size > 1024*1024:
             raise ValueError('配置文件超过 1 MiB。')
-        value = json.loads(path.read_text(encoding='utf-8'))
+        if os.name == "nt":
+            from nailong.core.safe_files import open_regular_file
+            with open_regular_file(path) as source:
+                data = source.read(1024*1024+1)
+            if len(data) > 1024*1024:
+                raise ValueError('配置文件超过 1 MiB。')
+            value = json.loads(data.decode('utf-8'))
+        else:
+            value = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f'配置文件无法读取或 JSON 无效：{path.name}') from error
     if not isinstance(value,dict):
@@ -42,6 +56,10 @@ def read_config(path: Path, boundary: Path) -> dict:
 def atomic_json(path: Path, value: dict, boundary: Path) -> None:
     path = safe_config_path(path,boundary)
     encoded = json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+'\n'
+    if os.name == "nt":
+        from nailong.core.safe_files import atomic_write_bytes
+        atomic_write_bytes(path, encoded.encode('utf-8'))
+        return
     path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     descriptor, temporary = tempfile.mkstemp(prefix='.nailong-',dir=path.parent)
     try:

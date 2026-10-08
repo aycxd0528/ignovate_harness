@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from nailong.core.process_io import OwnedProcess, command_environment, join_cleanup, split_editor_command
+
 
 @dataclass(frozen=True)
 class ApprovedPlan:
@@ -76,53 +78,60 @@ class PlanStore:
 
 def edit_plan_with_editor(markdown: str, *, editor: str | None = None) -> str:
     """Open a private temporary copy with the user's configured editor."""
-    import shlex
     import subprocess
     import tempfile
 
     selected = editor or os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if not selected:
         raise ValueError("尚未设置 VISUAL 或 EDITOR 环境变量，无法编辑计划。")
-    command = shlex.split(selected)
+    command = split_editor_command(selected)
     if not command:
         raise ValueError("编辑器命令为空。")
     descriptor, filename = tempfile.mkstemp(prefix="nailong-plan-", suffix=".md")
     path = Path(filename)
+    owner = None
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
             output.write(markdown)
-        subprocess.run([*command, str(path)], check=True, timeout=3600)
+        owner = OwnedProcess([*command, str(path)], env=command_environment())
+        returncode = owner.process.wait(timeout=3600)
+        if returncode:
+            raise subprocess.CalledProcessError(returncode, [*command, str(path)])
         return path.read_text(encoding="utf-8")
     finally:
+        if owner is not None:
+            owner.close()
         path.unlink(missing_ok=True)
 
 
 async def edit_plan_with_editor_async(markdown: str) -> str:
     """Own the terminal editor process until exit or cancellation, on a private copy."""
     import asyncio
-    import shlex
-    import signal
     import tempfile
-    selected=os.environ.get('VISUAL') or os.environ.get('EDITOR')
-    if not selected: raise ValueError('尚未设置 VISUAL 或 EDITOR，无法启动编辑器。')
-    command=shlex.split(selected)
-    if not command: raise ValueError('编辑器命令为空。')
-    fd,filename=tempfile.mkstemp(prefix='nailong-memory-',suffix='.md')
-    path=Path(filename); process=None
+    selected = os.environ.get('VISUAL') or os.environ.get('EDITOR')
+    if not selected:
+        raise ValueError('尚未设置 VISUAL 或 EDITOR，无法启动编辑器。')
+    command = split_editor_command(selected)
+    if not command:
+        raise ValueError('编辑器命令为空。')
+    fd, filename = tempfile.mkstemp(prefix='nailong-memory-', suffix='.md')
+    path, owner = Path(filename), None
+    cancelled = False
     try:
-        with os.fdopen(fd,'w',encoding='utf-8') as output: output.write(markdown)
-        process=await asyncio.create_subprocess_exec(*command,str(path),start_new_session=True,
-            env={key:value for key,value in os.environ.items() if key!='DEEPSEEK_API_KEY'})
-        result=await process.wait()
-        if result: raise ValueError('编辑器未正常退出；未保存记忆。')
-        if path.stat().st_size>160_000: raise ValueError('编辑内容超过 160 KiB 上限。')
+        with os.fdopen(fd, 'w', encoding='utf-8') as output:
+            output.write(markdown)
+        owner = OwnedProcess([*command, str(path)], env=command_environment())
+        while owner.process.poll() is None:
+            await asyncio.sleep(.025)
+        if owner.process.returncode:
+            raise ValueError('编辑器未正常退出；未保存记忆。')
+        if path.stat().st_size > 160_000:
+            raise ValueError('编辑内容超过 160 KiB 上限。')
         return path.read_text(encoding='utf-8')
     finally:
-        if process is not None:
-            try: os.killpg(process.pid,signal.SIGKILL)
-            except ProcessLookupError: pass
-            task=asyncio.create_task(process.wait())
-            while not task.done():
-                try: await asyncio.shield(task)
-                except asyncio.CancelledError: continue
+        if owner is not None:
+            cleanup = asyncio.create_task(asyncio.to_thread(owner.close))
+            cancelled = await join_cleanup(cleanup)
         path.unlink(missing_ok=True)
+        if cancelled:
+            raise asyncio.CancelledError

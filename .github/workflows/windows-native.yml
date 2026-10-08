@@ -8,7 +8,7 @@ permissions:
 jobs:
   installer:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
@@ -21,3 +21,34 @@ jobs:
       - name: Native launcher and repair smoke
         shell: powershell
         run: ./scripts/smoke_windows_installer.ps1 -Archive (Get-Item dist/release/*-windows.zip).FullName
+      - name: Fresh native installation without preinstalled Python
+        shell: powershell
+        run: ./scripts/smoke_windows_native.ps1 -Archive (Get-Item dist/release/*-windows.zip).FullName
+  runtime:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install locked dependencies
+        run: |
+          python -m pip install --require-hashes -r requirements-release.lock
+          python -m pip install --no-deps -e .
+        continue-on-error: false
+      - name: Native ripgrep
+        shell: powershell
+        run: |
+          $url = 'https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip'
+          Invoke-WebRequest $url -OutFile "$env:RUNNER_TEMP\rg.zip"
+          $hash = (Invoke-WebRequest "$url.sha256").Content.Trim().Split(' ')[0]
+          if ((Get-FileHash "$env:RUNNER_TEMP\rg.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) { throw 'ripgrep checksum failed' }
+          Expand-Archive "$env:RUNNER_TEMP\rg.zip" "$env:RUNNER_TEMP\rg"
+          "$env:RUNNER_TEMP\rg\ripgrep-15.2.0-x86_64-pc-windows-msvc" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Native runtime tests
+        run: python -m unittest discover -s tests -v

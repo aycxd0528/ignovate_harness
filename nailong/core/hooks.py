@@ -8,14 +8,13 @@ import inspect
 import json
 import os
 import re
-import signal
-import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 import local_tools
+from nailong.core.process_io import capture_streams, join_cleanup
 
 
 @dataclass(frozen=True)
@@ -86,7 +85,8 @@ class HookRunner:
             descriptor, temporary_name = tempfile.mkstemp(prefix=".settings.local.", dir=resolved_parent)
             temporary = Path(temporary_name)
             try:
-                os.fchmod(descriptor, 0o600)
+                if os.name == "posix":
+                    os.fchmod(descriptor, 0o600)
                 payload = memoryview(json.dumps(current, ensure_ascii=False, indent=2).encode("utf-8"))
                 while payload:
                     written = os.write(descriptor, payload)
@@ -168,7 +168,15 @@ class HookRunner:
                     "NAILONG_FILE_PATH": path,
                     "NAILONG_PROMPT": prompt.replace(self.api_key, "[密钥已隐藏]") if self.api_key else prompt,
                 })
-                result = await asyncio.to_thread(self._execute, command, environment)
+                cancel_event = threading.Event()
+                worker = asyncio.create_task(asyncio.to_thread(
+                    self._execute, command, environment, cancel_event=cancel_event))
+                try:
+                    result = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancel_event.set()
+                    await join_cleanup(worker)
+                    raise
                 outputs.append(HookOutput(
                     event=event,
                     command="[已批准的项目钩子]",
@@ -185,30 +193,12 @@ class HookRunner:
                     return HookRunResult(tuple(outputs), True, result.stderr or result.stdout or "钩子阻止了操作。")
         return HookRunResult(tuple(outputs))
 
-    def _execute(self, command: str, environment: dict[str, str]) -> HookOutput:
-        process = subprocess.Popen(
-            command,
-            shell=True,
-            cwd=self.project_root,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=(os.name == "posix"),
+    def _execute(self, command: str, environment: dict[str, str], *, cancel_event=None) -> HookOutput:
+        stdout, stderr, _, timed_out, returncode = capture_streams(
+            command, cwd=self.project_root, env=environment, timeout=self.timeout_seconds,
+            max_output_chars=self.max_output_chars, separate_stderr=True, prefix=True,
+            cancel_event=cancel_event, universal_newlines=True,
         )
-        timed_out = False
-        try:
-            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            if os.name == "posix":
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:
-                process.kill()
-            stdout, stderr = process.communicate()
         if self.api_key:
             stdout = stdout.replace(self.api_key, "[密钥已隐藏]")
             stderr = stderr.replace(self.api_key, "[密钥已隐藏]")
@@ -217,6 +207,6 @@ class HookRunner:
             command="[已批准的项目钩子]",
             stdout=stdout[: self.max_output_chars],
             stderr=stderr[: self.max_output_chars],
-            exit_code=process.returncode,
+            exit_code=returncode,
             timed_out=timed_out,
         )
