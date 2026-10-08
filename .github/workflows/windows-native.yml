@@ -7,6 +7,15 @@ on:
 permissions:
   contents: read
 jobs:
+  file-probe:
+    runs-on: windows-2025
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.13'
+      - run: python scripts/probe_windows_files.py
   installer:
     runs-on: windows-2025
     timeout-minutes: 20
