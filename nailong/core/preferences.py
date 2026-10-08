@@ -15,6 +15,8 @@ def safe_config_path(path: Path, boundary: Path) -> Path:
         for ancestor in (*reversed(path.absolute().parents), path.absolute()):
             if is_link_or_reparse(ancestor):
                 raise ValueError('配置路径不能被链接或重解析点重定向。')
+        # Resolve harmless 8.3 aliases only after checking the original ancestry.
+        path = path.resolve(strict=False)
     path, boundary = path.absolute(), boundary.resolve()
     try:
         parts = path.relative_to(boundary).parts

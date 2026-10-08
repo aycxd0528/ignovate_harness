@@ -11,7 +11,7 @@ kernel = ctypes.WinDLL('kernel32', use_last_error=True)
 security = ctypes.WinDLL('advapi32', use_last_error=True)
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 GENERIC_READ, GENERIC_WRITE = 0x80000000, 0x40000000
-READ_ATTRIBUTES, WRITE_DAC = 0x80, 0x40000
+LIST_DIRECTORY, READ_ATTRIBUTES, READ_CONTROL, WRITE_DAC = 0x1, 0x80, 0x20000, 0x40000
 SHARE_READ, SHARE_WRITE = 1, 2
 OPEN_EXISTING, OPEN_ALWAYS, CREATE_NEW = 3, 4, 1
 REPARSE_POINT, DIRECTORY = 0x400, 0x10
@@ -154,11 +154,15 @@ def pin_directory(path, *, create=False, private=True):
     handles = []
     try:
         current = type(path)(path.anchor)
-        handles.append(open_handle(current, directory=True, access=READ_ATTRIBUTES))
+        # Metadata-only opens do not participate in Windows share accounting.
+        # LIST_DIRECTORY gives this handle read access, so its omitted write and
+        # delete sharing actually prevents ancestor replacement/reparse updates.
+        access = READ_ATTRIBUTES | LIST_DIRECTORY
+        handles.append(open_handle(current, directory=True, access=access))
         for part in path.parts[1:]:
             current /= part
             try:
-                handle = open_handle(current, directory=True, access=READ_ATTRIBUTES)
+                handle = open_handle(current, directory=True, access=access)
             except FileNotFoundError:
                 if not create:
                     raise
@@ -166,7 +170,7 @@ def pin_directory(path, *, create=False, private=True):
                     if not CreateDirectory(extended(current), ctypes.byref(attributes) if attributes else None):
                         if ctypes.get_last_error() != 183:
                             raise _error(current)
-                handle = open_handle(current, directory=True, access=READ_ATTRIBUTES)
+                handle = open_handle(current, directory=True, access=access)
             handles.append(handle)
         yield handles[-1]
     finally:
@@ -182,7 +186,9 @@ def replace_project_file(temporary, destination):
 
 def set_private_permissions(path, *, directory=False):
     with pin_directory(path.parent):
-        handle = open_handle(path, directory=directory, access=READ_ATTRIBUTES | WRITE_DAC)
+        # SetSecurityInfo also queries the existing descriptor while handling
+        # inheritance/protection. WRITE_DAC alone cannot grant that query.
+        handle = open_handle(path, directory=directory, access=READ_ATTRIBUTES | READ_CONTROL | WRITE_DAC)
         try:
             with private_security(directory=directory) as attributes:
                 present, defaulted, dacl = wintypes.BOOL(), wintypes.BOOL(), wintypes.LPVOID()

@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 """Local execution-boundary contracts; no model/provider calls are made."""
 
 import asyncio
@@ -473,7 +474,7 @@ class ManagedSyncToolsTests(Workspace, unittest.TestCase):
     def test_sync_command_keeps_final_summary_after_large_unicode_output(self):
         self.execution.approval_handler = lambda *args: 'approve_once'
         source = "print('BEGIN'); print('甲'*16000); print('FINAL_FAILURE_SUMMARY')"
-        command = shlex.quote(sys.executable) + ' -c ' + shlex.quote(source)
+        command = python_command(source)
         result = self.body(self.call('run_command', {'command': command}))
         self.assertTrue(result['ok'])
         self.assertTrue(result['output_truncated'])
@@ -686,7 +687,7 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
     async def test_approved_async_command_cancellation_stops_process_and_late_effect(self):
         self.execution.approval_handler = lambda *args: 'approve_once'
         source = "import os,time; open('pid','w').write(str(os.getpid())); time.sleep(.4); open('late','w').write('bad')"
-        command = shlex.quote(sys.executable) + ' -c ' + shlex.quote(source)
+        command = python_command(source)
         operation = asyncio.create_task(self.acall('run_command', {'command': command}))
         try:
             async with asyncio.timeout(2):

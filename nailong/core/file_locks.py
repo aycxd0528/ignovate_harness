@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import ctypes
 import os
+import stat
 
 from nailong.core.safe_files import _path, pinned_directory
 
@@ -36,6 +37,8 @@ def file_lock(path, *, blocking=True):
             descriptor = os.open(path.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
                                  0o600, dir_fd=directory)
             try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise ValueError('文件锁必须使用普通文件。')
                 fcntl.flock(descriptor, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
                 yield descriptor
             finally:

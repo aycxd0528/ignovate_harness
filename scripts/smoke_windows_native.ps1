@@ -9,6 +9,8 @@ $env:IGNOVATE_INSTALL_HOME = Join-Path $root 'application with spaces'
 $env:IGNOVATE_WINDOWS_BIN_DIR = Join-Path $root 'bin'
 $env:IGNOVATE_CONFIG_DIR = Join-Path $root 'config'
 $env:IGNOVATE_NO_MODIFY_PATH = '1'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
 # Force real downloads rather than using the CI image's Python / uv / rg.
 $env:UV_PYTHON_PREFERENCE = 'only-managed'
 $env:Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
@@ -34,7 +36,7 @@ $env:Path = "$(Join-Path $env:IGNOVATE_INSTALL_HOME 'tools');$env:Path"
 # Copy only acceptance tests outside the checkout: imports must come from wheel.
 $tests = Join-Path $root 'acceptance'
 New-Item -ItemType Directory -Path $tests | Out-Null
-foreach ($name in @('test_native_tools.py','test_native_file_backend.py','test_native_processes.py')) {
+foreach ($name in @('test_native_tools.py','test_native_file_backend.py','test_native_processes.py','test_native_plain.py')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\tests\$name") -Destination $tests
 }
 Push-Location $root

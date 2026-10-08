@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 """Real local workflow boundaries: durable identity, approval and cancellation."""
 import asyncio
 import copy
@@ -41,7 +42,7 @@ class WorkflowFixture(unittest.IsolatedAsyncioTestCase):
         self.configure(self.steps)
 
     def command(self, body):
-        return shlex.join([sys.executable, '-B', '-c', body])
+        return shell_join([sys.executable, '-B', '-c', body])
 
     def configure(self, steps):
         (self.root / '.nailong/settings.json').write_text(json.dumps({'verification': {'steps': steps}}))

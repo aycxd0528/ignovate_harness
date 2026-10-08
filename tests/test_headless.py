@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 import asyncio
 import io
 import json
@@ -72,7 +73,7 @@ class HeadlessTests(unittest.TestCase):
             settings_path.write_text(json.dumps({'permissions': {'deny': ['Write(*)', 'Bash(*)']}}))
             before = settings_path.read_bytes()
             calls = [{'name': 'write_file', 'args': {'path': 'unattended.txt', 'content': 'created'}, 'id': 'write'},
-                {'name': 'run_command', 'args': {'command': shlex.join([sys.executable, '-B', '-c',
+                {'name': 'run_command', 'args': {'command': shell_join([sys.executable, '-B', '-c',
                     "from pathlib import Path;Path('command.txt').write_text('ran')"])}, 'id': 'command'}]
             code, payload, _ = self.run_permission_fixture(project, Path(directory) / 'state',
                 [AIMessage(content='', tool_calls=calls), AIMessage(content='请求完成。')],

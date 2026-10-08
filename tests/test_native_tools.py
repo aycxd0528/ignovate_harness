@@ -16,7 +16,7 @@ class NativeToolsTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix='ignovate native tools ')
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        self.root = Path(self.directory.name).resolve()
         self.session = FileSession(self.root)
 
     def test_utf8_create_read_edit_glob_and_stale_version(self):

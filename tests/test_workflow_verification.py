@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 import asyncio
 import importlib
 import json
@@ -24,7 +25,7 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
     def config(self,steps):
         (self.root/'.nailong').mkdir(exist_ok=True)
         (self.root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':steps}}))
-    def command(self,code): return shlex.quote(sys.executable)+' -B -u -c '+shlex.quote(code)
+    def command(self,code): return python_command(code)
     def service(self):
         try: cls=importlib.import_module('nailong.core.verification').VerificationService
         except ModuleNotFoundError: self.fail('Verification service missing')
@@ -79,7 +80,7 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
     async def test_http_and_cancellation_cleanup(self):
         with socket.socket() as listener:
             listener.bind(('127.0.0.1',0)); port=listener.getsockname()[1]
-        self.config([{'name':'http','kind':'run','command':shlex.quote(sys.executable)+f' -B -u -m http.server {port} --bind 127.0.0.1',
+        self.config([{'name':'http','kind':'run','command':shell_join([sys.executable, '-B', '-u', '-m', 'http.server', str(port), '--bind', '127.0.0.1']),
                      'http_url':f'http://127.0.0.1:{port}/','expected_status':200,'timeout_seconds':3}])
         result=await self.run_steps(); self.assertEqual(result['status'],'passed')
         with socket.socket() as connection: self.assertNotEqual(connection.connect_ex(('127.0.0.1',port)),0)

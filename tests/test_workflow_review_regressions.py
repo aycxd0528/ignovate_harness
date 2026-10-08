@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 import asyncio
 import json
 import os
@@ -94,7 +95,7 @@ class ReviewToolCancellationTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as root:
             execution = ToolExecutionContext(root, approval_handler=lambda *args: 'approve_once')
             tools=build_tools(file_session=FileSession(root), execution_context=execution)
-            command=shlex.quote(sys.executable)+' -B -c '+shlex.quote("import time,os; open('pid','w').write(str(os.getpid())); time.sleep(.4); open('late','w').write('bad')")
+            command=python_command("import time,os; open('pid','w').write(str(os.getpid())); time.sleep(.4); open('late','w').write('bad')")
             tool=next(item for item in tools if item.name=='run_command')
             task=asyncio.create_task(tool.ainvoke({'command':command}))
             async def wait_started():

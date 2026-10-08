@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 """End-state regressions found while auditing the approved workflow design."""
 import asyncio
 import json
@@ -168,7 +169,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
             proof=json.loads(await tool.ainvoke({'command':'true'}))
             self.assertTrue(proof['ok']);self.assertTrue(proof['started'])
             self.assertTrue(goals.get(goal.id).verification_succeeded)
-            command=shlex.join([sys.executable,'-B','-c',"from pathlib import Path;import os,time;Path('pid').write_text(str(os.getpid()));Path('side-effect').write_text('changed');time.sleep(30);Path('late').write_text('unexpected')"])
+            command=shell_join([sys.executable,'-B','-c',"from pathlib import Path;import os,time;Path('pid').write_text(str(os.getpid()));Path('side-effect').write_text('changed');time.sleep(30);Path('late').write_text('unexpected')"])
             task=asyncio.create_task(tool.ainvoke({'command':command}))
             try:
                 async def started():
@@ -236,7 +237,7 @@ class FinalLifecycleTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);script=root/'editor.py';info=root/'info.json'
             script.write_text("import json,os,sys,time\nfrom pathlib import Path\np=Path(sys.argv[1])\nPath("+repr(str(info))+").write_text(json.dumps({'pid':os.getpid(),'path':str(p),'mode':p.stat().st_mode&0o777,'key':os.environ.get('DEEPSEEK_API_KEY')}))\ntime.sleep(30)\n")
-            with patch.dict(os.environ,{'VISUAL':shlex.join([sys.executable,str(script)]),'DEEPSEEK_API_KEY':'unit-private-key'}):
+            with patch.dict(os.environ,{'VISUAL':editor_command([sys.executable,str(script)]),'DEEPSEEK_API_KEY':'unit-private-key'}):
                 task=asyncio.create_task(edit_plan_with_editor_async('original'))
                 try:
                     for _ in range(100):

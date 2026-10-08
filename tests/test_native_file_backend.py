@@ -163,6 +163,48 @@ for index in range(8):
 
 @unittest.skipUnless(os.name == 'nt', 'requires actual Win32 handles and NTFS junctions')
 class WindowsHandleTests(NativeFileBackendTests):
+    def trustees(self, target):
+        """Read actual ACE SIDs, avoiding SDDL aliases such as LA for RID 500."""
+        import ctypes
+        from ctypes import wintypes
+        from nailong.core._win32_files import LocalFree, GetDacl, SidToString
+        security = ctypes.WinDLL('advapi32', use_last_error=True)
+        get_security = security.GetNamedSecurityInfoW
+        get_security.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            wintypes.LPVOID, wintypes.LPVOID, wintypes.LPVOID, wintypes.LPVOID,
+            ctypes.POINTER(wintypes.LPVOID)]
+        get_security.restype = wintypes.DWORD
+        get_ace = security.GetAce
+        get_ace.argtypes = [wintypes.LPVOID, wintypes.DWORD, ctypes.POINTER(wintypes.LPVOID)]
+        get_ace.restype = wintypes.BOOL
+        class Acl(ctypes.Structure):
+            _fields_ = [('revision', wintypes.BYTE), ('reserved', wintypes.BYTE),
+                        ('size', wintypes.WORD), ('count', wintypes.WORD), ('reserved2', wintypes.WORD)]
+        class Ace(ctypes.Structure):
+            _fields_ = [('kind', wintypes.BYTE), ('flags', wintypes.BYTE),
+                        ('size', wintypes.WORD), ('mask', wintypes.DWORD), ('sid', wintypes.DWORD)]
+        descriptor, dacl = wintypes.LPVOID(), wintypes.LPVOID()
+        present, defaulted = wintypes.BOOL(), wintypes.BOOL()
+        self.assertEqual(get_security(str(target), 1, 4, None, None, None, None,
+                                      ctypes.byref(descriptor)), 0)
+        try:
+            self.assertTrue(GetDacl(descriptor, ctypes.byref(present), ctypes.byref(dacl), ctypes.byref(defaulted)))
+            self.assertTrue(present.value and dacl.value, 'private data must have a non-null DACL')
+            result = []
+            for index in range(ctypes.cast(dacl, ctypes.POINTER(Acl)).contents.count):
+                pointer, output = wintypes.LPVOID(), wintypes.LPWSTR()
+                self.assertTrue(get_ace(dacl, index, ctypes.byref(pointer)))
+                ace = ctypes.cast(pointer, ctypes.POINTER(Ace)).contents
+                self.assertEqual(ace.kind, 0, 'private data must have only explicit access-allowed ACEs')
+                self.assertTrue(SidToString(pointer.value + Ace.sid.offset, ctypes.byref(output)))
+                try:
+                    result.append((output.value, ace.mask))
+                finally:
+                    LocalFree(ctypes.cast(output, wintypes.LPVOID))
+            return result
+        finally:
+            LocalFree(descriptor)
+
     def dacl(self, target):
         import ctypes
         from ctypes import wintypes
@@ -278,6 +320,32 @@ class WindowsHandleTests(NativeFileBackendTests):
         self.assertEqual(archive.save('one', HumanMessage(content='old secret')), reference)
         self.assertEqual(len(list((self.root / 'archive').rglob('*.json'))), 1)
 
+    def test_memory_round_trip_keeps_version_and_conflict_guard(self):
+        import hashlib
+        from nailong.core.memory import MemoryStore
+        backend = self.backend()
+        project = self.root / 'project'
+        project.mkdir()
+        store = MemoryStore(project, user_file=self.root / 'user' / 'context.md')
+        store.commit(store.stage('project', 'old body\n'))
+        try:
+            content, version = store.read_version('project')
+        except ValueError as error:
+            path = store.path('project')
+            with backend.open_regular_file(path) as stream:
+                # Native fstat/path-stat differences must be visible in CI.
+                opened, current = os.fstat(stream.fileno()), path.stat(follow_symlinks=False)
+            fields = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+            self.fail(f'memory read failed: {error}; handle={tuple(getattr(opened, key) for key in fields)}; '
+                      f'path={tuple(getattr(current, key) for key in fields)}')
+        self.assertEqual(content, 'old body\n')
+        self.assertEqual(version, hashlib.sha256(b'old body\n').hexdigest())
+        edit = store.stage('project', 'planned edit')
+        store.path('project').write_text('external change', encoding='utf-8')
+        with self.assertRaises(ValueError):
+            store.commit(edit)
+        self.assertEqual(store.read('project'), 'external change')
+
     def test_atomic_publication_pins_parents_until_rename_finishes(self):
         backend = self.backend()
         directory = self.root / 'state'
@@ -304,11 +372,13 @@ class WindowsHandleTests(NativeFileBackendTests):
             with self.subTest(target=target):
                 value = self.dacl(target)
                 self.assertTrue(value.startswith('D:P'), value)
-                trustees = [ace.split(';')[-1] for ace in value.split('(')[1:]]
-                self.assertEqual({sid.rstrip(')') for sid in trustees}, {_user_sid(), 'SY', 'BA'})
+                self.assertEqual(set(self.trustees(target)), {
+                    (_user_sid(), 0x1F01FF), ('S-1-5-18', 0x1F01FF), ('S-1-5-32-544', 0x1F01FF)})
         backend.private_file_permissions(path)
         backend.private_directory_permissions(path.parent)
         self.assertTrue(self.dacl(path).startswith('D:P'))
+        self.assertEqual(set(self.trustees(path)), {
+            (_user_sid(), 0x1F01FF), ('S-1-5-18', 0x1F01FF), ('S-1-5-32-544', 0x1F01FF)})
 
     def test_project_replacement_preserves_existing_dacl_and_new_file_inherits_parent(self):
         backend = self.backend()
