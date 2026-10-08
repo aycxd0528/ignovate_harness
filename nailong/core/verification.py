@@ -14,7 +14,23 @@ from pathlib import Path
 from nailong.core.preferences import read_config, safe_config_path
 from nailong.core.permissions import Decision, ApprovalDecision, PermissionEngine
 from nailong.core.processes import execute_process, probe_address, ProcessCancelled
+from nailong.core.process_io import join_cleanup
 from nailong.tools.files import FileSession
+
+
+async def _owned_worker(function, *args):
+    """Propagate cancellation only after background work releases its resources."""
+    worker = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError as cancelled:
+        try:
+            await join_cleanup(worker)
+        except Exception as error:
+            # Cancellation remains the outcome; retain a late worker failure
+            # as its cause rather than changing durable evidence to invalidated.
+            raise cancelled from error
+        raise
 
 
 def _git(root, *args):
@@ -170,8 +186,8 @@ class VerificationService:
             self.tasks.set_state(thread_id, phase='verify')
         task = self.tasks.snapshot(thread_id) if self.tasks is not None else None
         generated=sorted({raw for step in steps for raw in step['generated_paths']})
-        await asyncio.to_thread(self._validate_generated, generated)
-        before=await asyncio.to_thread(input_fingerprint,self.root,self._generated_files(generated))
+        await _owned_worker(self._validate_generated, generated)
+        before=await _owned_worker(input_fingerprint,self.root,self._generated_files(generated))
         record={'run_id':uuid.uuid4().hex,'thread_id':thread_id,'cwd':str(self.root),
             'started_at':datetime.now(timezone.utc).isoformat(),'status':'running','complete':name is None,
             'input_before':before,'declared_generated_paths':generated,'generated_paths':[],'steps':[]}
@@ -204,7 +220,7 @@ class VerificationService:
                     try:
                         from nailong.tools.coordination import project_coordinator
                         async with project_coordinator(self.root).async_scope():
-                            unchanged = await asyncio.to_thread(input_fingerprint,self.root,self._generated_files(generated))==before
+                            unchanged = await _owned_worker(input_fingerprint,self.root,self._generated_files(generated))==before
                             current_task=self.tasks.snapshot(thread_id) if self.tasks is not None else None
                             task_matches = (task is None and current_task is None or task is not None and current_task is not None
                                 and (task['task_id'],task['revision'])==(current_task['task_id'],current_task['revision']))
@@ -232,7 +248,7 @@ class VerificationService:
                     value=emit(TurnEvent('verification_step',row))
                     if inspect.isawaitable(value): await value
             record['generated_paths']=self._generated_files(generated)
-            record['input_after']=await asyncio.to_thread(input_fingerprint,self.root,record['generated_paths'])
+            record['input_after']=await _owned_worker(input_fingerprint,self.root,record['generated_paths'])
             record['git_after']={'head':_git(self.root,'rev-parse','HEAD').decode(errors='replace').strip(),
                 'index_fingerprint':hashlib.sha256(_git(self.root,'ls-files','--stage','-z')).hexdigest()}
             if before!=record['input_after']: record['status']='invalidated'
@@ -262,7 +278,7 @@ async def verify_goal_if_configured(service,factory,goal,thread_id,*,approval=No
     current=factory.goal_store.get(goal.id)
     if current is None or current.state!='active': return None
     if current.verification_tool=='verify' and current.verification_succeeded:
-        try: valid=await asyncio.to_thread(input_fingerprint,current.verification_project_root,current.verification_generated_paths)==current.verification_fingerprint
+        try: valid=await _owned_worker(input_fingerprint,current.verification_project_root,current.verification_generated_paths)==current.verification_fingerprint
         except (ValueError,OSError): valid=False
         if verification.tasks is not None:
             task=verification.tasks.snapshot(thread_id)
