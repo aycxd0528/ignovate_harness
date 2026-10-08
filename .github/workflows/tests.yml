@@ -28,4 +28,4 @@ jobs:
       - name: Build wheel
         run: python -m pip wheel --no-deps --wheel-dir dist .
       - name: Installed distribution smoke
-        run: python scripts/smoke_wheel.py dist/ignovate_harness-1.0.0-py3-none-any.whl
+        run: python scripts/smoke_wheel.py dist/*.whl

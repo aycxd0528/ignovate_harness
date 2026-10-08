@@ -1,4 +1,4 @@
-# ignovate harness v1.0：本地 CLI 编码助手
+# ignovate harness v1.0.1：本地 CLI 编码助手
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
 
@@ -45,6 +45,16 @@ ignovate --reasoning-effort max --dangerously-skip-permissions
 这是一个用 Python、LangChain、LangGraph 和 DeepSeek 搭建的本地命令行编码助手。支持全屏的终端默认启动 Textual 仪表盘；其他交互终端使用保留滚动历史的 inline 界面；PyCharm 等非 TTY 控制台使用纯文本模式。默认情况下文件写入和命令执行需用户审批。
 
 ## 环境准备
+
+推荐从 [GitHub Release](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包：macOS / Linux 使用 `*-unix.tar.gz`，Windows 使用 `*-windows.zip`（通过 WSL2 运行）。解压后运行 `sh install.sh` 或 PowerShell 的 `install.ps1`，重新打开终端，然后输入：
+
+```sh
+ignovate set up
+```
+
+命令会自动检测或下载 Python、隔离环境、固定版本的应用依赖和 ripgrep，然后进入模型配置向导。无需预装 Python 或手动激活虚拟环境；`ignovate set up --environment-only` 只准备环境。Windows 缺少 WSL / Ubuntu 时自动启动安装，系统要求重启时重启后运行同一个安装脚本续装。详细步骤与安装目录见 [Release 安装说明](docs/INSTALL.md)。
+
+从源码安装：
 
 需要 Python 3.11 或更新的 Python 3 版本。macOS / Linux 下在项目根目录运行：
 
@@ -518,7 +528,7 @@ macOS/Linux 下的文件描述符与进程组实现为本项目当前验证的�
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.0.0-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.0.1-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
