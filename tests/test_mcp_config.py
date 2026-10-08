@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import importlib
 import json
 import os
@@ -25,10 +26,10 @@ class MCPConfigTests(unittest.TestCase):
     def test_atomic_add_remove_preserves_other_configuration(self):
         path = self.root / '.nailong/mcp.json'
         path.parent.mkdir()
-        path.write_text(json.dumps({'note': 'keep', 'mcpServers': {}}))
+        path.write_text(json.dumps({'note': 'keep', 'mcpServers': {}}), newline='\n')
         self.store.add('docs', {'transport': 'http', 'url': 'https://example.com/mcp'})
         self.store.add('local', {'transport': 'stdio', 'command': '/path with spaces/python', 'args': ['server.py']})
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        assert_private(self, path)
         self.assertEqual(json.loads(path.read_text())['note'], 'keep')
         with self.assertRaises(ValueError):
             self.store.add('docs', {'transport': 'http', 'url': 'https://other.example/mcp'})
@@ -59,13 +60,13 @@ class MCPConfigTests(unittest.TestCase):
     def test_bad_json_and_symlink_are_preserved(self):
         path = self.root / '.nailong/mcp.json'
         path.parent.mkdir()
-        path.write_text('{invalid')
+        path.write_text('{invalid', newline='\n')
         with self.assertRaises(ValueError):
             self.store.add('docs', {'transport': 'http', 'url': 'https://example.com/mcp'})
         self.assertEqual(path.read_text(), '{invalid')
         path.unlink()
         target = self.root / 'other.json'
-        target.write_text('{}')
+        target.write_text('{}', newline='\n')
         path.symlink_to(target)
         with self.assertRaises(ValueError):
             self.store.list_servers()

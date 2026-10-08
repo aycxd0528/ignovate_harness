@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import BaseMessage, message_to_dict
+from nailong.core.safe_files import atomic_write_bytes, open_regular_file, pinned_directory, private_directory_permissions
 
 
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024
@@ -21,7 +22,24 @@ _METADATA_BYTES = 128 * 1024
 _THREAD_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _REFERENCE = re.compile(r"^hist_[a-f0-9]{64}$")
 _REDACTED = "[密钥已隐藏]"
-_DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+_DIRECTORY_FLAGS = (os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW) if os.name != 'nt' else 0
+
+
+class _WindowsDirectory:
+    def __init__(self, path: Path, *, create: bool):
+        self.path = path
+        self.context = pinned_directory(path, create=create)
+        self.context.__enter__()
+
+    def close(self):
+        self.context.__exit__(None, None, None)
+
+
+def _close_directory(directory):
+    if isinstance(directory, _WindowsDirectory):
+        directory.close()
+    else:
+        os.close(directory)
 
 
 def _encode(value: Any) -> bytes:
@@ -127,6 +145,16 @@ class HistoryArchive:
         return hashlib.sha256(thread_id.encode("utf-8")).hexdigest()
 
     def _thread_directory(self, thread_key: str, *, create: bool) -> int:
+        if os.name == 'nt':
+            directory = _WindowsDirectory(self.root / thread_key, create=create)
+            try:
+                if create:
+                    private_directory_permissions(self.root)
+                    private_directory_permissions(directory.path)
+                return directory
+            except BaseException:
+                directory.close()
+                raise
         root_descriptor = _open_directory(self.root, create=create)
         try:
             if create:
@@ -143,8 +171,12 @@ class HistoryArchive:
 
     @staticmethod
     def _load(directory: int, reference: str, thread_key: str) -> dict:
-        descriptor = os.open(reference + ".json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-        with os.fdopen(descriptor, "rb") as source:
+        if isinstance(directory, _WindowsDirectory):
+            context = open_regular_file(directory.path / (reference + '.json'))
+        else:
+            descriptor = os.open(reference + ".json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            context = os.fdopen(descriptor, 'rb')
+        with context as source:
             if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                 raise ValueError("历史归档必须是普通文件。")
             encoded = source.read(MAX_ARCHIVE_BYTES + 1)
@@ -250,6 +282,12 @@ class HistoryArchive:
                     return reference
                 except FileNotFoundError:
                     pass
+                if isinstance(directory, _WindowsDirectory):
+                    try:
+                        atomic_write_bytes(directory.path / (reference + '.json'), _encode(record), replace=False)
+                    except FileExistsError:
+                        self._load(directory, reference, thread_key)
+                    return reference
                 temporary = "." + secrets.token_hex(16) + ".tmp"
                 descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)
                 try:
@@ -269,7 +307,7 @@ class HistoryArchive:
                     os.unlink(temporary, dir_fd=directory)
                 return reference
             finally:
-                os.close(directory)
+                _close_directory(directory)
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise ValueError("历史归档路径或记录不可安全访问。") from error
 
@@ -283,7 +321,7 @@ class HistoryArchive:
             try:
                 record = self._load(directory, reference, thread_key)
             finally:
-                os.close(directory)
+                _close_directory(directory)
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             raise ValueError("当前会话找不到可安全读取的历史归档。") from error
         return record

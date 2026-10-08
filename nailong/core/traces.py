@@ -274,6 +274,11 @@ class TraceActions:
         decision = engine.decide_action('write_file', arguments, mode=permission_mode)
         if decision.decision == Decision.DENY or (decision.decision == Decision.ASK and not approved):
             return {'written': False, 'path': str(destination), 'reason': decision.reason}
+        if os.name == 'nt':
+            from nailong.core.safe_files import atomic_write_bytes
+            atomic_write_bytes(destination, content.encode('utf-8'))
+            return {'written': True, 'path': str(destination), 'run_id': report['run_id'],
+                    'event_count': len(report['events'])}
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor, temporary = tempfile.mkstemp(dir=destination.parent, prefix='.trace-')
         try:

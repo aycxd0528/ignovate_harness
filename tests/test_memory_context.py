@@ -49,7 +49,7 @@ class MemoryLoadingTests(MemoryFixtures):
     def test_loading_reports_unsafe_path_without_reading_target(self):
         self.store.path('project').parent.mkdir()
         outside = self.root / 'unrelated'
-        outside.write_text('must never inject', encoding='utf-8')
+        outside.write_text('must never inject', encoding='utf-8', newline='\n')
         self.store.path('project').symlink_to(outside)
         result = self.load()
         self.assertTrue(hasattr(result, 'reports'), '拒绝链接的结果不能静默消失')
@@ -64,7 +64,7 @@ class MemoryCatalogTests(MemoryFixtures):
                        'local': self.root / '.nailong/memory.local'}
         target = directories[scope] / filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding='utf-8')
+        target.write_text(content, encoding='utf-8', newline='\n')
         return target
 
     def test_catalog_discovers_all_scopes_without_returning_topic_bodies(self):
@@ -98,7 +98,7 @@ class MemoryCatalogTests(MemoryFixtures):
     def test_document_ids_and_linked_topics_cannot_escape_scope(self):
         target = self.topic('project', 'linked.md', 'placeholder')
         outside = self.root / 'secret.md'
-        outside.write_text('not allowed', encoding='utf-8')
+        outside.write_text('not allowed', encoding='utf-8', newline='\n')
         target.unlink()
         target.symlink_to(outside)
         self.assertTrue(hasattr(self.store, 'read_document'), '需要受范围限制的读取')
@@ -124,7 +124,7 @@ class MemoryCatalogTests(MemoryFixtures):
     def test_directory_symlink_is_reported_and_never_followed(self):
         outside = self.root / 'unrelated-dir'
         outside.mkdir()
-        (outside / 'hidden.md').write_text('not allowed', encoding='utf-8')
+        (outside / 'hidden.md').write_text('not allowed', encoding='utf-8', newline='\n')
         parent = self.root / '.nailong'
         parent.mkdir()
         (parent / 'memory').symlink_to(outside, target_is_directory=True)
@@ -144,10 +144,11 @@ class MemoryCatalogTests(MemoryFixtures):
         for offset, limit in ((-1, 3), (True, 3), (0, 0), (0, 20000)):
             self.assertFalse(self.store.read_document('project/empty.md', offset, limit)['ok'])
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX os.open race injection; native handle/junction races are tested separately.')
     def test_ancestor_swapped_during_open_cannot_return_outside_content(self):
         target=self.topic('project','file.md','allowed')
         outside=self.root/'outside'; outside.mkdir()
-        (outside/'file.md').write_text('outside-secret')
+        (outside/'file.md').write_text('outside-secret', newline='\n')
         directory=target.parent; parked=directory.with_name('parked')
         original_open=os.open; swapped=False
 
@@ -168,6 +169,7 @@ class MemoryCatalogTests(MemoryFixtures):
         self.assertFalse(result['ok'])
         self.assertNotIn('outside-secret',str(result))
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX filesystem FIFO; Windows devices and reparse points are tested separately.')
     def test_nonregular_topic_is_reported_without_opening_pipe_stream(self):
         directory=self.root/'.nailong/memory'; directory.mkdir(parents=True)
         os.mkfifo(directory/'pipe.md')
@@ -193,9 +195,9 @@ class MemoryCatalogTests(MemoryFixtures):
 class MemoryBudgetTests(MemoryFixtures):
     def test_small_budget_reclaims_prompt_room_for_long_document_ids(self):
         self.store.commit(self.store.stage('project','摘要'*3000))
-        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}')
+        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}', newline='\n')
         filename='题'*80+'.md'; topic=self.root/'.nailong/memory'/filename
-        topic.parent.mkdir(); topic.write_text('长文件名正文')
+        topic.parent.mkdir(); topic.write_text('长文件名正文', newline='\n')
         from nailong.core.memory_context import MemoryReadContext,estimate_memory_tokens
         snapshot=self.load(); context=MemoryReadContext(snapshot)
         for result in (context.list('project',offset=1),context.read('project/'+filename)):
@@ -205,10 +207,10 @@ class MemoryBudgetTests(MemoryFixtures):
 
     def test_directory_diagnostics_cannot_prevent_listing_at_small_budget(self):
         self.store.commit(self.store.stage('project','摘要'*3000))
-        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}')
+        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}', newline='\n')
         for scope in ('user','project','local'):
             directory=self.store.topic_directory(scope); directory.mkdir(parents=True,exist_ok=True)
-            (directory/'context.md').write_text('reserved')
+            (directory/'context.md').write_text('reserved', newline='\n')
         from nailong.core.memory_context import MemoryReadContext
         result=MemoryReadContext(self.load()).list()
         self.assertTrue(result['ok'],'目录诊断应明确缩短，不能占尽第一页')
@@ -216,17 +218,17 @@ class MemoryBudgetTests(MemoryFixtures):
 
     def test_small_budget_supports_long_id_first_discovered_by_read(self):
         self.store.commit(self.store.stage('project','摘要'*3000))
-        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}')
+        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}', newline='\n')
         from nailong.core.memory_context import MemoryReadContext
         context=MemoryReadContext(self.load())
         filename='题'*80+'.md'; topic=self.root/'.nailong/memory'/filename
-        topic.parent.mkdir(); topic.write_text('not in initial catalog')
+        topic.parent.mkdir(); topic.write_text('not in initial catalog', newline='\n')
         self.assertTrue(context.read('project/'+filename)['ok'])
 
     def test_section_envelope_can_be_compacted_without_losing_read_progress(self):
         title='题'*120
         self.store.commit(self.store.stage('project','# '+title+'\n'+'中文正文'*1000))
-        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}')
+        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}', newline='\n')
         from nailong.core.memory_context import MemoryReadContext,estimate_memory_tokens
         snapshot=self.load(); result=MemoryReadContext(snapshot).read_section('project',title)
         self.assertTrue(result['ok'])
@@ -258,7 +260,7 @@ class MemoryBudgetTests(MemoryFixtures):
 
     def test_minimum_budget_still_allows_paginated_reads_and_catalog_progress(self):
         self.store.commit(self.store.stage('project','摘要'*3000))
-        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}')
+        (self.root/'.nailong/settings.json').write_text('{"memory":{"max_tokens":512}}', newline='\n')
         from nailong.core.memory_context import MemoryReadContext,estimate_memory_tokens
         snapshot=self.load(); context=MemoryReadContext(snapshot)
         for result in (context.list('project'),context.read('project/context.md')):
@@ -272,9 +274,9 @@ class MemoryBudgetTests(MemoryFixtures):
         from nailong.core.memory_context import MemoryReadContext
         context=MemoryReadContext(self.load())
         document=self.root/'.nailong/memory/new.md'
-        document.parent.mkdir(parents=True); document.write_text('original')
+        document.parent.mkdir(parents=True); document.write_text('original', newline='\n')
         self.assertTrue(context.read('project/new.md')['ok'])
-        document.write_text('changed')
+        document.write_text('changed', newline='\n')
         self.assertEqual(context.read('project/new.md').get('status'),'changed')
 
     def test_three_layers_share_budget_and_keep_topic_body_on_demand(self):
@@ -282,7 +284,7 @@ class MemoryBudgetTests(MemoryFixtures):
             self.store.commit(self.store.stage(scope, '重要约定' * 3000))
         topic = self.root / '.nailong/memory/build.md'
         topic.parent.mkdir()
-        topic.write_text('---\ndescription: 构建方式\n---\nTOPIC_BODY_NOT_IN_PROMPT', encoding='utf-8')
+        topic.write_text('---\ndescription: 构建方式\n---\nTOPIC_BODY_NOT_IN_PROMPT', encoding='utf-8', newline='\n')
         snapshot = self.load()
         self.assertTrue(hasattr(snapshot, 'rendered_context'), '默认上下文必须受统一预算约束')
         from nailong.core.memory_context import estimate_memory_tokens
@@ -296,13 +298,13 @@ class MemoryBudgetTests(MemoryFixtures):
     def test_local_budget_overrides_project_and_invalid_values_are_rejected(self):
         config = self.root / '.nailong/settings.json'
         config.parent.mkdir()
-        config.write_text('{"memory":{"max_tokens":2048}}')
-        (config.parent / 'settings.local.json').write_text('{"memory":{"max_tokens":1024}}')
+        config.write_text('{"memory":{"max_tokens":2048}}', newline='\n')
+        (config.parent / 'settings.local.json').write_text('{"memory":{"max_tokens":1024}}', newline='\n')
         snapshot = self.load()
         self.assertTrue(hasattr(snapshot, 'budget_tokens'), '预算配置必须有效')
         self.assertEqual(snapshot.budget_tokens, 1024)
         for value in (True, 0, 511, 16385, '4096'):
-            config.write_text(json.dumps({'memory': {'max_tokens': value}}))
+            config.write_text(json.dumps({'memory': {'max_tokens': value}}), newline='\n')
             (config.parent / 'settings.local.json').unlink(missing_ok=True)
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.load()
@@ -311,7 +313,7 @@ class MemoryBudgetTests(MemoryFixtures):
         self.store.commit(self.store.stage('project', 'summary'))
         topic = self.root / '.nailong/memory/large.md'
         topic.parent.mkdir()
-        topic.write_text('长文本' * 4000, encoding='utf-8')
+        topic.write_text('长文本' * 4000, encoding='utf-8', newline='\n')
         snapshot = self.load()
         self.assertTrue(hasattr(snapshot, 'rendered_context'), '需要统一记忆输入预算')
         from langchain_core.messages import ToolMessage, HumanMessage
@@ -336,7 +338,7 @@ class MemoryBudgetTests(MemoryFixtures):
     def test_budget_limited_read_keeps_progress_pointer_to_unread_tail(self):
         topic = self.root / '.nailong/memory/large.md'
         topic.parent.mkdir(parents=True)
-        topic.write_text('中文正文' * 3000 + 'TAIL', encoding='utf-8')
+        topic.write_text('中文正文' * 3000 + 'TAIL', encoding='utf-8', newline='\n')
         snapshot = self.load()
         self.assertTrue(hasattr(snapshot, 'rendered_context'), '读取也必须计入 JSON 包装预算')
         from nailong.core.memory_context import MemoryReadContext, estimate_memory_tokens
@@ -384,7 +386,7 @@ class MemoryCommandTests(MemoryFixtures):
     def test_commands_list_scope_and_read_complete_topic_by_pages(self):
         directory = self.root / '.nailong/memory'
         directory.mkdir(parents=True)
-        (directory / 'build.md').write_text('---\ndescription: build\n---\n' + 'x' * 5000 + 'TAIL')
+        (directory / 'build.md').write_text('---\ndescription: build\n---\n' + 'x' * 5000 + 'TAIL', newline='\n')
         result = self.execute('list project')
         self.assertEqual(result.data['documents'][0]['document'], 'project/build.md')
         page = self.execute('read project/build.md')

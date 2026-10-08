@@ -50,7 +50,7 @@ class ManagedMemoryTests(unittest.TestCase):
                                        allow_unicode=True, sort_keys=False) + '---\n' + body
         target = self.store.document_path(scope + '/' + filename)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding='utf-8')
+        target.write_text(text, encoding='utf-8', newline='\n')
         return target
 
     def snapshot(self, budget=4000):
@@ -60,7 +60,7 @@ class ManagedMemoryTests(unittest.TestCase):
     def settings(self, permissions):
         path = self.root / '.nailong/settings.json'
         path.parent.mkdir(exist_ok=True)
-        path.write_text(json.dumps({'permissions': permissions}), encoding='utf-8')
+        path.write_text(json.dumps({'permissions': permissions}), encoding='utf-8', newline='\n')
 
     def test_source_change_and_removal_invalidate_both_catalog_and_read(self):
         source = self.source()
@@ -91,7 +91,7 @@ class ManagedMemoryTests(unittest.TestCase):
 
     def test_legacy_documents_remain_readable_without_dependency_io(self):
         target = self.store.path('project'); target.parent.mkdir()
-        target.write_text('Legacy project memory', encoding='utf-8')
+        target.write_text('Legacy project memory', encoding='utf-8', newline='\n')
         with patch.object(self.store, 'authorize_source', side_effect=AssertionError('unexpected source check')):
             result = self.store.read_document('project/context.md')
             snapshot = self.snapshot()
@@ -179,7 +179,7 @@ class ManagedMemoryTests(unittest.TestCase):
     def test_duplicate_yaml_keys_fail_before_dependency_authorization(self):
         target = self.document()
         text = target.read_text().replace('  state: candidate', '  state: candidate\n  state: confirmed')
-        target.write_text(text)
+        target.write_text(text, newline='\n')
         with patch.object(self.store, 'authorize_source') as authorize:
             result = self.store.read_document('project/context.md')
         authorize.assert_not_called()
@@ -192,7 +192,7 @@ class ManagedMemoryTests(unittest.TestCase):
     def test_yaml_merge_cannot_silently_override_knowledge_state(self):
         target = self.document()
         text = target.read_text().replace('knowledge:\n', 'knowledge:\n  <<: &base {state: confirmed}\n')
-        target.write_text(text)
+        target.write_text(text, newline='\n')
         with patch.object(self.store, 'authorize_source') as authorize:
             result = self.store.read_document('project/context.md')
         authorize.assert_not_called()
@@ -206,7 +206,7 @@ class ManagedMemoryTests(unittest.TestCase):
         target = self.document()
         for text in cases:
             with self.subTest(prefix=text[:50]):
-                target.write_text(text)
+                target.write_text(text, newline='\n')
                 with patch.object(self.store, 'authorize_source') as authorize:
                     result = self.store.read_document('project/context.md')
                 authorize.assert_not_called()
@@ -518,7 +518,7 @@ class ManagedMemoryTests(unittest.TestCase):
         page = context.read('project/context.md', limit=120)
         self.assertTrue(page['ok'])
         original_versions = dict(context.versions)
-        target.write_text(target.read_text().replace('old scoped body', 'new scoped body'))
+        target.write_text(target.read_text().replace('old scoped body', 'new scoped body'), newline='\n')
         current['scope'] = ['docs']
         view = context.refresh_for_request()
         self.assertEqual(context.versions, original_versions)
@@ -555,7 +555,7 @@ class ManagedMemoryTests(unittest.TestCase):
         first = context.read('project/context.md', 0, 120)
         self.assertTrue(first['ok'])
         old_version = first['version']
-        target.write_text(target.read_text().replace('old body', 'new body'))
+        target.write_text(target.read_text().replace('old body', 'new body'), newline='\n')
         view = context.refresh_for_request()
         self.assertEqual(view['report']['scopes']['project']['version'], old_version)
         self.assertEqual(view['report']['scopes']['project']['validity'], 'stale')

@@ -6,10 +6,60 @@ from types import SimpleNamespace
 
 from config import Settings
 from tui import TerminalAgentApp, ChatInput
+from textual.errors import NoWidget
 from textual.widgets import Input, OptionList
 
 
 class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
+    async def wait_for_condition(self, pilot, condition, description):
+        async def ready():
+            while True:
+                await pilot.pause()
+                if condition():
+                    return
+        try:
+            await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for {description}; focus={getattr(pilot.app.focused, "id", None)!r}')
+
+    async def wait_for_panel(self, pilot, app, panel, focus_id):
+        await self.wait_for_condition(
+            pilot,
+            lambda: (app._interaction_panel is panel and panel.is_attached
+                     and app.focused is not None and app.focused.is_attached
+                     and app.focused.id == focus_id
+                     and panel.content_region.height > 0
+                     and app.focused.content_region.height > 0),
+            f'{type(panel).__name__} to mount and focus {focus_id}',
+        )
+
+    async def wait_for_target(self, pilot, selector, *, focus_id=None):
+        def ready():
+            matches = pilot.app.query(selector)
+            if not matches:
+                return False
+            target = matches[0]
+            if (not target.is_attached or target.content_region.height <= 0
+                    or target.content_region.width <= 0
+                    or target.disabled or target.has_class('-active')):
+                return False
+            if focus_id is not None and getattr(pilot.app.focused, 'id', None) != focus_id:
+                return False
+            try:
+                hit, _ = pilot.app.get_widget_at(*target.region.offset)
+            except NoWidget:
+                return False
+            return hit is target
+        await self.wait_for_condition(pilot, ready, f'visible {selector} with focus {focus_id}')
+        return pilot.app.query_one(selector)
+
+    async def wait_for_composer(self, pilot):
+        composer = pilot.app.query_one('#composer', ChatInput)
+        await self.wait_for_condition(pilot,
+            lambda: (pilot.app._interaction_panel is None and not composer.disabled
+                     and pilot.app.focused is composer),
+            'the panel to close and restore composer focus')
+
     def make_app(self, root):
         settings = Settings('fixture-key', 'https://api.invalid', 'deepseek-flash', root)
         app = TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None), settings)
@@ -24,20 +74,25 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
                 composer = app.query_one('#composer', ChatInput)
                 composer.load_text('未发送的草稿')
                 app._dispatch('/model')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
                 self.assertEqual(len(app.screen_stack), 1)
                 menu = app.query_one('#model-options', OptionList)
                 menu.highlighted = 2
                 self.assertTrue(await pilot.click('#model-add'))
+                await self.wait_for_target(pilot, '#model-name', focus_id='model-name')
                 app.query_one('#model-name', Input).value = 'draft-model'
                 await pilot.press('escape')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
                 self.assertTrue(menu.display)
                 self.assertEqual(menu.highlighted, 2)
-                await pilot.click('#model-add')
+                self.assertTrue(await pilot.click('#model-add'))
+                await self.wait_for_target(pilot, '#model-name', focus_id='model-name')
                 self.assertEqual(app.query_one('#model-name', Input).value, 'draft-model')
-                await pilot.press('escape', 'escape')
+                await pilot.press('escape')
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
+                await pilot.press('escape')
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
                 self.assertEqual(composer.text, '未发送的草稿')
                 self.assertIs(app.focused, composer)
 
@@ -48,24 +103,37 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
             app = self.make_app(Path(directory))
             async with app.run_test(size=(60, 18)) as pilot:
                 app._dispatch('/model')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
                 self.assertEqual(len(app.screen_stack), 1)
                 host = app.query_one('#interaction-host')
                 for selector in ('#model-add', '#model-use', '#model-keys'):
+                    await self.wait_for_target(pilot, selector)
                     self.assertLessEqual(app.query_one(selector).region.bottom, host.region.bottom)
                 self.assertTrue(await pilot.click('#model-add'))
+                await self.wait_for_target(pilot, '#model-save', focus_id='model-name')
                 app.query_one('#model-name', Input).value = 'default'
                 app.query_one('#model-id', Input).value = 'new-model'
                 self.assertTrue(await pilot.click('#model-save'))
+                await self.wait_for_condition(pilot,
+                    lambda: (app.query_one('#model-error').display
+                             and 'default' in app.query_one('#model-error').render().plain
+                             and getattr(app.focused, 'id', None) == 'model-name'),
+                    'duplicate model validation to preserve the form and focus')
                 self.assertEqual(app.focused.id, 'model-name')
-                await pilot.press('escape', 'escape')
+                await pilot.press('escape')
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
+                await pilot.press('escape')
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
-                task = asyncio.create_task(app._wait_panel(SettingScreen('推理强度', 'high', reasoning_options('deepseek-flash'))))
-                await pilot.pause()
+                await self.wait_for_composer(pilot)
+                panel = SettingScreen('推理强度', 'high', reasoning_options('deepseek-flash'))
+                task = asyncio.create_task(app._wait_panel(panel))
+                await self.wait_for_panel(pilot, app, panel, 'setting-options')
+                await self.wait_for_target(pilot, '#setting-keys')
                 self.assertLessEqual(app.query_one('#setting-keys').region.bottom, host.region.bottom)
                 self.assertEqual(app.query_one('#setting-options', OptionList).highlighted, 3)
                 await pilot.press('escape')
-                self.assertIsNone(await task)
+                self.assertIsNone(await asyncio.wait_for(task, 3))
+                await self.wait_for_composer(pilot)
                 self.assertEqual(len(app.screen_stack), 1)
 
     async def test_help_plan_editor_and_rewind_are_inline_and_safe_to_cancel(self):
@@ -77,16 +145,16 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 24)) as pilot:
                 composer = app.query_one('#composer', ChatInput)
                 composer.load_text('保留草稿')
-                panels = [(PlanReviewScreen('# 计划\n完整计划\n'*40), 'reject'),
-                          (PlanEditScreen('正在编辑的内容'), None),
-                          (RewindConfirmationScreen(), False),
-                          (HelpScreen(app.controller.specs(), app._ui_theme), None),
-                          (CopyReplyScreen(lambda: ['可选取任意文字'], app._ui_theme), None)]
-                for panel, expected in panels:
+                panels = [(PlanReviewScreen('# 计划\n完整计划\n'*40), 'reject', 'plan-reject'),
+                          (PlanEditScreen('正在编辑的内容'), None, 'plan-edit-content'),
+                          (RewindConfirmationScreen(), False, 'cancel'),
+                          (HelpScreen(app.controller.specs(), app._ui_theme), None, 'help-tabs'),
+                          (CopyReplyScreen(lambda: ['可选取任意文字'], app._ui_theme), None, 'copy-body')]
+                for panel, expected, focus_id in panels:
                     with self.subTest(panel=type(panel).__name__):
                         task = asyncio.create_task(app._wait_panel(panel))
                         try:
-                            await pilot.pause()
+                            await self.wait_for_panel(pilot, app, panel, focus_id)
                             self.assertEqual(len(app.screen_stack), 1)
                             self.assertTrue(app.query_one('#composer-info').display)
                             self.assertGreater(app.query_one('#transcript').size.height, 0)
@@ -100,6 +168,12 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
                             else:
                                 await pilot.press('escape')
                             self.assertEqual(await asyncio.wait_for(task, 3), expected)
+                            await self.wait_for_condition(
+                                pilot, lambda: app._interaction_panel is None and app.focused is composer,
+                                'the cancelled panel to restore composer focus',
+                            )
+                            self.assertFalse(panel.is_attached)
+                            self.assertFalse(composer.disabled)
                             self.assertEqual(composer.text, '保留草稿')
                         finally:
                             if not task.done():
@@ -118,19 +192,26 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
             app = TerminalAgentApp(AgentService(factory, session_store=factory.session_store), settings)
             async with app.run_test(size=(80,24)) as pilot:
                 app._dispatch('/model add')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#model-save', focus_id='model-name')
                 app.query_one('#model-name', Input).value = 'pro'
                 app.query_one('#model-id', Input).value = 'deepseek-v4-pro'
                 with patch('nailong.core.preferences.atomic_json', side_effect=OSError('disk unavailable')):
-                    await pilot.click('#model-save')
-                    await pilot.pause()
+                    self.assertTrue(await pilot.click('#model-save'))
+                    await self.wait_for_condition(pilot,
+                        lambda: (app.query_one('#model-error').display
+                                 and '保存失败' in app.query_one('#model-error').render().plain
+                                 and getattr(app.focused, 'id', None) == 'model-save'
+                                 and app._interaction_future is not None
+                                 and not app._interaction_future.done()),
+                        'failed save to show its error and accept another explicit choice')
                     self.assertIsNotNone(app._interaction_panel)
                     self.assertEqual(app.query_one('#model-name', Input).value, 'pro')
                     self.assertIn('保存失败', app.query_one('#model-error').render().plain)
                     self.assertFalse(factory.preferences.local_path.exists())
-                await pilot.pause(.6)
-                await pilot.click('#model-save')
+                await self.wait_for_target(pilot, '#model-save', focus_id='model-save')
+                self.assertTrue(await pilot.click('#model-save'))
                 await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
                 self.assertEqual(app.settings.model, 'deepseek-v4-pro')
                 self.assertIn('pro', factory.preferences.effective()['models'])
 
@@ -188,21 +269,27 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
                 composer=app.query_one('#composer',ChatInput)
                 composer.load_text('draft\n'*7)
                 await pilot.pause()
-                task=asyncio.create_task(app._wait_panel(HelpScreen(app.controller.specs(),app._ui_theme,initial_tab='commands')))
-                await pilot.pause()
+                panel=HelpScreen(app.controller.specs(),app._ui_theme,initial_tab='commands')
+                task=asyncio.create_task(app._wait_panel(panel))
+                await self.wait_for_panel(pilot, app, panel, 'help-options')
                 await pilot.press('enter')
-                await pilot.pause()
+                await self.wait_for_target(pilot, '#help-use', focus_id='help-options')
                 host=app.query_one('#interaction-host')
                 for selector in ('#help-options','#help-use','#help-footer'):
+                    await self.wait_for_target(pilot, selector)
                     control=app.query_one(selector)
                     self.assertGreater(control.content_region.height,0)
                     self.assertLessEqual(control.region.bottom,host.content_region.bottom)
-                await pilot.press('escape');await task
+                await pilot.press('escape');await asyncio.wait_for(task, 3)
+                await self.wait_for_composer(pilot)
                 self.assertEqual(composer.text,'draft\n'*7)
-                app._dispatch('/model');await pilot.pause()
+                app._dispatch('/model')
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-options')
                 for selector in ('#model-cancel','#model-add','#model-use'):
+                    await self.wait_for_target(pilot, selector)
                     self.assertGreater(app.query_one(selector).content_region.height,0)
-                await pilot.press('escape');await app.session_runner.wait_idle()
+                await pilot.press('escape');await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_composer(pilot)
 
     async def test_incoming_approval_waits_for_read_view_then_restores_disabled_state(self):
         from ui.content_panels import CopyReplyScreen
@@ -230,8 +317,11 @@ class EmbeddedInteractionTests(unittest.IsolatedAsyncioTestCase):
             app=TerminalAgentApp(SimpleNamespace(runtime_factory=None,session_store=None),settings)
             async with app.run_test(size=(80,24)) as pilot:
                 panel=ModelScreen({'model_name':'default','model':'deepseek-flash','models':{}})
-                task=asyncio.create_task(app._wait_panel(panel));await pilot.pause()
+                task=asyncio.create_task(app._wait_panel(panel))
+                await self.wait_for_panel(pilot, app, panel, 'model-add')
+                await self.wait_for_target(pilot, '#model-add', focus_id='model-add')
                 self.assertEqual(app.focused.id,'model-add')
                 self.assertTrue(app.query_one('#model-use').disabled)
                 self.assertLessEqual(app.query_one('#model-keys').region.bottom,panel.content_region.bottom)
-                await pilot.press('escape');self.assertIsNone(await task)
+                await pilot.press('escape');self.assertIsNone(await asyncio.wait_for(task, 3))
+                await self.wait_for_composer(pilot)

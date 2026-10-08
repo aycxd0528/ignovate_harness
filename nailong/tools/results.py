@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 import os
 import tempfile
 import threading
 import uuid
 from pathlib import Path
+
+from nailong.core.safe_files import (atomic_write_bytes,
+    open_regular_file, pinned_directory, private_directory_permissions)
 
 MAX_RESULT_CHARS = 16_000
 MAX_ARTIFACT_CHARS = 1_000_000
@@ -93,14 +97,22 @@ class ResultArchive:
         self._size = 0
         self._lock = threading.RLock()
 
+    @contextmanager
     def _directory(self):
         if self.directory is None:
             self.directory = Path(tempfile.mkdtemp(prefix="nailong-tool-results-"))
+        if os.name == 'nt':
+            # Validate and hold every ancestor before changing the leaf ACL;
+            # keep those handles alive until the private result is published.
+            with pinned_directory(self.directory, create=True):
+                private_directory_permissions(self.directory)
+                yield self.directory
+            return
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.directory.is_symlink():
             raise ValueError("工具归档目录不能是符号链接。")
         os.chmod(self.directory, 0o700)
-        return self.directory
+        yield self.directory
 
     def save(self, content: str) -> dict:
         content = redact(content, self.api_key)
@@ -110,12 +122,18 @@ class ResultArchive:
             if len(self._entries) >= MAX_ARTIFACTS or self._size + len(text) > MAX_ARCHIVE_CHARS:
                 raise ValueError("本上下文工具归档预算已用尽。")
             reference = uuid.uuid4().hex
-            path = self._directory() / f"{reference}.json"
-            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-                stream.write(text)
-                stream.flush()
-                os.fsync(stream.fileno())
+            with self._directory() as directory:
+                path = directory / f"{reference}.json"
+                if os.name == 'nt':
+                    # Private DACL from creation; an existing reference can
+                    # never be overwritten, even after a filename collision.
+                    atomic_write_bytes(path, text.encode('utf-8'), replace=False)
+                else:
+                    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                        stream.write(text)
+                        stream.flush()
+                        os.fsync(stream.fileno())
             self._entries[reference] = (path, len(text), complete)
             self._size += len(text)
         return {"reference": reference, "artifact_complete": complete,
@@ -130,10 +148,11 @@ class ResultArchive:
             return failure("invalid_parameters", "max_chars 必须为 1–6000。")
         with self._lock:
             path, length, complete = self._entries[reference]
-            if path.is_symlink():
+            if os.name != 'nt' and path.is_symlink():
                 return failure("archive_changed", "工具归档文件发生变化。")
             try:
-                with path.open("r", encoding="utf-8") as stream:
+                with (open_regular_file(path, binary=False) if os.name == 'nt'
+                      else path.open("r", encoding="utf-8")) as stream:
                     # Read bounded chunks, even when the requested offset is large.
                     remaining = min(offset, length)
                     while remaining:
@@ -144,6 +163,8 @@ class ResultArchive:
                     content = stream.read(max_chars)
             except (OSError, UnicodeDecodeError):
                 return failure("archive_unavailable", "工具归档无法读取。")
+            except ValueError:
+                return failure("archive_changed", "工具归档文件发生变化。")
         return {"ok": True, "reference": reference, "content": redact(content, self.api_key),
                 "offset": offset, "next_offset": min(offset, length) + len(content),
                 "truncated": offset + len(content) < length,

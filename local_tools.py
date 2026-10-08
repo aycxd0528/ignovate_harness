@@ -76,12 +76,15 @@ def use_file_access(root: Path, *, unrestricted: bool = False):
 
 def display_file_path(path: Path, root: Path | None = None) -> str:
     root = Path(root or selected_project_root()).resolve()
-    return path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
+    return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
 
 
 def open_regular_file(path: Path, *, binary: bool = True):
     """Open a previously resolved path without following replaced path components."""
     path = Path(path)
+    if os.name == "nt":
+        from nailong.core.safe_files import open_regular_file as safe_open
+        return safe_open(path, binary=binary)
     if not path.is_absolute() or not hasattr(os, 'O_NOFOLLOW') or os.open not in os.supports_dir_fd:
         raise OSError('当前平台无法安全打开文件路径。')
     parent = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
@@ -124,6 +127,25 @@ def resolve_file_path(path: str, root: Path, *, allow_missing: bool = False) -> 
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
+
+    if os.name == "nt":
+        from nailong.core.safe_files import validate_windows_path, is_link_or_reparse
+        # Normalize ordinary . / .. paths only after rejecting namespace aliases.
+        from pathlib import PureWindowsPath
+        raw = os.fspath(path)
+        if PureWindowsPath(raw).drive and not PureWindowsPath(raw).is_absolute():
+            raise ValueError("Windows 路径不能使用盘符相对形式。")
+        if raw.startswith(("\\\\", "//")) or ":" in raw[2:]:
+            raise ValueError("Windows 路径不能使用网络、设备命名空间或备用数据流。")
+        # Validate each real component before abspath discards relative navigation.
+        for component in candidate.parts[1:]:
+            if component not in {".", ".."}:
+                validate_windows_path(str(Path(candidate.anchor) / component))
+        candidate = Path(os.path.abspath(candidate))
+        validate_windows_path(candidate)
+        for ancestor in (*reversed(candidate.parents), candidate):
+            if is_link_or_reparse(ancestor):
+                raise ValueError("文件路径不能被链接或重解析点重定向。")
 
     lexical_relative = candidate.relative_to(root) if candidate.is_relative_to(root) else candidate
     if not unrestricted and _is_protected(lexical_relative):
@@ -205,7 +227,7 @@ def read_file(path: str, max_chars: int = MAX_FILE_CHARS) -> dict:
         if not target.is_file():
             return {"ok": False, "error": "目标不是普通文件。"}
         maximum = _safe_limit(max_chars, MAX_FILE_CHARS)
-        with target.open("r", encoding="utf-8") as source:
+        with open_regular_file(target, binary=False) as source:
             content = source.read(maximum + 1)
         truncated = len(content) > maximum
         return {
@@ -255,6 +277,10 @@ def _kill_process_group(process: subprocess.Popen) -> None:
 
 
 def _capture_command_output(command: str, timeout: int) -> tuple[str, bool, bool, int]:
+    if os.name == "nt":
+        from nailong.core.process_io import capture_command_output
+        return capture_command_output(command, cwd=selected_project_root(), env=_command_environment(),
+                                      timeout=timeout, max_output_chars=MAX_OUTPUT_CHARS)
     process = subprocess.Popen(
         command,
         shell=True,

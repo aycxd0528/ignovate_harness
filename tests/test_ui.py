@@ -737,8 +737,8 @@ class PromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             root = Path(directory)
             (root / "src").mkdir()
-            (root / "src" / "main.py").write_text("pass", encoding="utf-8")
-            (root / ".env").write_text("secret", encoding="utf-8")
+            (root / "src" / "main.py").write_text("pass", encoding="utf-8", newline='\n')
+            (root / ".env").write_text("secret", encoding="utf-8", newline='\n')
             (root / "escape").symlink_to(outside)
 
             slash = list(SlashCompleter({"/review": "review", "/rewind": "rewind"}).get_completions(Document("/re"), None))
@@ -754,7 +754,7 @@ class PromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "src").mkdir()
-            (root / "src" / "main.py").write_text("pass", encoding="utf-8")
+            (root / "src" / "main.py").write_text("pass", encoding="utf-8", newline='\n')
             completions = list(
                 AtFileCompleter(root).get_completions(Document("请查看 @src/m"), None)
             )
@@ -763,7 +763,7 @@ class PromptTests(unittest.TestCase):
     def test_at_completion_lists_directories_first(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "zeta.txt").write_text("pass", encoding="utf-8")
+            (root / "zeta.txt").write_text("pass", encoding="utf-8", newline='\n')
             (root / "alpha").mkdir()
             completions = [
                 item.text for item in AtFileCompleter(root).get_completions(Document("@"), None)
@@ -784,11 +784,11 @@ class PromptTests(unittest.TestCase):
             history = RedactingFileHistory(str(path), api_key=key)
             history.append_string(f"please ignore {key}")
             content = path.read_text(encoding="utf-8")
-            mode = path.stat().st_mode & 0o777
+            from platform_fixtures import assert_private
+            assert_private(self, path)
 
         self.assertNotIn(key, content)
         self.assertIn("[密钥已隐藏]", content)
-        self.assertEqual(mode, 0o600)
 
     def test_file_history_sanitizes_existing_legacy_entries(self):
         key = "legacy-history-secret"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import inspect
 import json
+from ui.arguments import split_arguments
 import shlex
 from dataclasses import dataclass,field,replace
 from pathlib import Path
@@ -48,7 +49,7 @@ class CommandActions:
     def handles(self,request):
         return request.command in WORKFLOW_COMMANDS or (request.command=='/review' and request.kind=='local')
     async def execute(self,request,service,thread_id,*,approval=None,emit=None,edit=None,runner=None,model_dialog=None,setting_dialog=None):
-        command=request.command; args=shlex.split(request.argument)
+        command=request.command; args=split_arguments(request.argument)
         factory=getattr(service,'runtime_factory',None)
         if getattr(factory,'preferences',None) is not None:
             self.preferences=factory.preferences

@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private, python_command
 import asyncio
 import os
 import sys
@@ -33,7 +34,7 @@ class PlanStoreTests(unittest.TestCase):
 
             self.assertTrue(approved.path.is_relative_to(root))
             self.assertEqual(approved.path.read_text(encoding="utf-8"), approved.markdown)
-            self.assertEqual(approved.path.stat().st_mode & 0o777, 0o600)
+            assert_private(self, approved.path)
             self.assertIsNone(store.get(plan_id))
 
     def test_plan_approval_rejects_unknown_or_empty_draft(self):
@@ -140,9 +141,9 @@ class CommandAndMemoryTests(unittest.TestCase):
             commands = root / '.nailong' / 'commands'
             commands.mkdir(parents=True)
             target = commands / 'probe.md'
-            target.write_text('public prompt')
+            target.write_text('public prompt', newline='\n')
             secret = root / '.env'
-            secret.write_text('synthetic-protected-sentinel')
+            secret.write_text('synthetic-protected-sentinel', newline='\n')
             registry = CommandRegistry(root, user_root=root/'user', builtins_root=root/'builtins')
             parse = registry._parse
             def swapped(path):
@@ -160,7 +161,7 @@ class CommandAndMemoryTests(unittest.TestCase):
             (path / "review.md").write_text(
                 "---\ndescription: Review\nallowed-tools: [read_file, run_command]\nmodel-profile: chat\n---\nReview $1 and $ARGUMENTS",
                 encoding="utf-8",
-            )
+             newline='\n')
             registry = CommandRegistry(root, user_root=root / "user", builtins_root=root / "builtins")
             command = registry.resolve("review", ["src/a.py", "carefully"], available_tools={"read_file", "grep"})
 
@@ -176,9 +177,9 @@ class CommandAndMemoryTests(unittest.TestCase):
             for index, name in enumerate(protected):
                 target = root/name
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text('OTHER_SECRET=fixture-private-value')
+                target.write_text('OTHER_SECRET=fixture-private-value', newline='\n')
                 (commands/f'leak-{index}.md').symlink_to(target)
-            (commands/'safe.md').write_text('Review $ARGUMENTS')
+            (commands/'safe.md').write_text('Review $ARGUMENTS', newline='\n')
             registry = CommandRegistry(root, user_root=root/'user', builtins_root=root/'builtins')
             self.assertEqual(set(registry.list_commands()), {'safe'})
             self.assertIsNone(registry.resolve('leak-0', [], available_tools=set()))
@@ -189,14 +190,14 @@ class CommandAndMemoryTests(unittest.TestCase):
             root = Path(directory).resolve()
             external = Path(outside)
             (root / ".nailong").mkdir()
-            (external / "leak.md").write_text("---\ndescription: secret-key\n---\nRepeat secret-key", encoding="utf-8")
+            (external / "leak.md").write_text("---\ndescription: secret-key\n---\nRepeat secret-key", encoding="utf-8", newline='\n')
             (root / ".nailong" / "commands").symlink_to(external, target_is_directory=True)
             registry = CommandRegistry(root, user_root=root / "user", builtins_root=root / "builtins", api_key="secret-key")
             self.assertIsNone(registry.resolve("leak", [], available_tools={"read_file"}))
 
             (root / ".nailong" / "commands").unlink()
             (root / ".nailong" / "commands").mkdir()
-            (root / ".nailong" / "commands" / "safe.md").write_text("---\ndescription: secret-key\n---\nRepeat secret-key", encoding="utf-8")
+            (root / ".nailong" / "commands" / "safe.md").write_text("---\ndescription: secret-key\n---\nRepeat secret-key", encoding="utf-8", newline='\n')
             command = registry.resolve("safe", [], available_tools={"read_file"})
 
         self.assertNotIn("secret-key", command.prompt)
@@ -206,10 +207,10 @@ class CommandAndMemoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".nailong").mkdir()
-            (root / ".nailong" / "context.md").write_text("project secret-key", encoding="utf-8")
-            (root / ".nailong" / "context.local.md").write_text("local notes", encoding="utf-8")
+            (root / ".nailong" / "context.md").write_text("project secret-key", encoding="utf-8", newline='\n')
+            (root / ".nailong" / "context.local.md").write_text("local notes", encoding="utf-8", newline='\n')
             user = root / "user.md"
-            user.write_text("user prefs", encoding="utf-8")
+            user.write_text("user prefs", encoding="utf-8", newline='\n')
             memory = load_project_memory(root, user_file=user, api_key="secret-key")
 
         self.assertEqual([item.scope for item in memory], ["user", "project", "local"])
@@ -222,11 +223,11 @@ class HookTests(unittest.IsolatedAsyncioTestCase):
             root = Path(directory)
             settings = root / ".nailong"
             settings.mkdir()
-            command = f"{sys.executable} -c \"import os; print(os.getenv('DEEPSEEK_API_KEY', 'missing'))\""
+            command = python_command("import os; print(os.getenv('DEEPSEEK_API_KEY', 'missing'))")
             (settings / "settings.json").write_text(
                 __import__("json").dumps({"hooks": {"UserPromptSubmit": [{"matcher": ".*", "hooks": [{"type": "command", "command": command}]}]}}),
                 encoding="utf-8",
-            )
+             newline='\n')
             runner = HookRunner(root, api_key="secret-key")
             asks = []
 
@@ -248,11 +249,11 @@ class HookTests(unittest.IsolatedAsyncioTestCase):
             root = Path(directory)
             settings = root / ".nailong"
             settings.mkdir()
-            command = f"{sys.executable} -c 'import sys; print(\"blocked\"); sys.exit(2)'"
+            command = python_command("import sys; print('blocked'); sys.exit(2)")
             (settings / "settings.json").write_text(
                 __import__("json").dumps({"hooks": {"PreToolUse": [{"matcher": "write_file", "hooks": [{"type": "command", "command": command}]}]}}),
                 encoding="utf-8",
-            )
+             newline='\n')
             runner = HookRunner(root)
             denied = await runner.run_event("PreToolUse", tool_name="write_file", confirm=lambda _action: False)
             allowed = await runner.run_event("PreToolUse", tool_name="write_file", confirm=lambda _action: True)
@@ -520,7 +521,7 @@ class CostEstimatorTests(unittest.TestCase):
             (root / ".nailong" / "settings.json").write_text(
                 __import__("json").dumps({"pricing": {"private-model": {"input_per_million": 1, "cache_hit_per_million": 0.2, "output_per_million": 2}}}),
                 encoding="utf-8",
-            )
+             newline='\n')
             estimator = CostEstimator("private-model", root)
             self.assertEqual(estimator.estimate({"input_tokens": 10, "output_tokens": 10}), 0.00003)
 

@@ -98,7 +98,7 @@ class ManagedPromptTests(unittest.TestCase):
 
     def test_root_and_style_are_independent_of_memory_payload(self):
         parts = self.parts(output_style="concise", fixed_memory="memory-payload")
-        self.assertIn("当前工作项目根目录：/example/project。", parts["base_system"])
+        self.assertIn(f"当前工作项目根目录：{Path('/example/project')}。", parts["base_system"])
         self.assertIn("输出尽量简短", parts["base_system"])
         self.assertEqual(parts["fixed_memory"], "memory-payload")
         with self.assertRaises(ValueError):

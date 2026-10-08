@@ -159,6 +159,9 @@ def build_prompt_parts(
             prompt += "\nwrite_file 用于新文件或确需完整替换且已完整读取的文件，不能根据截断内容重建整文件。"
     if "run_command" in names:
         prompt += COMMAND_POLICY
+        import os
+        if os.name == "nt":
+            prompt += "\n当前系统为原生 Windows；命令由 Windows PowerShell 执行，使用 PowerShell 语法和 Windows 路径。不要假定 Bash 或 Linux 工具已经安装。"
         if profile == "chat" and permission_mode != "plan":
             prompt += NETWORK_COMMAND_POLICY
     if any(name.startswith('mcp__') for name in names):

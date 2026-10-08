@@ -1,16 +1,72 @@
-# ignovate harness v1.0：本地 CLI 编码助手
+# ignovate harness v1.0.2：本地 CLI 编码助手
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
+
+## 下载与快速安装
+
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.0.2](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.2)，无需预装 Python 或克隆源码。
+
+| 平台 | 安装包 | 运行环境 |
+| --- | --- | --- |
+| macOS / Linux | [ignovate-1.0.2-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
+| Windows 11 x64 | [ignovate-1.0.2-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
+
+### macOS / Linux
+
+下载后，在安装包所在目录执行：
+
+```sh
+tar -xzf ignovate-1.0.2-unix.tar.gz
+cd ignovate-1.0.2
+sh install.sh
+. "$HOME/.local/bin/ignovate-env.sh"
+ignovate set up
+```
+
+安装器会把启动器加入 shell 的 PATH；也可在安装后重新打开终端，再运行 `ignovate set up`。
+
+### Windows 11
+
+下载后，在 PowerShell 中执行：
+
+```powershell
+Expand-Archive .\ignovate-1.0.2-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.0.2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+支持 Windows 11 x64 原生运行，无需 WSL、Linux 环境或虚拟化。安装在当前用户目录，无需管理员权限。安装完成后打开新的 PowerShell 或命令提示符，运行：
+
+```powershell
+ignovate set up
+```
+
+### 配置环境与开始使用
+
+`ignovate set up` 会检测 uv、Python 3.11–3.13、应用依赖和 ripgrep，自动下载缺少的组件并创建隔离环境，然后打开模型配置向导，填写 API 地址、模型 ID 和 API Key。应用依赖固定版本并校验哈希，无需手动激活虚拟环境。首次配置需要联网；下载失败后可重新运行此命令，重复安装会保留模型连接和项目数据。
+
+只准备环境、不打开模型配置向导：
+
+```sh
+ignovate set up --environment-only
+ignovate doctor --output-format json
+```
+
+未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 保留当前目录和 `--project` 的原生路径。Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地 NTFS 盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
+
+完整的安装位置、PATH、校验、升级和源码构建说明见 [Release 安装说明](docs/INSTALL.md)。
 
 ## 欢迎与模型配置
 
 首次在交互终端运行 `ignovate`，会显示左对齐的品牌欢迎页。Textual 引导分为“连接模型 → 推理强度 → 本次权限”三步：Enter 前进、方向键选择，Esc 返回上一步，Ctrl+C 退出。模型连接页填写 API 地址、模型 ID 和隐藏的 API Key；已有密钥留空保留。最后确认权限后才保存并进入会话，中途退出不写配置。可随时重新打开指引：
 
 ```bash
-ignovate --setup
+ignovate set up
 ```
 
-模型连接保存在用户目录 `~/.ignovate/config.json`，文件权限为 0600，优先于原有 `.env`，不进入项目或会话日志。API Key 使用隐藏输入；此文件是本地明文连接配置。`IGNOVATE_CONFIG_DIR` 可指定配置目录。推理偏好仍按用户/项目/本地/CLI/会话覆盖顺序生效。无头模式与非交互终端不弹欢迎，缺失配置时会给出配置指引。
+旧命令 `ignovate --setup` 继续兼容；Release 启动器使用 `set up` 时也会检查和修复环境。
+
+模型连接保存在用户目录 `~/.ignovate/config.json`，Unix 文件权限为 0600；Windows 使用仅当前用户、SYSTEM 和管理员可访问的私有 ACL，优先于原有 `.env`，不进入项目或会话日志。API Key 使用隐藏输入；此文件是本地明文连接配置。`IGNOVATE_CONFIG_DIR` 可指定配置目录。推理偏好仍按用户/项目/本地/CLI/会话覆盖顺序生效。无头模式与非交互终端不弹欢迎，缺失配置时会给出配置指引。
 
 产品名称已更改，现有 `nailong` 命令、Python 包、`.nailong` 项目目录和会话数据继续兼容。
 
@@ -44,7 +100,7 @@ ignovate --reasoning-effort max --dangerously-skip-permissions
 
 这是一个用 Python、LangChain、LangGraph 和 DeepSeek 搭建的本地命令行编码助手。支持全屏的终端默认启动 Textual 仪表盘；其他交互终端使用保留滚动历史的 inline 界面；PyCharm 等非 TTY 控制台使用纯文本模式。默认情况下文件写入和命令执行需用户审批。
 
-## 环境准备
+## 从源码安装
 
 需要 Python 3.11 或更新的 Python 3 版本。macOS / Linux 下在项目根目录运行：
 
@@ -436,7 +492,7 @@ description: 构建与验证方式
 
 项目 settings.json 或 settings.local.json 可以设置 `{"memory":{"max_tokens":4000}}`，范围 512–16384。三层摘要、目录、提示及记忆工具输出的 JSON 共用同一预算，默认给摘要与目录最多 75%，为读取预留余量；较小预算会进一步预留合法长 ID 与响应包装所需空间。每次模型调用也限制历史记忆工具结果，优先保留较新内容，不改写持久会话记录。预算按 ASCII 字符 / 4 向上取整、非 ASCII 字符按 2 tokens 保守估算；实际用量仍以 API usage 为准。分页响应返回 `version`、`truncated` 和 `next_offset`，必须继续读取才能取得尾部。同一运行内版本改变会返回 `changed`，下一轮刷新后重新读取，避免拼接不同版本的内容；目录元数据过长会精简描述和标题以保留分页进度，`metadata_truncated` 与 `diagnostics_truncated` 标记被缩短的元数据与诊断。标题索引截断时按全文读取，不能用截短标题作为精确 section 参数。
 
-Textual 使用编辑框，inline/plain 用 `$VISUAL` 或 `$EDITOR` 编辑权限 0600 的临时副本，再显示 diff 并审批应用；取消不会写原文件，外部并发修改会拒绝覆盖。没有编辑器时显示手动编辑和 `/memory reload` 的说明。下一轮自动刷新记忆；手动重载保留会话与历史费用。`/context` 显示统一记忆预算和各层状态，`doctor` 检查目录与预算配置。[自动提取与向量索引的评估](docs/design/2026-10-03-memory-storage-evaluation.md)记录了后续引入条件。
+Textual 使用编辑框，inline/plain 用 `$VISUAL` 或 `$EDITOR` 编辑临时副本（Unix 权限 0600，Windows 使用私有 ACL），再显示 diff 并审批应用；取消不会写原文件，外部并发修改会拒绝覆盖。没有编辑器时显示手动编辑和 `/memory reload` 的说明。下一轮自动刷新记忆；手动重载保留会话与历史费用。`/context` 显示统一记忆预算和各层状态，`doctor` 检查目录与预算配置。[自动提取与向量索引的评估](docs/design/2026-10-03-memory-storage-evaluation.md)记录了后续引入条件。
 
 `task` 子代理只使用只读工具，最多并行 3 个任务，同一父会话每轮共享 30,000 token 额度。每次模型调用前按完整输入保守预留额度，并收窄输出上限，返回后按实际用量结算；缺少完整用量时保留预留额度并停止新的子代理调用。取消任务仍保留此前成功调用的用量。
 
@@ -506,7 +562,7 @@ check_config.py  环境变量读取示例
 
 会话的 `context_request.performance` 记录预检查和最终请求的分阶段耗时、归档保存/复用次数、压缩尝试次数及运行时累计缓存计数；检查失败时保存 `context_performance` 事件。计时不包含提供商请求和报表事件写入，压缩阶段包含其内部重新核算的耗时，分阶段数值不能简单相加。本地基准可运行 `python scripts/benchmark_context.py`，不调用模型 API。
 
-省略前的原始工具结果和旧用户要求脱敏保存在会话私有 `history-results/` 归档中，目录权限 0700、文件权限 0600。聊天模型可用 `read_history_result(reference, offset, max_chars)` 分页读取摘要引用（每页最多 6,000 字符），不能传任意路径或查询其他会话。单条归档上限 2 MiB，超出会明确标记 `archive_truncated`；归档失败会保留原正文。文件内容带历史版本和行范围，使用前应核对当前文件。摘要保存完整任务索引的引用，早期要求不会因超过八条而被自动淘汰；索引自身无法完整归档时不执行回合摘要。
+省略前的原始工具结果和旧用户要求脱敏保存在会话私有 `history-results/` 归档中，Unix 目录权限 0700、文件权限 0600；Windows 使用私有 ACL。聊天模型可用 `read_history_result(reference, offset, max_chars)` 分页读取摘要引用（每页最多 6,000 字符），不能传任意路径或查询其他会话。单条归档上限 2 MiB，超出会明确标记 `archive_truncated`；归档失败会保留原正文。文件内容带历史版本和行范围，使用前应核对当前文件。摘要保存完整任务索引的引用，早期要求不会因超过八条而被自动淘汰；索引自身无法完整归档时不执行回合摘要。
 
 `/context` 的分类与工具集合来自最近送入模型的请求并随会话保存。估算区分 ASCII 与非 ASCII 内容，按同模型、同提供商的实际 usage 保守校准；它仍不是精确 tokenizer 或费用账单。手动压缩后，最近实际请求统计要等下一次调用才更新。Skill 正文被省略时保留名称、路径和版本及已加载状态，持续规则可按需恢复，一次性初始化不应重复。
 
@@ -514,13 +570,15 @@ check_config.py  环境变量读取示例
 
 ## 发布验证
 
-macOS/Linux 下的文件描述符与进程组实现为本项目当前验证的平台边界。新建文件遵循 umask；完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
+运行时使用 macOS/Linux 文件描述符与进程组，Windows 11 使用 Win32 文件句柄、ACL、文件锁和 Job Object。Unix 新建文件遵循 umask；Windows 项目文件继承父目录 ACL，替换时保留原权限，只读文件保持原状并返回错误。完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.0.0-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.0.2-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
+
+推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；全部检查通过后发布两个安装包、wheel 和 `SHA256SUMS`。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
 
 真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](docs/reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 和 Windows 实机仍需另行验证。

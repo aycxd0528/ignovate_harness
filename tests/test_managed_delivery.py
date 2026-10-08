@@ -185,7 +185,7 @@ class ReviewCoverageTests(unittest.TestCase):
         from nailong.tools.files import FileSession
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'a.py').write_text('甲乙\nγδ\n', encoding='utf-8')
+            (root / 'a.py').write_text('甲乙\nγδ\n', encoding='utf-8', newline='\n')
             session = FileSession(root)
             first = session.read_file('a.py', limit=1)
             second = session.read_file('a.py', offset=first['next_offset'], limit=1)
@@ -205,7 +205,7 @@ class ReviewCoverageTests(unittest.TestCase):
         from nailong.tools.files import FileSession
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'a.py').write_text('abcdef', encoding='utf-8')
+            (root / 'a.py').write_text('abcdef', encoding='utf-8', newline='\n')
             session = FileSession(root)
             first = session.read_file('a.py', max_chars=3)
             second = session.read_file('a.py', offset=first['next_offset'],
@@ -278,6 +278,24 @@ class ManagedDeliveryTests(unittest.TestCase):
         task['acceptance'][0].update(status='passed', evidence_ids=['proof'])
         task['evidence'] = [self.evidence(**kwargs)]
         return task
+
+    def test_native_windows_project_identity_can_prove_delivery(self):
+        for root in (r'C:\Users\测试 user\project', 'D:/work/project'):
+            with self.subTest(root=root):
+                task = self.proven_task(project_root=root)
+                task['project_root'] = root
+                report = build_delivery_report(task, current_input_fingerprint='input-v1')
+                self.assertEqual(report['status'], 'reviewed')
+                self.assertEqual(report['project_root'], root)
+
+    def test_invalid_windows_project_roots_cannot_prove_delivery(self):
+        for root in (r'C:project', r'\project', r'\\server\share', r'\\?\C:\project',
+                     r'C:\work\..\project', r'C:\work\file:stream', r'C:\work\NUL',
+                     'C:\\work\\bad\0name'):
+            with self.subTest(root=root):
+                task = self.proven_task(project_root=root)
+                task['project_root'] = root
+                self.assertEqual(build_delivery_report(task, current_input_fingerprint='input-v1')['status'], 'unverified')
 
     def test_model_unknown_stale_and_partial_evidence_never_prove_review(self):
         cases = [{'source': 'model'}, {'input_fingerprint': 'unknown'},

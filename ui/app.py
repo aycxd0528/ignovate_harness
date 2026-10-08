@@ -193,8 +193,9 @@ async def run_inline(
     from prompt_toolkit.patch_stdout import patch_stdout
     patcher = patch_stdout(raw=True) if prompt_session is None else None
     if patcher: patcher.__enter__()
+    interrupt_cleanup = None
     if plain:
-        import signal
+        from ui.plain import install_plain_interrupt
         def interrupt():
             if session_runner.busy:
                 asyncio.create_task(session_runner.stop())
@@ -203,7 +204,6 @@ async def run_inline(
             else:
                 session.session.buffer=b''
                 console.print('输入已清空。用 /exit 退出。')
-        asyncio.get_running_loop().add_signal_handler(signal.SIGINT,interrupt)
     if hasattr(factory,'settings'): current_settings=factory.settings
     if getattr(factory,'preferences',None) is not None: actions.preferences=factory.preferences
     initial_preferences=actions.preferences.effective()
@@ -483,6 +483,8 @@ async def run_inline(
             console.print(f"已恢复会话 {thread_id}。")
             _format_history(service, thread_id, console)
         try:
+            if plain:
+                interrupt_cleanup = install_plain_interrupt(interrupt)
             while True:
                 try:
                     prompt_options={'bottom_toolbar':toolbar}
@@ -676,9 +678,11 @@ async def run_inline(
                     retained_input=message
                     console.error(_safe_error(error,current_settings.api_key))
         finally:
-            await session_runner.close()
-            if patcher: patcher.__exit__(None,None,None)
-            if plain: asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)
-            for active_factory in reversed(factories):
-                await active_factory.aclose()
-                active_factory.close()
+            try:
+                await session_runner.close()
+            finally:
+                if patcher: patcher.__exit__(None,None,None)
+                if interrupt_cleanup: interrupt_cleanup()
+                for active_factory in reversed(factories):
+                    await active_factory.aclose()
+                    active_factory.close()

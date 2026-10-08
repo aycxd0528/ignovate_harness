@@ -1,3 +1,4 @@
+from platform_fixtures import python_command
 """Local service, prepared model input and process integration contracts."""
 import asyncio
 import json
@@ -54,7 +55,7 @@ class ManagedRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         base = Path(self.directory.name)
         self.root = base / 'project'
         self.root.mkdir()
-        (self.root / 'source.py').write_text('value = 1\n')
+        (self.root / 'source.py').write_text('value = 1\n', newline='\n')
         self.sessions = ProjectSessionStore(self.root, base_dir=base / 'private')
         self.tasks = TaskStore(self.sessions)
         self.engine = PermissionEngine(self.root, rules={})
@@ -130,7 +131,7 @@ class ManagedRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         task = await self.service._begin_task('owner', '审查目录', 'review', '.')
         def enumerate_then_add(*args, **kwargs):
             selection = select_review_files(*args, **kwargs)
-            (self.root / 'new.py').write_text('not consumed by model\n')
+            (self.root / 'new.py').write_text('not consumed by model\n', newline='\n')
             return selection
         with patch('nailong.core.review_runtime.select_review_files', side_effect=enumerate_then_add):
             collector = await self.service._prepare_review(self.agent, self.config, task)
@@ -201,7 +202,7 @@ class ManagedRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['files'][0]['status'], 'unknown')
 
     async def test_async_process_retains_failure_summary_after_large_output(self):
-        command = f"{sys.executable} -c \"print('BEGIN');print('x'*20000);print('FINAL_FAILURE');exit(3)\""
+        command = python_command("print('BEGIN');print('x'*20000);print('FINAL_FAILURE');exit(3)")
         result = await asyncio.wait_for(execute_process(command, self.root), timeout=5)
         self.assertFalse(result['ok'])
         self.assertEqual(result['exit_code'], 3)
@@ -217,7 +218,7 @@ class ManagedRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selection['paths'], [])
         self.assertEqual(selection['skipped_paths'][0]['reason'], 'permission_denied')
         allowed = PermissionEngine(self.root, rules={})
-        (self.root / 'other.py').write_text('value = 2\n')
+        (self.root / 'other.py').write_text('value = 2\n', newline='\n')
         selection = select_review_files(self.root, ['.'], allowed, limit=1)
         self.assertFalse(selection['selection_complete'])
         self.assertEqual(len(selection['paths']), 1)

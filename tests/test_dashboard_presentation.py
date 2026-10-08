@@ -100,9 +100,9 @@ class DashboardPresentationTests(unittest.TestCase):
             root = Path(directory)
             settings = root / ".nailong" / "settings.json"
             settings.parent.mkdir()
-            settings.write_text(json.dumps({"models": {"my-model": {"context_window": 8192}}}), encoding="utf-8")
+            settings.write_text(json.dumps({"models": {"my-model": {"context_window": 8192}}}), encoding="utf-8", newline='\n')
             self.assertEqual(configured_context_window("my-model", root), 8192)
-            settings.write_text(json.dumps({"models": {"my-model": {"context_window": -1}}}), encoding="utf-8")
+            settings.write_text(json.dumps({"models": {"my-model": {"context_window": -1}}}), encoding="utf-8", newline='\n')
             self.assertIsNone(configured_context_window("my-model", root))
             self.assertEqual(configured_context_window("deepseek-chat", root), 65536)
 

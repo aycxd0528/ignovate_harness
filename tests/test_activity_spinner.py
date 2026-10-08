@@ -80,7 +80,7 @@ class ActivitySpinnerTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as root:
             config = Path(root)/'.nailong/settings.json'
             config.parent.mkdir()
-            config.write_text(json.dumps({'ui': {'reduced_motion': True}}))
+            config.write_text(json.dumps({'ui': {'reduced_motion': True}}), newline='\n')
             app=TerminalAgentApp(SimpleNamespace(runtime_factory=None,session_store=None),
                                  Settings('key','https://api.invalid','model',Path(root)))
             async with app.run_test(size=(80,24)) as pilot:

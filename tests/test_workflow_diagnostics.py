@@ -16,8 +16,9 @@ class DiagnosticTests(unittest.TestCase):
         except ModuleNotFoundError: self.fail('Diagnostics missing')
     def test_offline_missing_auth_bad_config_and_no_rg(self):
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory); (root/'.nailong').mkdir(); (root/'.nailong/settings.json').write_text('{broken')
-            with patch.dict(os.environ,{},clear=True),patch('shutil.which',return_value=None):
+            root=Path(directory); (root/'.nailong').mkdir(); (root/'.nailong/settings.json').write_text('{broken', newline='\n')
+            with patch.dict(os.environ,{'IGNOVATE_CONFIG_DIR':str(root/'user-config'),
+                                       'USERPROFILE':directory, 'HOME':directory},clear=True),patch('shutil.which',return_value=None):
                 report=self.module().diagnose(root,env={})
             text=json.dumps(report,ensure_ascii=False)
             self.assertIn('DEEPSEEK_API_KEY',text); self.assertIn('rg',text)

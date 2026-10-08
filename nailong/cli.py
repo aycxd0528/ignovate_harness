@@ -21,6 +21,8 @@ def doctor_cli(argv):
 
 def main(argv=None):
     argv=list(sys.argv[1:] if argv is None else argv)
+    if argv[:2] == ['set', 'up']:
+        argv = ['--setup', *argv[2:]]
     if '--doctor' in argv or (argv and argv[0]=='doctor'): return doctor_cli(argv)
     if '--project' not in argv and not any(arg.startswith('--project=') for arg in argv):
         argv+=['--project',str(Path.cwd())]

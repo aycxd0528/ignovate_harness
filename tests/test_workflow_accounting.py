@@ -22,14 +22,14 @@ class WorkflowAccountingTests(unittest.TestCase):
             config.write_text(json.dumps({'pricing': {'private': {
                 'input_per_million': 1, 'cache_hit_per_million': 0.2,
                 'output_per_million': 2,
-            }}}))
+            }}}), newline='\n')
             settings = Settings('secret', 'https://user:secret@example.org/api?token=secret', 'private', root)
             factory = SimpleNamespace(settings=settings)
             store = ProjectSessionStore(root, base_dir=root/'data')
             service = AgentService(factory, api_key='secret', session_store=store,
                                    permission_engine=PermissionEngine(root))
             service._event('thread', 'usage', {'input_tokens': 100, 'output_tokens': 10})
-            config.write_text('{}')
+            config.write_text('{}', newline='\n')
             event = store.read_events('thread')[0]['data']
             self.assertEqual(event.get('model'), 'private')
             self.assertEqual(event.get('provider_host'), 'example.org')
@@ -54,7 +54,7 @@ class WorkflowAccountingTests(unittest.TestCase):
                     path.write_text(json.dumps({'pricing': {'private': {
                         'input_per_million': value, 'cache_hit_per_million': 0,
                         'output_per_million': 2,
-                    }}}))
+                    }}}), newline='\n')
                     self.assertFalse(CostEstimator('private', root).available)
 
 
@@ -68,7 +68,7 @@ class AccountingBoundaryTests(unittest.TestCase):
             for values in [{'input_per_million':'invalid','cache_hit_per_million':0,'output_per_million':1},
                            {'input_per_million':True,'cache_hit_per_million':0,'output_per_million':1},
                            {'input_per_million':1}]:
-                path.write_text(json.dumps({'pricing':{'deepseek-flash':values}}))
+                path.write_text(json.dumps({'pricing':{'deepseek-flash':values}}), newline='\n')
                 self.assertFalse(CostEstimator('deepseek-flash',root).available)
     def test_usage_carries_provider_reported_actual_model(self):
         from langchain_core.messages import AIMessage

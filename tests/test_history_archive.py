@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import hashlib
 import json
 import stat
@@ -185,11 +186,11 @@ class HistoryArchiveTests(unittest.TestCase):
 
     def test_file_evidence_reports_the_historical_content_version(self):
         source = self.base / "sample.py"
-        source.write_text("old body\n", encoding="utf-8")
+        source.write_text("old body\n", encoding="utf-8", newline='\n')
         payload = {"ok": True, "path": "sample.py", "line_start": 3, "line_end": 4, "content": "old body\n"}
         old_message = ToolMessage(content=json.dumps(payload), id="tool-1", name="read_file", tool_call_id="call-1")
         old_reference = self.archive.save("thread-1", old_message, {"path": "sample.py", "offset": 2})
-        source.write_text("new body\n", encoding="utf-8")
+        source.write_text("new body\n", encoding="utf-8", newline='\n')
         payload["content"] = "new body\n"
         new_reference = self.archive.save("thread-1", ToolMessage(content=json.dumps(payload), id="tool-1", name="read_file", tool_call_id="call-1"))
         old = self.archive.read("thread-1", old_reference)
@@ -216,9 +217,9 @@ class HistoryArchiveTests(unittest.TestCase):
     def test_new_files_and_archive_directories_are_private(self):
         reference = self.archive.save("thread-1", HumanMessage(content="private"))
         archive_file = self.archive_file(reference)
-        self.assertEqual(stat.S_IMODE(archive_file.stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(self.root.stat().st_mode), 0o700)
-        self.assertEqual(stat.S_IMODE(archive_file.parent.stat().st_mode), 0o700)
+        assert_private(self, archive_file)
+        assert_private(self, self.root, directory=True)
+        assert_private(self, archive_file.parent, directory=True)
         self.assertEqual(list(self.root.rglob("*.tmp")), [])
 
     def test_concurrent_saves_publish_one_complete_idempotent_record(self):

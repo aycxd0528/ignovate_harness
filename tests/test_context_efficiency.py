@@ -154,7 +154,7 @@ class ContextEfficiencyTests(unittest.TestCase):
         directory = self.root / '.nailong'
         directory.mkdir(exist_ok=True)
         directory.joinpath('settings.json').write_text(json.dumps({
-            'context': {'soft_threshold_tokens': threshold}, 'context_windows': {'private': window}}))
+            'context': {'soft_threshold_tokens': threshold}, 'context_windows': {'private': window}}), newline='\n')
 
     def request(self, messages, tools=()):
         return ModelRequest(model=self.model, messages=messages, tools=list(tools),
@@ -252,7 +252,7 @@ class ContextEfficiencyTests(unittest.TestCase):
         paths = list(self.archive.root.rglob('hist_*.json'))
         self.assertEqual(len(paths), 2)
         for path in paths:
-            path.write_text('{}')
+            path.write_text('{}', newline='\n')
         self.configure(threshold=500)
         original = copy.deepcopy(messages)
         with self.assertRaises(ValueError):

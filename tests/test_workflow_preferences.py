@@ -1,8 +1,10 @@
+from platform_fixtures import assert_private
 import importlib
 import json
 import os
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,12 +25,12 @@ class WorkflowPreferenceTests(unittest.TestCase):
             root = Path(directory)
             store = preferences(self, root)
             store.user_path.parent.mkdir()
-            store.user_path.write_text(json.dumps({'theme': 'light'}))
+            store.user_path.write_text(json.dumps({'theme': 'light'}), newline='\n')
             config = root/'.nailong/settings.json'
             config.parent.mkdir()
-            config.write_text(json.dumps({'theme': 'dark', 'models': {'fast': {'model':'private-fast'}}, 'model':'fast'}))
+            config.write_text(json.dumps({'theme': 'dark', 'models': {'fast': {'model':'private-fast'}}, 'model':'fast'}), newline='\n')
             local = root/'.nailong/settings.local.json'
-            local.write_text(json.dumps({'theme':'light', 'hook_approvals':['keep']}))
+            local.write_text(json.dumps({'theme':'light', 'hook_approvals':['keep']}), newline='\n')
             values = store.effective('original', cli={'theme':'ansi'})
             self.assertEqual(values['theme'], 'ansi')
             self.assertEqual(values['model'], 'private-fast')
@@ -36,7 +38,7 @@ class WorkflowPreferenceTests(unittest.TestCase):
             saved = json.loads(local.read_text())
             self.assertEqual(saved['hook_approvals'], ['keep'])
             self.assertEqual(saved['theme'], 'dark')
-            self.assertEqual(local.stat().st_mode & 0o777, 0o600)
+            assert_private(self, local)
             self.assertEqual(store.effective('original', cli={'theme':'ansi'})['theme'], 'dark')
             self.assertEqual(preferences(self,root).effective('original',cli={'theme':'ansi'})['theme'],'ansi')
 
@@ -46,12 +48,12 @@ class WorkflowPreferenceTests(unittest.TestCase):
             store = preferences(self,root)
             local = root/'.nailong/settings.local.json'
             local.parent.mkdir()
-            local.write_text('{broken')
+            local.write_text('{broken', newline='\n')
             with self.assertRaises(ValueError): store.set('theme','light')
             self.assertEqual(local.read_text(),'{broken')
             local.unlink()
             target = root/'other.json'
-            target.write_text('{}')
+            target.write_text('{}', newline='\n')
             local.symlink_to(target)
             with self.assertRaises(ValueError): store.set('theme','light')
             self.assertEqual(target.read_text(),'{}')
@@ -62,7 +64,7 @@ class WorkflowPreferenceTests(unittest.TestCase):
             store = preferences(self,root)
             config=root/'.nailong/settings.json'
             config.parent.mkdir()
-            config.write_text(json.dumps({'models':{'bad':{'model':'other','api_base':'https://evil.invalid'}}}))
+            config.write_text(json.dumps({'models':{'bad':{'model':'other','api_base':'https://evil.invalid'}}}), newline='\n')
             with self.assertRaises(ValueError): store.effective('original')
             with self.assertRaises(ValueError): store.set('api_key','never')
 
@@ -85,12 +87,12 @@ class CliPreferenceTests(unittest.TestCase):
         from agent import AgentRuntimeFactory
         from nailong.core.sessions import ProjectSessionStore
         from unittest.mock import patch
-        with tempfile.TemporaryDirectory() as project,tempfile.TemporaryDirectory() as data:
+        with tempfile.TemporaryDirectory() as project,tempfile.TemporaryDirectory() as data,ExitStack() as resources:
             root=Path(project).resolve()
             try: settings=Settings('key','https://api.invalid','deepseek-flash',root,{'theme':'ansi','output_style':'detailed'})
             except TypeError: self.fail('CLI preference overrides missing')
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
-            self.addCleanup(factory.close)
+            resources.callback(factory.close)
             self.assertEqual(factory.output_style,'detailed')
             self.assertEqual(factory.preferences.effective()['theme'],'ansi')
             factory.preferences.set('theme','light')
