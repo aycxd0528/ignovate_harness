@@ -1,7 +1,6 @@
 name: GitHub Release
 on:
   push:
-    branches: ['codex/release-installer']
     tags: ['v*']
   workflow_dispatch:
 permissions:
@@ -10,11 +9,15 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
       - name: Check release version
         run: |
           python - <<'PY'
@@ -31,11 +34,13 @@ jobs:
       - name: Tests
         run: python -m unittest discover -s tests -v
       - name: Build release assets
+        if: matrix.python-version == '3.11'
         run: |
           python -m pip wheel --no-deps --wheel-dir dist .
           python scripts/build_release.py --wheel dist/*.whl
           python scripts/smoke_wheel.py dist/*.whl
       - uses: actions/upload-artifact@v7.0.2
+        if: matrix.python-version == '3.11'
         with:
           name: release-assets
           path: dist/release/*
@@ -69,6 +74,7 @@ jobs:
           python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert all(c["status"]=="ok" for c in r["checks"] if c["name"] in ("python","textual","mcp","rg"))' "$RUNNER_TEMP/doctor.json"
   windows-smoke:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-python@v7.0.0
