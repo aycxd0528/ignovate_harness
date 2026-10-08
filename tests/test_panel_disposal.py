@@ -42,7 +42,22 @@ class PanelDisposalRegression(unittest.IsolatedAsyncioTestCase):
                 async with app.run_test(size=(80, 24)) as pilot:
                     task = asyncio.create_task(app._wait_panel(PlanEditScreen('draft')))
                     try:
-                        await pilot.pause()
+                        async def editor_ready():
+                            # Escape belongs to the focused panel. Merely
+                            # yielding once can send it before mount/focus.
+                            while True:
+                                await pilot.pause()
+                                panel = app._interaction_panel
+                                editor = app.focused
+                                if (isinstance(panel, PlanEditScreen)
+                                        and panel.is_attached
+                                        and isinstance(editor, TextArea)
+                                        and editor.id == 'plan-edit-content'
+                                        and editor.region.width > 0
+                                        and editor.region.height > 0):
+                                    return
+
+                        await asyncio.wait_for(editor_ready(), 3)
                         await pilot.press('escape')
                         self.assertIsNone(await asyncio.wait_for(task, 3))
                         await pilot.pause()

@@ -142,7 +142,7 @@ class SetupApp(App[SetupResult | None]):
                 yield Static(' / ' + self.project_root.name, id='setup-session', markup=False)
                 yield Static('配置', id='setup-status', markup=False)
             yield Static('', id='setup-logo')
-            yield Static(f'{PRODUCT_NAME}  v1.0.0', id='welcome-title', markup=False)
+            yield Static(f'{PRODUCT_NAME}  v1.0.2', id='welcome-title', markup=False)
             yield Static('读代码，改文件，让任务有始有终。', id='setup-caption')
             yield Static('', id='setup-rule')
             with VerticalScroll(id='setup-body'):

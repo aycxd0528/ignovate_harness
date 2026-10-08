@@ -1,4 +1,5 @@
 from platform_fixtures import assert_private
+import asyncio
 import importlib
 import json
 import tempfile
@@ -129,10 +130,25 @@ class HarnessWelcomeUiTests(unittest.IsolatedAsyncioTestCase):
             app = self.app(BootstrapStore(Path(directory)/'user'))
             async with app.run_test(size=(80,24)) as pilot:
                 await pilot.press('enter')
-                app.query_one('#setup-reasoning', OptionList).highlighted=3
-                app.query_one('#setup-model', Input).value='unknown-model'
-                await pilot.pause()
                 menu=app.query_one('#setup-reasoning', OptionList)
+                menu.highlighted=3
+                self.assertEqual(menu.get_option_at_index(menu.highlighted).id,'high')
+                model=app.query_one('#setup-model', Input)
+                model.value='unknown-model'
+
+                async def wait_for_updated_choices():
+                    while (menu.option_count != 1
+                           or menu.get_option_at_index(0).id != 'default'):
+                        await pilot.pause()
+
+                try:
+                    await asyncio.wait_for(wait_for_updated_choices(),3)
+                except TimeoutError:
+                    self.fail(
+                        f'Model change did not update reasoning choices: model={model.value!r}, '
+                        f'choices={[menu.get_option_at_index(i).id for i in range(menu.option_count)]!r}, '
+                        f'highlighted={menu.highlighted!r}'
+                    )
                 self.assertEqual(menu.option_count,1)
                 self.assertEqual(menu.get_option_at_index(menu.highlighted).id,'default')
 
