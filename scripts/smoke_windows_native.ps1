@@ -36,7 +36,7 @@ $env:Path = "$(Join-Path $env:IGNOVATE_INSTALL_HOME 'tools');$env:Path"
 # Copy only acceptance tests outside the checkout: imports must come from wheel.
 $tests = Join-Path $root 'acceptance'
 New-Item -ItemType Directory -Path $tests | Out-Null
-foreach ($name in @('test_native_tools.py','test_native_file_backend.py','test_native_processes.py','test_native_plain.py')) {
+foreach ($name in @('test_native_tools.py','test_native_file_backend.py','test_native_processes.py','test_native_plain.py','test_result_archive.py','platform_fixtures.py')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\tests\$name") -Destination $tests
 }
 Push-Location $root

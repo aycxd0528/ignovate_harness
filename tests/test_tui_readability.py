@@ -26,6 +26,18 @@ class DirectSelectionTests(unittest.IsolatedAsyncioTestCase):
         return TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None),
             Settings('private-key', 'https://api.invalid', 'deepseek-chat', Path(root)))
 
+    async def wait_for_condition(self, pilot, condition, description):
+        async def ready():
+            while True:
+                await pilot.pause()
+                if condition():
+                    return
+        try:
+            await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for {description}; '
+                      f'focus={getattr(pilot.app.focused, "id", None)!r}')
+
     async def drag(self, pilot, log, text):
         for y in range(log.scrollable_content_region.height):
             line = log.render_line(y).text
@@ -92,14 +104,27 @@ class DirectSelectionTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(100,32)) as pilot:
                 app._append_assistant('上方对话应保持可见。')
                 app._dispatch('/model')
-                await pilot.pause()
+                await self.wait_for_condition(pilot,
+                    lambda: (app._interaction_panel is not None
+                        and app._interaction_panel.is_attached
+                        and app.focused is not None and app.focused.is_attached
+                        and app.focused.id == 'model-options'),
+                    'model choices to mount and focus')
+                panel = app._interaction_panel
+                composer = app.query_one('#composer', TextArea)
                 dialog = app.screen.query_one('#model-dialog')
                 options = app.screen.query_one('#model-options')
+                self.assertGreater(options.size.height, 0, '模型选项必须可见')
                 self.assertLessEqual(options.size.height, 4, '单个模型不应占满窗口')
                 self.assertLessEqual(dialog.size.height, 13)
                 self.assertIn(dialog.styles.border_left[0], ('', 'none'))
                 await pilot.press('escape')
-                await app.session_runner.wait_idle()
+                await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_condition(pilot,
+                    lambda: app._interaction_panel is None and app.focused is composer,
+                    'model choices to close and restore composer focus')
+                self.assertFalse(panel.is_attached)
+                self.assertFalse(composer.disabled)
 
     async def test_blank_transcript_area_can_be_selected_without_stopping_or_crashing(self):
         with tempfile.TemporaryDirectory() as root, patch('shutil.which', return_value=None):
