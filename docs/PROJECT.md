@@ -44,7 +44,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ignovate set up
 ```
 
-Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
+Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地 NTFS 盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
 
 ### 自动配置与日常启动
 

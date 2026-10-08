@@ -52,7 +52,7 @@ ignovate set up --environment-only
 ignovate doctor --output-format json
 ```
 
-未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 保留当前目录和 `--project` 的原生路径。Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
+未填写模型连接时，`doctor` 会给出配置指引并返回退出码 1。配置完成后，在要处理的项目目录运行 `ignovate`；也可使用 `ignovate --project /path/to/your/project`。Windows 保留当前目录和 `--project` 的原生路径。Windows 命令工具使用 Windows PowerShell；Git 和 MCP stdio 服务使用 Windows 可执行文件及 Windows 路径。项目文件工具支持本地 NTFS 盘符路径，拒绝目录联接、重解析点、设备路径和备用数据流；网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
 
 完整的安装位置、PATH、校验、升级和源码构建说明见 [Release 安装说明](docs/INSTALL.md)。
 
