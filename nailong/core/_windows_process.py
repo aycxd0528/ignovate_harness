@@ -155,6 +155,13 @@ class WindowsJob:
 
     def terminate(self):
         if self.handle:
+            # Close the creation window before collecting handles. Existing
+            # members may exit, but a parent cannot add another active child.
+            limits = _ExtendedLimits()
+            limits.BasicLimitInformation.LimitFlags = 0x2000 | 8
+            limits.BasicLimitInformation.ActiveProcessLimit = 1
+            if not _set_job(self.handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+                raise ctypes.WinError(ctypes.get_last_error())
             self._pin_processes()
             if not _terminate(self.handle, 1):
                 raise ctypes.WinError(ctypes.get_last_error())

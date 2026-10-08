@@ -98,6 +98,50 @@ class PortableCaptureTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == 'nt', 'Requires native Windows job objects and directory sharing.')
 class WindowsJobCleanupTests(unittest.TestCase):
+    def test_cleanup_blocks_child_creation_before_collecting_process_handles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ready, trigger, outcome = (root/name for name in ('ready', 'trigger', 'outcome'))
+            code = f"""import json, subprocess, sys, time
+from pathlib import Path
+ready, trigger, outcome = [Path(p) for p in {list(map(str,(ready,trigger,outcome)))!r}]
+ready.write_text('ready')
+while not trigger.exists(): time.sleep(.01)
+try:
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
+    result = {{'pid':child.pid}}
+except OSError as error:
+    result = {{'error':error.winerror}}
+outcome.with_suffix('.tmp').write_text(json.dumps(result))
+outcome.with_suffix('.tmp').replace(outcome)
+time.sleep(30)
+"""
+            owner = process_io.OwnedProcess([sys.executable, '-c', code], cwd=root)
+            attempted = None
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(ready.exists())
+                original = owner.job._pin_processes
+                def collect_after_attempt():
+                    nonlocal attempted
+                    if attempted is None:
+                        trigger.write_text('spawn during cleanup')
+                        deadline = time.monotonic() + 5
+                        while not outcome.exists() and time.monotonic() < deadline:
+                            time.sleep(.01)
+                        self.assertTrue(outcome.exists(), 'Child creation attempt did not finish.')
+                        attempted = json.loads(outcome.read_text())
+                    original()
+                owner.job._pin_processes = collect_after_attempt
+            finally:
+                owner.close()
+            self.assertIn('error', attempted, 'A child started after cleanup began.')
+            # The caller may remove the working directory as soon as close returns.
+            for file in root.iterdir(): file.unlink()
+            root.rmdir()
+
     def test_close_releases_descendant_working_directories_before_returning(self):
         with tempfile.TemporaryDirectory() as directory:
             for attempt in range(8):
