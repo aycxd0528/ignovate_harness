@@ -85,7 +85,9 @@ $serialized = foreach ($value in $nativeArguments) {
     '"' + $escaped + '"'
 }
 $start = New-Object Diagnostics.ProcessStartInfo
-$start.FileName = (Get-Command wsl.exe -CommandType Application).Source
+$resolvedWsl = Get-Command wsl.exe -CommandType Application | Select-Object -First 1
+$start.FileName = $resolvedWsl.Path
+if (-not [IO.File]::Exists($start.FileName)) { throw "Cannot find the WSL executable: $($start.FileName)" }
 $start.Arguments = $serialized -join ' '
 $start.UseShellExecute = $false
 $process = [Diagnostics.Process]::Start($start)
