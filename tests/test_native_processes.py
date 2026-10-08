@@ -41,7 +41,7 @@ class PortableCaptureTests(unittest.TestCase):
         command = shell_python("import sys;sys.stdout.buffer.write(('开始\\n'+'x'*40000+'\\n最后错误\\n').encode('utf-8'));sys.exit(3)")
         output, truncated, timed_out, exit_code = process_io.capture_command_output(
             command, cwd=self.root, timeout=3, max_output_chars=1200)
-        self.assertIn('开始', output)
+        self.assertIn('开始', output, {'output':output,'timed_out':timed_out,'exit_code':exit_code})
         self.assertIn('最后错误', output)
         self.assertLessEqual(len(output), 1200)
         self.assertTrue(truncated)
@@ -80,7 +80,7 @@ class PortableCaptureTests(unittest.TestCase):
         code = f"import subprocess,sys,time;subprocess.Popen([sys.executable,'-c',{child!r}]);print('started',flush=True);time.sleep(30)"
         output, _, timed_out, _ = process_io.capture_command_output(shell_python(code), cwd=self.root, timeout=timeout)
         self.assertTrue(timed_out)
-        self.assertIn('started', output)
+        self.assertIn('started', output, {'output':output,'timed_out':timed_out})
         time.sleep(timeout+.8)
         self.assertFalse(marker.exists())
 
@@ -177,6 +177,18 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='异步 process ')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self._owned_tasks = set()
+        async def stop_remaining_tasks():
+            for task in self._owned_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._owned_tasks, return_exceptions=True)
+        self.addAsyncCleanup(stop_remaining_tasks)
+
+    def owned_task(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._owned_tasks.add(task)
+        return task
 
     async def wait_started(self, path):
         async with asyncio.timeout(3):
@@ -189,7 +201,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_async_cancellation_cleans_descendant_before_returning(self):
         started, marker = self.root/'started', self.root/'async-late'
-        task = asyncio.create_task(execute_process(self.spawning_command(started, marker), self.root))
+        task = self.owned_task(execute_process(self.spawning_command(started, marker), self.root))
         await self.wait_started(started)
         task.cancel()
         with self.assertRaises(ProcessCancelled) as caught:
@@ -201,7 +213,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_repeated_async_cancellation_still_joins_tree_cleanup(self):
         started, marker = self.root/'repeated', self.root/'repeated-late'
-        task = asyncio.create_task(execute_process(self.spawning_command(started, marker), self.root))
+        task = self.owned_task(execute_process(self.spawning_command(started, marker), self.root))
         await self.wait_started(started)
         task.cancel()
         while not task.done():
@@ -222,7 +234,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         child = f"import time;from pathlib import Path;time.sleep(1);Path({str(marker)!r}).write_text('leak')"
         command = shell_python(f"import subprocess,sys;from http.server import HTTPServer,SimpleHTTPRequestHandler;subprocess.Popen([sys.executable,'-c',{child!r}]);HTTPServer(('127.0.0.1',{port}),SimpleHTTPRequestHandler).serve_forever()")
         result = await execute_process(command, self.root, http_url=f'http://127.0.0.1:{port}/', timeout=5)
-        self.assertTrue(result['ok'])
+        self.assertTrue(result['ok'], result)
         self.assertTrue(result['observed'])
         await asyncio.sleep(1.2)
         self.assertFalse(marker.exists())
@@ -233,7 +245,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         started, marker = self.root/'observed', self.root/'observed-late'
         result = await execute_process(self.spawning_command(started, marker), self.root,
                                        stdout_contains='ready', timeout=3)
-        self.assertTrue(result['ok'])
+        self.assertTrue(result['ok'], result)
         self.assertTrue(result['observed'])
         await asyncio.sleep(1)
         self.assertFalse(marker.exists())
@@ -241,7 +253,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
     async def test_stdout_observation_detects_flushed_marker_without_newline(self):
         command = shell_python("import sys,time;sys.stdout.buffer.write('开头READY'.encode('utf-8'));sys.stdout.buffer.flush();time.sleep(30)")
         result = await execute_process(command, self.root, stdout_contains='READY', timeout=5)
-        self.assertTrue(result['ok'])
+        self.assertTrue(result['ok'], result)
         self.assertTrue(result['observed'])
         self.assertIn('开头READY', result['output'])
 
@@ -252,7 +264,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         (settings/'settings.json').write_text(json.dumps({'hooks': {'PreToolUse': [
             {'hooks': [{'type': 'command', 'command': command}]}]}}), encoding='utf-8', newline='\n')
         runner = HookRunner(self.root)
-        task = asyncio.create_task(runner.run_event('PreToolUse', confirm=lambda _: True))
+        task = self.owned_task(runner.run_event('PreToolUse', confirm=lambda _: True))
         await self.wait_started(started)
         task.cancel()
         with self.assertRaises(asyncio.CancelledError):
@@ -266,7 +278,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         (settings/'settings.json').write_text(json.dumps({'hooks': {'PreToolUse': [
             {'hooks': [{'type': 'command', 'command': shell_python(code)}]}]}}), encoding='utf-8', newline='\n')
         result = await HookRunner(self.root, max_output_chars=512).run_event('PreToolUse', confirm=lambda _: True)
-        self.assertTrue(result.blocked)
+        self.assertTrue(result.blocked, result)
         self.assertIn('首', result.outputs[0].stdout)
         self.assertIn('错误', result.outputs[0].stderr)
         self.assertLessEqual(len(result.outputs[0].stdout), 512)
@@ -275,7 +287,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
     async def test_hook_retains_universal_newline_text_behavior(self):
         code = "import sys,time;sys.stdout.buffer.write(b'first\\r');sys.stdout.buffer.flush();time.sleep(.03);sys.stdout.buffer.write(b'\\nsecond\\rthird\\n');sys.stderr.buffer.write(b'error\\r\\n')"
         result = HookRunner(self.root)._execute(shell_python(code), process_io.command_environment())
-        self.assertEqual(result.stdout, 'first\nsecond\nthird\n')
+        self.assertEqual(result.stdout, 'first\nsecond\nthird\n', result)
         if os.name == 'posix':
             self.assertEqual(result.stderr, 'error\n')
         else:
@@ -289,7 +301,7 @@ class PortableAsyncProcessTests(unittest.IsolatedAsyncioTestCase):
         script.write_text(f"import json,os,subprocess,sys,time\nfrom pathlib import Path\nsubprocess.Popen([sys.executable,'-c',{child!r}])\nPath({str(info)!r}).write_text(json.dumps({{'path':sys.argv[-1],'key':os.getenv('DEEPSEEK_API_KEY')}}))\ntime.sleep(30)\n", encoding='utf-8', newline='\n')
         selected = subprocess.list2cmdline([sys.executable, str(script)]) if os.name == 'nt' else shlex.join([sys.executable, str(script)])
         with patch.dict(os.environ, {'VISUAL': selected, 'DEEPSEEK_API_KEY': 'private-key'}):
-            task = asyncio.create_task(edit_plan_with_editor_async('original'))
+            task = self.owned_task(edit_plan_with_editor_async('original'))
             await self.wait_started(info)
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):

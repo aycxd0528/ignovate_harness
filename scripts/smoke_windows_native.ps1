@@ -43,6 +43,8 @@ Push-Location $root
 try {
     . (Join-Path $bundle.FullName 'common.ps1')
     Invoke-IgnovateChecked $python @('-c', 'import sys, local_tools; assert sys.platform == "win32"; assert sys.prefix != sys.base_prefix; print(local_tools.__file__)')
+    # Record native shell startup time before the bounded process acceptance tests.
+    Invoke-IgnovateChecked $python @('-c', 'import json,os,time,sys; from nailong.core.process_io import capture_command_output; start=time.monotonic(); command="& " + chr(39) + sys.executable + chr(39) + " -c " + chr(39) + "print(123)" + chr(39); output,truncated,timed_out,code=capture_command_output(command,timeout=30); print(json.dumps(dict(elapsed=time.monotonic()-start,output=output,timed_out=timed_out,exit_code=code))); assert code == 0 and not timed_out and "123" in output')
     & $python -m unittest discover -s $tests -v
     if ($LASTEXITCODE -ne 0) { throw 'Native installed-wheel acceptance failed.' }
 } finally { Pop-Location }
