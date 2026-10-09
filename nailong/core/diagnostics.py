@@ -17,7 +17,10 @@ def terminal_capabilities():
     terminal=sys.stdin.isatty() and sys.stdout.isatty()
     ide=bool(os.environ.get('PYCHARM_HOSTED') or 'pydevd' in sys.modules)
     inline=bool(terminal and not ide)
-    fullscreen=inline and os.environ.get('TERM','').lower() not in {'','dumb'}
+    term=os.environ.get('TERM','').lower()
+    # Native Windows consoles use Textual's Win32 driver; CMD and PowerShell
+    # usually have no POSIX TERM variable, even inside Windows Terminal.
+    fullscreen=inline and term!='dumb' and (sys.platform=='win32' or bool(term))
     if sys.platform=='darwin':
         program=os.environ.get('TERM_PROGRAM','')
         fullscreen=fullscreen and bool(program) and not any(name in program.casefold() for name in ('pycharm','jetbrains'))

@@ -4,11 +4,11 @@
 
 ## macOS / Linux
 
-支持 Apple Silicon、Intel macOS，以及 x86_64 / ARM64 Linux。下载 `ignovate-1.0.2-unix.tar.gz`，解压后执行：
+支持 Apple Silicon、Intel macOS，以及 x86_64 / ARM64 Linux。下载 `ignovate-1.0.3-unix.tar.gz`，解压后执行：
 
 ```sh
-tar -xzf ignovate-1.0.2-unix.tar.gz
-cd ignovate-1.0.2
+tar -xzf ignovate-1.0.3-unix.tar.gz
+cd ignovate-1.0.3
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -36,11 +36,11 @@ ignovate doctor --output-format json
 
 支持 Windows 11 x64 原生运行。无需 WSL、Linux 环境、虚拟化或预装 Python；安装在当前用户目录，无需管理员权限。
 
-下载 `ignovate-1.0.2-windows.zip`，在 PowerShell 中执行：
+下载 `ignovate-1.0.3-windows.zip`，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.0.2-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.0.2
+Expand-Archive .\ignovate-1.0.3-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.0.3
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -49,6 +49,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```powershell
 ignovate set up
 ```
+
+Windows 交互控制台默认使用与 macOS 相同的 Textual 界面，包括双线轮廓欢迎字标和输入框上方的 Token Weather。Windows Terminal、CMD 和 PowerShell 无需设置 `TERM`。IDE 控制台、重定向输出或 `TERM=dumb` 保留原有回退；可用 `--ui textual` 显式选择界面。
 
 不想重开终端时，在当前 PowerShell 执行：
 
@@ -77,7 +79,7 @@ Release 页面同时提供外层 `SHA256SUMS`，可在解压前校验下载文�
 
 ```sh
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/build_release.py --wheel dist/ignovate_harness-1.0.2-py3-none-any.whl
+python scripts/build_release.py --wheel dist/ignovate_harness-1.0.3-py3-none-any.whl
 ```
 
 更新依赖锁定清单时：

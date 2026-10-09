@@ -1,23 +1,23 @@
-# ignovate harness v1.0.2：本地 CLI 编码助手
+# ignovate harness v1.0.3：本地 CLI 编码助手
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
 
 ## 下载与快速安装
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.0.2](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.2)，无需预装 Python 或克隆源码。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.0.3](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.3)，无需预装 Python 或克隆源码。
 
 | 平台 | 安装包 | 运行环境 |
 | --- | --- | --- |
-| macOS / Linux | [ignovate-1.0.2-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
-| Windows 11 x64 | [ignovate-1.0.2-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.2/ignovate-1.0.2-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
+| macOS / Linux | [ignovate-1.0.3-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.3/ignovate-1.0.3-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
+| Windows 11 x64 | [ignovate-1.0.3-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.3/ignovate-1.0.3-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
 
 ### macOS / Linux
 
 下载后，在安装包所在目录执行：
 
 ```sh
-tar -xzf ignovate-1.0.2-unix.tar.gz
-cd ignovate-1.0.2
+tar -xzf ignovate-1.0.3-unix.tar.gz
+cd ignovate-1.0.3
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -30,8 +30,8 @@ ignovate set up
 下载后，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.0.2-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.0.2
+Expand-Archive .\ignovate-1.0.3-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.0.3
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -42,6 +42,8 @@ ignovate set up
 ```
 
 ### 配置环境与开始使用
+
+Windows 交互控制台默认使用与 macOS 相同的 Textual 欢迎页和 Token Weather；Windows Terminal、CMD 和 PowerShell 无需配置 `TERM`。IDE、重定向输出和 `TERM=dumb` 保留回退，`--ui textual` 可显式选择界面。
 
 `ignovate set up` 会检测 uv、Python 3.11–3.13、应用依赖和 ripgrep，自动下载缺少的组件并创建隔离环境，然后打开模型配置向导，填写 API 地址、模型 ID 和 API Key。应用依赖固定版本并校验哈希，无需手动激活虚拟环境。首次配置需要联网；下载失败后可重新运行此命令，重复安装会保留模型连接和项目数据。
 
@@ -243,6 +245,8 @@ Textual、inline 和 plain 共用命令解析与本地查询，均支持 `/init`
 `/model`、`/reasoning`、`/permissions`、`/help`、计划确认和编辑、回退、F7 正文选择均在主布局中展开。列表滚动时保留操作行，Esc 逐层返回并保留输入草稿。模型切换默认保存为项目默认，`--global` 保存为用户默认；保存失败可在当前表单重试。
 
 顶部显示项目、会话 ID 和当前状态；中间以 `❯` 区分用户消息、`●` 区分模型回复。进展、工具活动和流式回答保留在同一个模型回复位置；命令记录保留退出码和简短输出，文件变更显示有颜色的 diff 摘要。点击工具记录可在对话内展开命令、工作目录、结果和保留的日志，也可使用 `/tools [序号]`。长日志默认折叠，发生截断时明确提示。输入框上方左侧常驻 Token Weather，空会话显示 Clear 0%；右侧显示实际模型、推理强度和权限，F8 可查看完整会话与用量信息；最终回答更新原位置，不另外追加重复正文。
+
+Token Weather 趋势条按最近 8 轮实际上下文用量的相对范围自动缩放，小幅增长和下降也能显示。趋势满格只表示这些样本中的最高值；窗口占用仍以旁边的百分比和容量数字为准。相同用量显示平线，缺失用量保留空点。
 
 正文可直接用鼠标拖选任意文字，再按 `Ctrl+C` 复制；有选区时不会停止后台任务或清空输入，`Esc` 取消选区。复制期间暂缓正文重绘，取消选区后恢复显示最新内容。`F7` 可打开只读 Markdown 原文快照作为备用复制入口。macOS 使用 `pbcopy`，其他终端尝试 OSC52；终端须支持相应剪贴板协议，OSC52 请求没有成功确认。
 
@@ -574,7 +578,7 @@ check_config.py  环境变量读取示例
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.0.2-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.0.3-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。

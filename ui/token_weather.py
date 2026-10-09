@@ -18,6 +18,7 @@ def render_token_weather(metrics, *, context_window, width=100, theme=None, show
     Samples are the last actual input_tokens of each visible turn, including
     tool definitions and results in that request. Child usage and cumulative
     session billing are deliberately separate from this context measurement.
+    The sparkline scales to the recent samples; occupancy uses the real window.
     """
     theme = theme or load_theme()
     width = max(0, width)
@@ -72,8 +73,14 @@ def render_token_weather(metrics, *, context_window, width=100, theme=None, show
     if ascii_only and delta is None:
         growth = 'Growth unavailable'
     levels = '.:-=+*#@' if ascii_only else '▁▂▃▄▅▆▇█'
-    bars = ''.join(('-' if ascii_only else '·') if sample is None else levels[min(7, max(0, int(sample / context_window * 8)))]
-                   for sample in history[-8:])
+    recent = history[-8:]
+    measured = [sample for sample in recent if sample is not None]
+    minimum = min(measured, default=current)
+    spread = max(measured, default=current) - minimum
+    # Missing rounds remain gaps; a single sample or plateau stays flat.
+    bars = ''.join(('-' if ascii_only else '·') if sample is None else
+                   levels[(sample - minimum) * (len(levels) - 1) // spread if spread else 0]
+                   for sample in recent)
 
     def assemble(*, full=False, show_bars=True, show_growth=True, show_numbers=True):
         row = Text()

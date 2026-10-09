@@ -1,17 +1,9 @@
-Windows 11 x64 现在原生运行，无需 WSL 或 Linux 环境。
+修复 Windows 11 中缺少 TERM 时自动降级到 inline 的问题。CMD、PowerShell 和 Windows Terminal 的交互控制台现在默认使用与 macOS 相同的 Textual 界面。欢迎页保留实心字标与偏移双线轮廓；Token Weather 使用相同的颜色、趋势条和输入框上方布局，模型与权限信息在右侧。
 
-从 Release 下载 `*-windows.zip`（Windows 11）或 `*-unix.tar.gz`（macOS / Linux），解压后运行 `install.ps1` 或 `install.sh`。Windows 安装在当前用户目录，无需预装 Python或管理员权限。
+纳入 macOS 已有的趋势条缩放：最近 8 轮的实际上下文用量按相对范围显示，增长和下降可见，相同用量保持平线，缺失用量保留空点。百分比仍表示真实窗口占用。
 
-安装后打开新的终端，输入：
+升级：下载新的 `*-windows.zip` 或 `*-unix.tar.gz`，解压并再次运行安装脚本，然后打开新终端执行 `ignovate set up`。已有模型配置和项目数据会保留。Windows 11 x64 原生运行，无需 WSL、预装 Python 或管理员权限。
 
-```sh
-ignovate set up
-```
+增加真实 Windows 控制台验收，使用 Textual WindowsDriver 检查欢迎字标、带颜色的 Token Weather、左右布局和退出后的控制台模式恢复。IDE、重定向输出和 TERM=dumb 保留原有界面回退；显式 `--ui` 继续有效。
 
-自动检测或下载 uv、Python 3.11–3.13、固定版本的应用依赖和 ripgrep，然后进入模型连接配置向导。支持重复配置和依赖修复；无需手工激活虚拟环境。
-
-Windows 文件工具使用原生句柄和 ACL；命令使用 Windows PowerShell，并在取消或超时时清理子进程。MCP stdio 服务和 Git 使用 Windows 可执行文件。文件工具支持本地 NTFS 盘符路径，网络共享路径暂不支持。项目编辑暂不支持压缩、加密、稀疏文件及含备用数据流的文件；遇到这些文件会拒绝修改并保留原文件。
-
-`ignovate set up --environment-only` 只准备环境；`ignovate doctor` 检查环境和配置。Git 是可选工具，diff / review 需要 Git for Windows。
-
-从旧 WSL 安装升级时，WSL 内原有配置和数据保持原位置，原生版首次需要重新配置模型。详细步骤见安装包中的 `INSTALL.md` 和 [安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.0.2/docs/INSTALL.md)。
+安装详情见 [v1.0.3 安装说明](https://github.com/aycxd0528/ignovate_harness/blob/v1.0.3/docs/INSTALL.md)。
