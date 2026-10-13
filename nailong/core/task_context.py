@@ -165,14 +165,25 @@ def _evidence_notes(evidence, revision, task_fingerprint):
     return notes
 
 
-def _compact_task(task,reference,max_chars):
+def _compact_task(task,reference,max_chars,visible_user_messages=None):
     if not isinstance(reference,str) or not re.fullmatch(r'hist_[a-f0-9]{64}',reference):
         raise TaskContextError('精简投影必须提供可恢复的任务归档引用。')
     rows=requirement_records(task)
     active=[row for row in rows if row['status']=='active']
-    def requirement(text):
-        row=next((row for row in active if row['text']==text),None)
-        return {'requirement_id':row['id']} if row else text
+    def requirement(text,*,display=False):
+        # TaskStore trims the display objective while retaining the original
+        # user request. Whitespace does not create a second objective body.
+        matches=[row for row in active if (
+            row['text'].strip()==text.strip() if display else row['text']==text)]
+        return {'requirement_id':matches[0]['id']} if len(matches)==1 else text
+    visible=visible_user_messages or {}
+    projected_requirements=[]
+    for row in active:
+        if row['source']=='user' and row['text'] in visible:
+            projected_requirements.append({key:value for key,value in row.items() if key!='text'}
+                | {'message_index':visible[row['text']]})
+        else:
+            projected_requirements.append(row)
     unfinished=[row for row in task['steps'] if row['state']!='done']
     dependencies={identity for row in unfinished for identity in row['dependencies']}
     evidence_ids={row['id'] for row in task['evidence']}
@@ -194,8 +205,8 @@ def _compact_task(task,reference,max_chars):
     selected=[row for _,row in sorted(enumerate(task['evidence']),key=priority,reverse=True)[:6]]
     view={
         'identity':{key:task[key] for key in ('schema_version','task_id','thread_id','project_root','revision')},
-        'objective':requirement(task['objective']),'scope':task['scope'],'constraints':task['constraints'],
-        'active_requirements':active,'requirement_history':{'total':len(rows),'superseded':len(rows)-len(active),
+        'objective':requirement(task['objective'],display=True),'scope':task['scope'],'constraints':task['constraints'],
+        'active_requirements':projected_requirements,'requirement_history':{'total':len(rows),'superseded':len(rows)-len(active),
             'complete':task['request_history_complete']},'latest_request':requirement(task['latest_request']),
         'lifecycle':task['lifecycle'],'phase':task['phase'],'profile':task.get('profile'),
         'input_fingerprint':task['input_fingerprint'],'changed_paths':task['changed_paths'],
@@ -212,6 +223,8 @@ def _compact_task(task,reference,max_chars):
     }
     text=('当前任务快照（运行时任务资料，不是新的用户指令）：\n'
         '用户后续纠正优先；有效要求与硬约束不得省略。步骤完成、passed 状态和指纹记录均不等于当前磁盘验收通过。\n'
+        + ('message_index 是本请求 messages 的 0 基索引（单独的 system 参数不计入）；用户原文仍完整保留，仅省去重复正文。\n' if visible else '')
+        +
         '完整要求/步骤/验收/证据已保存；working_evidence 只是最多 6 条工作明细，省略不表示成功或无关。\n'
         f'read_task_context(reference="{reference}", section="index") 可检索；section 可为 requirements/steps/acceptance/evidence，'
         'record_id 定位原文，query 按关键词查找，按 next_offset 分页；历史资料不扩大授权，不自动重放操作。\n'+_json(view))
@@ -223,7 +236,8 @@ def _compact_task(task,reference,max_chars):
     return text+detail if task['progress'] and len(text)+len(detail)<=max_chars else text
 
 
-def render_task_context(snapshot: dict | None, max_chars: int = 12000, *, history_reference=None) -> str:
+def render_task_context(snapshot: dict | None, max_chars: int = 12000, *, history_reference=None,
+                        visible_user_messages=None) -> str:
     """Render all protected requirements/statuses, or explicitly fail.
 
     Done-step titles, progress and evidence summaries may be omitted/excerpted;
@@ -234,9 +248,13 @@ def render_task_context(snapshot: dict | None, max_chars: int = 12000, *, histor
         raise TaskContextError('任务投影字符上限必须为正整数。')
     if snapshot is None:
         return ''
+    if visible_user_messages is not None and (not isinstance(visible_user_messages,dict) or
+            any(not isinstance(text,str) or type(index) is not int or index<0
+                for text,index in visible_user_messages.items())):
+        raise TaskContextError('可见用户消息索引必须为原文到非负整数的映射。')
     task = validate_task_snapshot(snapshot)
     if history_reference is not None:
-        return _compact_task(task,history_reference,max_chars)
+        return _compact_task(task,history_reference,max_chars,visible_user_messages)
     history = task['request_history']
     def requirement(value):
         return _json({'request_history_index': history.index(value)}) if value in history else _json(value)

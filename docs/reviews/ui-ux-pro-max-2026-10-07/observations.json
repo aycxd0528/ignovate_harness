@@ -1,0 +1,1037 @@
+[
+  {
+    "scene": "empty-dark-100x32",
+    "size": [
+      100,
+      32
+    ],
+    "focused": "composer",
+    "widgets": [
+      {
+        "id": "banner",
+        "region": [
+          2,
+          0,
+          96,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "session-info",
+        "region": [
+          2,
+          1,
+          89,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "status",
+        "region": [
+          92,
+          1,
+          6,
+          1
+        ],
+        "color": "Color(158, 173, 174)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "token-weather",
+        "region": [
+          3,
+          27,
+          56,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-stats",
+        "region": [
+          61,
+          27,
+          36,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-placeholder",
+        "region": [
+          4,
+          29,
+          92,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer",
+        "region": [
+          4,
+          30,
+          92,
+          1
+        ],
+        "color": "Color(221, 227, 232)",
+        "background": "Color(27, 36, 46)",
+        "focus": true
+      }
+    ]
+  },
+  {
+    "scene": "empty-light-100x32",
+    "size": [
+      100,
+      32
+    ],
+    "focused": "composer",
+    "widgets": [
+      {
+        "id": "banner",
+        "region": [
+          2,
+          0,
+          96,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "session-info",
+        "region": [
+          2,
+          1,
+          89,
+          1
+        ],
+        "color": "Color(101, 113, 122)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "status",
+        "region": [
+          92,
+          1,
+          6,
+          1
+        ],
+        "color": "Color(158, 173, 174)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "token-weather",
+        "region": [
+          3,
+          27,
+          56,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-stats",
+        "region": [
+          61,
+          27,
+          36,
+          1
+        ],
+        "color": "Color(101, 113, 122)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-placeholder",
+        "region": [
+          4,
+          29,
+          92,
+          1
+        ],
+        "color": "Color(101, 113, 122)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer",
+        "region": [
+          4,
+          30,
+          92,
+          1
+        ],
+        "color": "Color(40, 52, 60)",
+        "background": "Color(233, 237, 241)",
+        "focus": true
+      }
+    ]
+  },
+  {
+    "scene": "conversation-dark-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "composer",
+    "widgets": [
+      {
+        "id": "brand",
+        "region": [
+          2,
+          0,
+          16,
+          1
+        ],
+        "color": "Color(136, 192, 208)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "session-info",
+        "region": [
+          18,
+          0,
+          53,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "status",
+        "region": [
+          72,
+          0,
+          6,
+          1
+        ],
+        "color": "Color(158, 173, 174)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "token-weather",
+        "region": [
+          3,
+          19,
+          36,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-stats",
+        "region": [
+          41,
+          19,
+          36,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-placeholder",
+        "region": [
+          4,
+          21,
+          72,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer",
+        "region": [
+          4,
+          22,
+          72,
+          1
+        ],
+        "color": "Color(221, 227, 232)",
+        "background": "Color(27, 36, 46)",
+        "focus": true
+      }
+    ]
+  },
+  {
+    "scene": "approval-dark-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "approval-choices",
+    "widgets": [
+      {
+        "id": "brand",
+        "region": [
+          2,
+          0,
+          16,
+          1
+        ],
+        "color": "Color(136, 192, 208)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "session-info",
+        "region": [
+          18,
+          0,
+          49,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "status",
+        "region": [
+          68,
+          0,
+          10,
+          1
+        ],
+        "color": "Color(158, 173, 174)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "approval-title",
+        "region": [
+          3,
+          11,
+          74,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "approval-details",
+        "region": [
+          3,
+          12,
+          74,
+          3
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "approval-choices",
+        "region": [
+          3,
+          15,
+          74,
+          3
+        ],
+        "color": "Color(224, 224, 224)",
+        "background": "Color(30, 30, 30)",
+        "focus": true
+      },
+      {
+        "id": "approval-hint",
+        "region": [
+          3,
+          18,
+          74,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "token-weather",
+        "region": [
+          3,
+          19,
+          36,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-stats",
+        "region": [
+          41,
+          19,
+          36,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer-placeholder",
+        "region": [
+          4,
+          21,
+          72,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "composer",
+        "region": [
+          4,
+          22,
+          72,
+          1
+        ],
+        "color": "Color(221, 227, 232)",
+        "background": "Color(27, 36, 46)",
+        "focus": false
+      }
+    ]
+  },
+  {
+    "scene": "setting-dark-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "setting-options",
+    "widgets": [
+      {
+        "id": "setting-title",
+        "region": [
+          3,
+          8,
+          74,
+          1
+        ],
+        "color": "Color(254, 166, 43)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setting-options",
+        "region": [
+          3,
+          9,
+          74,
+          10
+        ],
+        "color": "Color(224, 224, 224)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": true
+      },
+      {
+        "id": "setting-keys",
+        "region": [
+          3,
+          19,
+          74,
+          1
+        ],
+        "color": "Color(255, 255, 255, a=0.6)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      }
+    ]
+  },
+  {
+    "scene": "setting-light-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "setting-options",
+    "widgets": [
+      {
+        "id": "setting-title",
+        "region": [
+          3,
+          8,
+          74,
+          1
+        ],
+        "color": "Color(254, 166, 43)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setting-options",
+        "region": [
+          3,
+          9,
+          74,
+          10
+        ],
+        "color": "Color(31, 31, 31)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": true
+      },
+      {
+        "id": "setting-keys",
+        "region": [
+          3,
+          19,
+          74,
+          1
+        ],
+        "color": "Color(255, 255, 255, a=0.6)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      }
+    ]
+  },
+  {
+    "scene": "model-dark-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "model-options",
+    "widgets": [
+      {
+        "id": "model-title",
+        "region": [
+          3,
+          10,
+          74,
+          1
+        ],
+        "color": "Color(136, 192, 208)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "model-current",
+        "region": [
+          3,
+          11,
+          74,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "model-options",
+        "region": [
+          3,
+          13,
+          74,
+          2
+        ],
+        "color": "Color(224, 224, 224)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": true
+      },
+      {
+        "id": "model-cancel",
+        "region": [
+          3,
+          16,
+          8,
+          1
+        ],
+        "color": "Color(255, 255, 255, a=0.9)",
+        "background": "Color(30, 30, 30)",
+        "focus": false
+      },
+      {
+        "id": "model-add",
+        "region": [
+          13,
+          16,
+          12,
+          1
+        ],
+        "color": "Color(255, 255, 255, a=0.9)",
+        "background": "Color(30, 30, 30)",
+        "focus": false
+      },
+      {
+        "id": "model-use",
+        "region": [
+          27,
+          16,
+          8,
+          1
+        ],
+        "color": "Color(255, 255, 255, a=0.9)",
+        "background": "Color(30, 30, 30)",
+        "focus": false
+      },
+      {
+        "id": "model-keys",
+        "region": [
+          3,
+          18,
+          74,
+          1
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      }
+    ]
+  },
+  {
+    "scene": "help-dark-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "help-options",
+    "widgets": [
+      {
+        "id": "help-title",
+        "region": [
+          2,
+          1,
+          76,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "help-tab-general",
+        "region": [
+          2,
+          2,
+          6,
+          1
+        ],
+        "color": "Color(224, 224, 224, a=0.5)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "help-tab-commands",
+        "region": [
+          8,
+          2,
+          6,
+          1
+        ],
+        "color": "Color(224, 224, 224)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "help-tab-custom",
+        "region": [
+          14,
+          2,
+          12,
+          1
+        ],
+        "color": "Color(224, 224, 224, a=0.5)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "help-tab-skills",
+        "region": [
+          26,
+          2,
+          8,
+          1
+        ],
+        "color": "Color(224, 224, 224, a=0.5)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "help-search",
+        "region": [
+          2,
+          5,
+          76,
+          3
+        ],
+        "color": "Color(221, 227, 232)",
+        "background": "Color(17, 22, 28)",
+        "focus": false
+      },
+      {
+        "id": "help-options",
+        "region": [
+          2,
+          9,
+          76,
+          11
+        ],
+        "color": "Color(221, 227, 232)",
+        "background": "Color(17, 22, 28)",
+        "focus": true
+      },
+      {
+        "id": "help-footer",
+        "region": [
+          2,
+          21,
+          76,
+          2
+        ],
+        "color": "Color(140, 154, 168)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      }
+    ]
+  },
+  {
+    "scene": "setup-welcome-100x32",
+    "size": [
+      100,
+      32
+    ],
+    "focused": "welcome-options",
+    "widgets": [
+      {
+        "id": "setup-logo",
+        "region": [
+          2,
+          1,
+          96,
+          8
+        ],
+        "color": "Color(130, 180, 250)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "welcome-title",
+        "region": [
+          2,
+          9,
+          96,
+          1
+        ],
+        "color": "Color(130, 180, 250)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-caption",
+        "region": [
+          2,
+          10,
+          96,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-rule",
+        "region": [
+          2,
+          12,
+          96,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-title",
+        "region": [
+          2,
+          13,
+          96,
+          1
+        ],
+        "color": "Color(130, 180, 250)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "welcome-copy",
+        "region": [
+          2,
+          15,
+          96,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-project",
+        "region": [
+          2,
+          17,
+          96,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "welcome-options",
+        "region": [
+          2,
+          19,
+          96,
+          2
+        ],
+        "color": "Color(224, 224, 224)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": true
+      },
+      {
+        "id": "setup-keys",
+        "region": [
+          2,
+          22,
+          96,
+          1
+        ],
+        "color": "Color(142, 151, 174)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      }
+    ]
+  },
+  {
+    "scene": "setup-error-80x24",
+    "size": [
+      80,
+      24
+    ],
+    "focused": "setup-base",
+    "widgets": [
+      {
+        "id": "welcome-title",
+        "region": [
+          2,
+          1,
+          76,
+          1
+        ],
+        "color": "Color(130, 180, 250)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-rule",
+        "region": [
+          2,
+          2,
+          76,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-title",
+        "region": [
+          2,
+          3,
+          76,
+          1
+        ],
+        "color": "Color(130, 180, 250)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": null,
+        "region": [
+          2,
+          5,
+          76,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-base",
+        "region": [
+          2,
+          6,
+          76,
+          1
+        ],
+        "color": "Color(213, 219, 234)",
+        "background": "Color(48, 60, 85)",
+        "focus": true
+      },
+      {
+        "id": null,
+        "region": [
+          2,
+          8,
+          76,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-model",
+        "region": [
+          2,
+          9,
+          76,
+          1
+        ],
+        "color": "Color(213, 219, 234)",
+        "background": "Color(37, 44, 64)",
+        "focus": false
+      },
+      {
+        "id": null,
+        "region": [
+          2,
+          11,
+          76,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-key",
+        "region": [
+          2,
+          12,
+          76,
+          1
+        ],
+        "color": "Color(213, 219, 234)",
+        "background": "Color(37, 44, 64)",
+        "focus": false
+      },
+      {
+        "id": "setup-connection-help",
+        "region": [
+          2,
+          14,
+          76,
+          1
+        ],
+        "color": "Color(255, 255, 255)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-next",
+        "region": [
+          2,
+          16,
+          10,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-back",
+        "region": [
+          15,
+          16,
+          8,
+          1
+        ],
+        "color": "Color(160, 171, 192)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-error",
+        "region": [
+          2,
+          18,
+          76,
+          1
+        ],
+        "color": "Color(239, 160, 160)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      },
+      {
+        "id": "setup-keys",
+        "region": [
+          2,
+          20,
+          76,
+          1
+        ],
+        "color": "Color(142, 151, 174)",
+        "background": "Color(0, 0, 0, a=0)",
+        "focus": false
+      }
+    ],
+    "error": "DEEPSEEK_BASE_URL 必须是包含有效主机名和端口的 HTTP(S) 地址。",
+    "focused_after_error": "setup-base"
+  },
+  {
+    "scene": "transcript-reflow",
+    "synthetic": true,
+    "timings": [
+      {
+        "turns": 10,
+        "entries": 10,
+        "median_reflow_ms": 4.7
+      },
+      {
+        "turns": 50,
+        "entries": 50,
+        "median_reflow_ms": 21.6
+      },
+      {
+        "turns": 100,
+        "entries": 100,
+        "median_reflow_ms": 45.0
+      }
+    ]
+  }
+]

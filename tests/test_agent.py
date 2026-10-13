@@ -15,7 +15,7 @@ from langgraph.types import Command
 
 from config import Settings
 from agent import AgentRuntimeFactory
-from agent_service import AgentService
+from agent_service import AgentService, _interrupt_actions, _resume_approvals
 from nailong.core.sessions import ProjectSessionStore
 import local_tools
 
@@ -235,6 +235,7 @@ asyncio.run(main())
             base_url="https://api.deepseek.com",
             timeout=30,
             max_retries=2,
+            max_tokens=4096,
         )
         config = {"configurable": {"thread_id": "history-test"}, "recursion_limit": 40}
         first = runtime.invoke(
@@ -323,7 +324,7 @@ asyncio.run(main())
             self.assertEqual(request["args"]["path"], "hello.txt")
 
             finished = runtime.invoke(
-                Command(resume={"decisions": [{"type": "approve"}]}),
+                _resume_approvals(_interrupt_actions(pending), [{"type": "approve"}]),
                 config,
                 version="v2",
             )
@@ -342,11 +343,11 @@ asyncio.run(main())
 
         config = {"configurable": {"thread_id": "reject-test"}, "recursion_limit": 40}
         with patch("nailong.tools.files.FileSession.write_file", return_value={"ok": True}) as write_file:
-            runtime.invoke(
+            pending = runtime.invoke(
                 {"messages": [HumanMessage(content="创建文件")]}, config, version="v2"
             )
             finished = runtime.invoke(
-                Command(resume={"decisions": [{"type": "reject"}]}),
+                _resume_approvals(_interrupt_actions(pending), [{"type": "reject"}]),
                 config,
                 version="v2",
             )
@@ -379,7 +380,7 @@ asyncio.run(main())
         self.assertEqual(target.read_text(encoding="utf-8"), "before\n")
 
         finished = runtime.invoke(
-            Command(resume={"decisions": [{"type": "approve"}]}),
+            _resume_approvals(_interrupt_actions(pending), [{"type": "approve"}]),
             config,
             version="v2",
         )
@@ -408,7 +409,7 @@ asyncio.run(main())
             {"messages": [HumanMessage(content="修改文件")]}, config, version="v2"
         )
         finished = runtime.invoke(
-            Command(resume={"decisions": [{"type": "reject"}]}),
+            _resume_approvals(_interrupt_actions(pending), [{"type": "reject"}]),
             config,
             version="v2",
         )
@@ -450,7 +451,7 @@ asyncio.run(main())
         )
         self.assertEqual(pending.interrupts[0].value["action_requests"][0]["name"], "edit_file")
         finished = second_runtime.invoke(
-            Command(resume={"decisions": [{"type": "approve"}]}),
+            _resume_approvals(_interrupt_actions(pending), [{"type": "approve"}]),
             config,
             version="v2",
         )
@@ -482,11 +483,8 @@ asyncio.run(main())
             write_file.assert_not_called()
 
             finished = runtime.invoke(
-                Command(
-                    resume={interruption.id: {"decisions": [decision]}
-                        for interruption, decision in zip(pending.interrupts,
-                            [{"type": "approve"}, {"type": "reject"}], strict=True)}
-                ),
+                _resume_approvals(_interrupt_actions(pending),
+                    [{"type": "approve"}, {"type": "reject"}]),
                 config,
                 version="v2",
             )

@@ -1,0 +1,92 @@
+{
+  "samples": 21,
+  "warmups": 3,
+  "provider_calls": 0,
+  "results": [
+    {
+      "case": "request_report",
+      "history_characters": 100000,
+      "content": "ASCII",
+      "baseline_ms": 1.754,
+      "optimized_ms": 0.327,
+      "cached_ms": 0.343,
+      "equivalent_report": true
+    },
+    {
+      "case": "request_report",
+      "history_characters": 600000,
+      "content": "ASCII",
+      "baseline_ms": 9.021,
+      "optimized_ms": 0.323,
+      "cached_ms": 0.344,
+      "equivalent_report": true
+    },
+    {
+      "case": "request_report",
+      "history_characters": 4000000,
+      "content": "ASCII",
+      "baseline_ms": 57.261,
+      "optimized_ms": 0.331,
+      "cached_ms": 0.375,
+      "equivalent_report": true
+    },
+    {
+      "case": "request_report",
+      "history_characters": 600000,
+      "content": "Chinese",
+      "baseline_ms": 12.019,
+      "optimized_ms": 11.449,
+      "cached_ms": 0.344,
+      "equivalent_report": true
+    },
+    {
+      "case": "preflight_and_final_request",
+      "tool_results": 50,
+      "new_user_message_per_sample": true,
+      "memory_and_task_projection": false,
+      "baseline_ms": 14.15,
+      "optimized_ms": 1.456,
+      "equivalent_accounting": true,
+      "last_performance": {
+        "preflight": {
+          "durations_ms": {
+            "memory_refresh": 0.0002909218892455101,
+            "task_projection": 0.000250060111284256,
+            "archive": 0.2679580356925726,
+            "policy": 0.13604096602648497,
+            "request_view": 0.0005420297384262085,
+            "estimate": 0.45779207721352577
+          },
+          "archive_saved": 0,
+          "archive_reused": 50,
+          "compaction_attempts": 0,
+          "compaction_skipped": false,
+          "total_ms": 0.8848749566823244
+        },
+        "request": {
+          "durations_ms": {
+            "memory_refresh": 0.00020791776478290558,
+            "task_projection": 0.0002080341801047325,
+            "policy": 0.12625008821487427,
+            "estimate": 0.4553749458864331
+          },
+          "archive_saved": 0,
+          "archive_reused": 0,
+          "compaction_attempts": 0,
+          "compaction_skipped": false,
+          "total_ms": 0.5954999942332506
+        },
+        "cache": {
+          "text_hits": 19955,
+          "text_misses": 205,
+          "schema_hits": 940,
+          "schema_misses": 20,
+          "text_entries": 205,
+          "schema_entries": 20,
+          "text_characters": 159357,
+          "schema_characters": 6880
+        }
+      }
+    }
+  ]
+}

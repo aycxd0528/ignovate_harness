@@ -121,3 +121,13 @@ class MCPConfigStore:
             raise ValueError('MCP 服务未配置。')
         del servers[name]
         atomic_json(self.path, payload, self.project_root)
+
+    def update(self, name: str, definition: dict) -> None:
+        """Validate the replacement before publishing any configuration change."""
+        validate_name(name)
+        value = validate_definition(definition)
+        payload = self._read()
+        if name not in payload.get('mcpServers', {}):
+            raise ValueError('MCP 服务未配置。')
+        payload['mcpServers'][name] = value
+        atomic_json(self.path, payload, self.project_root)

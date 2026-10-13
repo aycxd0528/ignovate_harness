@@ -16,6 +16,8 @@ MAX_RESOURCE_BYTES = 64 * 1024
 MAX_FRONTMATTER_BYTES = 8 * 1024
 MAX_SKILLS = 100
 MAX_CATALOG_CHARS = 16_000
+MAX_CATALOG_DESCRIPTION_CHARS = 80
+_CATALOG_EXCERPT_MARKER = '…[摘录]'
 _NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 _PROTECTED_PARTS = {".env", ".git", ".venv", "__pycache__"}
 
@@ -179,18 +181,39 @@ class SkillRegistry:
         return tuple(skill for name,skill in self._skills.items() if include_disabled or name not in self.disabled)
 
     def catalog(self) -> str:
-        lines: list[str] = []
-        length = 0
-        for skill in self.list_skills():
-            line = json.dumps(
-                {"name": skill.name, "source": skill.source, "description": skill.description},
-                ensure_ascii=False,
-            )
-            if length + len(line) > MAX_CATALOG_CHARS:
-                break
-            lines.append(line)
-            length += len(line) + 1
-        return "\n".join(lines)
+        """Fit selection excerpts without dropping enabled names or metadata."""
+        skills = self.list_skills()
+
+        def render(description_limit: int) -> str:
+            lines = []
+            for skill in skills:
+                description = skill.description
+                if len(description) > description_limit:
+                    description = (description[:description_limit - len(_CATALOG_EXCERPT_MARKER)]
+                                   + _CATALOG_EXCERPT_MARKER)
+                lines.append(json.dumps(
+                    {'name': skill.name, 'source': skill.source, 'description': description},
+                    ensure_ascii=False, separators=(',', ':'),
+                ))
+            return '\n'.join(lines)
+
+        catalog = render(MAX_CATALOG_DESCRIPTION_CHARS)
+        if len(catalog) <= MAX_CATALOG_CHARS:
+            return catalog
+        # Measure escaped JSON, including newlines, instead of raw descriptions.
+        # One shared cap distributes a tight budget without favoring early names.
+        lower, upper = len(_CATALOG_EXCERPT_MARKER), MAX_CATALOG_DESCRIPTION_CHARS
+        catalog = render(lower)
+        if len(catalog) > MAX_CATALOG_CHARS:
+            raise ValueError('Skill 目录名称与来源元数据超过大小限制。')
+        while lower < upper:
+            middle = (lower + upper + 1) // 2
+            candidate = render(middle)
+            if len(candidate) <= MAX_CATALOG_CHARS:
+                lower, catalog = middle, candidate
+            else:
+                upper = middle - 1
+        return catalog
 
     def load_skill(self, name: str) -> dict:
         if name in self.disabled:

@@ -83,6 +83,16 @@ def _input_bound(request) -> int:
     messages = list(request.messages)
     if request.system_message is not None:
         messages.insert(0, request.system_message)
+    from nailong.core.model import HarnessChatDeepSeek
+    if isinstance(getattr(request, 'model', None), HarnessChatDeepSeek):
+        from langchain_core.utils.function_calling import convert_to_openai_tool
+        # Native serialization preserves required reasoning_content, while
+        # excluding internal task/usage/provenance telemetry the SDK never sends.
+        options = dict(request.model_settings)
+        options['tools'] = [convert_to_openai_tool(tool) for tool in request.tools]
+        payload = request.model._get_request_payload(messages, **options)
+        wire = {'messages': payload['messages'], 'tools': payload.get('tools', [])}
+        return len(json.dumps(wire, ensure_ascii=False, default=str).encode('utf-8')) + 1_024
     serialized = [message.model_dump(mode="json") for message in messages]
     tools = [tool if isinstance(tool, dict) else {
         "name": tool.name, "description": tool.description,

@@ -21,6 +21,9 @@ def doctor_cli(argv):
 
 def main(argv=None):
     argv=list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'gui':
+        from nailong.gui.__main__ import main as run_gui
+        return run_gui(argv[1:])
     if argv[:2] == ['set', 'up']:
         argv = ['--setup', *argv[2:]]
     if '--doctor' in argv or (argv and argv[0]=='doctor'): return doctor_cli(argv)

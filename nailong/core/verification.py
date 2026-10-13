@@ -175,7 +175,15 @@ class VerificationService:
             elif path.exists(): raise ValueError('生成物必须是普通文件或目录。')
         return sorted(set(files))
 
-    async def run(self, thread_id, name=None, *, approval=None, emit=None,
+    async def run(self, thread_id, name=None, **kwargs):
+        from nailong.core.project_execution import project_execution
+        from nailong.core.sessions import ProjectSessionStore
+        # Event sinks may be non-durable; project execution still needs a lease.
+        execution_store = self.store if hasattr(self.store, 'root') else ProjectSessionStore(self.root)
+        with project_execution(execution_store):
+            return await self._run_unlocked(thread_id, name, **kwargs)
+
+    async def _run_unlocked(self, thread_id, name=None, *, approval=None, emit=None,
                   permission_engine=None, permission_mode='default'):
         steps=self.list_steps()
         if not steps: raise ValueError('尚未配置验证。请在 .nailong/settings.json 设置 verification.steps，例如：{"verification":{"steps":[{"name":"test","kind":"test","command":"python -m unittest discover -s tests","timeout_seconds":30}]}}。检查命令后重新 /verify。')

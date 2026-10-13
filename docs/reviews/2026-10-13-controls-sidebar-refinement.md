@@ -1,0 +1,12 @@
+# Controls and workspace sidebar refinement
+
+Implemented the user's supplied control and sidebar interaction design. No staged files or commits; existing unrelated workspace changes retained.
+
+- Model/effort capsule opens the existing continuous animated effort panel. Its central header opens the configured native model list, with add-model and provider connection entries. Model declarations use PreferenceStore and contain no keys/provider secrets. Switching restores default effort atomically and refuses busy/stale mutations.
+- Composer add menu contains project file/folder references and implementation, plan, review, bounded goal modes. Goal execution and recovery reuse native GoalStore/drive_goal with captured limits, original identity and remaining budget. Folder reference reads bounded metadata only; model requests begin only after Send.
+- Workspace sidebar supports grouping/tree/single list, collapse, relative times, recent/manual order, archive filters, workspace selection/addition and per-workspace new conversation. Other workspace metadata reads existing databases in read-only mode. The conversation map remains scoped to the current conversation and its branches.
+- Tool history defaults to a compact aggregate disclosure, with the active command visible while running. Aggregate and individual output expansion survives updates and run completion. User bubble border removed; sidebar navigation aligned; full access is orange; readiness is at bottom right with a green dot. Task duration is visually floored at one second without altering recorded time.
+
+Independent read-only review found five issues, all fixed: map goal limits omitted; stopped goals resumed as plain chat/stale goal state; output expansion reset; tree movement swapped incompatible flat positions; menu measured a detached anchor. Native stopped-goal regression failed before the fix and passes after it. Browser regression checks custom map budget and manual family movement.
+
+Verification: 1288 Python tests and 634 subtests passed, 43 skipped; executed from a temporary workspace mirror without the user's local preference file. Original browser regressions and new control/goal/map/lifecycle/race regressions passed against isolated native Harness/Fake model fixtures. Electron smoke, desktop syntax check and wheel build passed; wheel includes controls.py, model-picker.js and EFFORT-LICENSE.md. Actual idle browser preview and desktop launcher refreshed and UI verified; actual model/provider settings preserved.

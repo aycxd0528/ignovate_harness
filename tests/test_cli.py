@@ -391,7 +391,7 @@ class CliTests(unittest.TestCase):
 
         config = {"configurable": {"thread_id": "cli-test"}, "recursion_limit": 40}
         with (
-            patch("nailong.core.processes.execute_process", return_value={"ok": True}) as run_command,
+            patch("local_tools.run_command_async", return_value={"ok": True}) as run_command,
             patch("nailong.tools.files.FileSession.write_file", return_value={"ok": True}) as write_file,
         ):
             answer = main.run_turn(

@@ -1,0 +1,446 @@
+--- a/nailong/core/context.py
++++ b/nailong/core/context.py
+@@ -1,6 +1,7 @@
+ """Mutually exclusive request-size estimates; these are not provider token counts."""
+ import json
+ import math
++from collections import OrderedDict
+ from pathlib import Path
+ from threading import Lock
+ 
+@@ -29,9 +30,92 @@
+ def estimate_text(text, factor=1.0) -> int:
+     """Estimate text conservatively; non-ASCII characters cost at least one token."""
+     text = message_text(text) if text is not None else ''
+-    ascii_chars = sum(character.isascii() for character in text)
++    _, ascii_chars = _text_statistics(text)
+     baseline = (ascii_chars + 3) // 4 + len(text) - ascii_chars
+     return math.ceil(baseline * _correction_factor(factor))
++
++
++def _text_statistics(text):
++    return len(text), len(text) if text.isascii() else sum(character.isascii() for character in text)
++
++
++class RequestEstimateCache:
++    """Runtime-local bounded caches keyed by content, never message IDs.
++
++    Store character statistics rather than rounded tokens: rounding and provider
++    calibration are applied only after combining a complete category.
++    """
++
++    def __init__(self, max_entries=512, max_characters=2_000_000):
++        if (type(max_entries) is not int or max_entries < 1 or
++                type(max_characters) is not int or max_characters < 1):
++            raise ValueError('Context cache bounds must be positive integers.')
++        self.max_entries = max_entries
++        self.max_characters = max_characters
++        self._texts = OrderedDict()
++        self._schemas = OrderedDict()
++        self._sizes = {'text': 0, 'schema': 0}
++        self._counts = {'text_hits': 0, 'text_misses': 0, 'schema_hits': 0, 'schema_misses': 0}
++
++    def _remember(self, kind, entries, key, value, size):
++        if size > self.max_characters:
++            return
++        while entries and (len(entries) >= self.max_entries or
++                           self._sizes[kind] + size > self.max_characters):
++            _, (_, previous_size) = entries.popitem(last=False)
++            self._sizes[kind] -= previous_size
++        entries[key] = (value, size)
++        self._sizes[kind] += size
++
++    def statistics(self, text):
++        entry = self._texts.get(text)
++        if entry is not None:
++            self._texts.move_to_end(text)
++            self._counts['text_hits'] += 1
++            return entry[0]
++        self._counts['text_misses'] += 1
++        result = _text_statistics(text)
++        self._remember('text', self._texts, text, result, len(text))
++        return result
++
++    @staticmethod
++    def _schema_key(tool):
++        from langchain_core.tools import BaseTool, Tool
++        if isinstance(tool, dict):
++            return 'dict:' + message_text(tool)
++        if isinstance(tool, BaseTool):
++            # Read the live provider-facing schema; nested dictionary edits and
++            # schema/name/description reassignment must invalidate conversion.
++            custom = isinstance(tool, Tool) and (tool.metadata or {}).get('type') == 'custom_tool'
++            if not custom and getattr(type(tool), 'tool_call_schema', None) is not BaseTool.tool_call_schema:
++                return None
++            schema = None if custom else tool.tool_call_schema
++            if isinstance(schema, type):
++                schema = schema.model_json_schema() if hasattr(schema, 'model_json_schema') else schema.schema()
++            return message_text([type(tool).__module__, type(tool).__qualname__,
++                                 tool.name, tool.description, schema, tool.metadata,
++                                 bool(tool.args_schema)])
++        # Arbitrary callables/custom schema providers have no stable version
++        # contract. Convert them on every request instead of guessing.
++        return None
++
++    def definition_text(self, tool):
++        from langchain_core.utils.function_calling import convert_to_openai_tool
++        key = self._schema_key(tool)
++        entry = self._schemas.get(key) if key is not None else None
++        if entry is not None:
++            self._schemas.move_to_end(key)
++            self._counts['schema_hits'] += 1
++            return entry[0]
++        self._counts['schema_misses'] += 1
++        result = message_text(convert_to_openai_tool(tool))
++        if key is not None:
++            self._remember('schema', self._schemas, key, result, len(key) + len(result))
++        return result
++
++    def snapshot(self):
++        return {**self._counts, 'text_entries': len(self._texts), 'schema_entries': len(self._schemas),
++                'text_characters': self._sizes['text'], 'schema_characters': self._sizes['schema']}
+ 
+ 
+ def _field(message, key, default=None):
+@@ -50,7 +134,7 @@
+ 
+ 
+ def request_report(messages, system_message=None, tools=(), parts=None,
+-                   actual_main_input=None, factor=1.0) -> dict:
++                   actual_main_input=None, factor=1.0, cache=None) -> dict:
+     """Account for one actual request, including schemas, arguments and framing.
+ 
+     ``parts`` labels exact portions of the supplied system content. Missing or
+@@ -60,7 +144,8 @@
+     from langchain_core.utils.function_calling import convert_to_openai_tool
+ 
+     messages = list(messages)
+-    definitions = [convert_to_openai_tool(tool) for tool in tools]
++    definitions = [cache.definition_text(tool) if cache is not None else
++                   message_text(convert_to_openai_tool(tool)) for tool in tools]
+     names = ('base_system', 'fixed_memory', 'skill_catalog', 'tool_definitions',
+              'loaded_skills', 'tool_results', 'history', 'framing')
+     if any(_role(message)=='human' and (_field(message,'additional_kwargs',{}) or {}).get('nailong_task_context')==1 for message in messages):
+@@ -86,7 +171,14 @@
+         framing_allowance += 4
+ 
+     if definitions:
+-        fragments['tool_definitions'].append(message_text(definitions))
++        # Match json.dumps(list_of_definitions) exactly without decoding cached
++        # schema text back into dictionaries.
++        fragments['tool_definitions'].append('[')
++        for index, text in enumerate(definitions):
++            if index:
++                fragments['tool_definitions'].append(', ')
++            fragments['tool_definitions'].append(text)
++        fragments['tool_definitions'].append(']')
+ 
+     call_names = {}
+     for message in messages:
+@@ -123,11 +215,13 @@
+     correction = _correction_factor(factor)
+     categories = {}
+     for name, values in fragments.items():
+-        text = ''.join(values)
+-        raw_tokens = estimate_text(text)
++        statistics = [cache.statistics(text) if cache is not None else _text_statistics(text) for text in values]
++        characters = sum(row[0] for row in statistics)
++        ascii_chars = sum(row[1] for row in statistics)
++        raw_tokens = (ascii_chars + 3) // 4 + characters - ascii_chars
+         if name == 'framing':
+             raw_tokens += framing_allowance
+-        categories[name] = {'characters': len(text), 'tokens': math.ceil(raw_tokens * correction),
++        categories[name] = {'characters': characters, 'tokens': math.ceil(raw_tokens * correction),
+                             'raw_tokens': raw_tokens}
+     return {'categories': categories,
+             'estimated_tokens': sum(row['tokens'] for row in categories.values()),
+--- a/nailong/core/context_runtime.py
++++ b/nailong/core/context_runtime.py
+@@ -3,15 +3,18 @@
+ 
+ import hashlib
+ import json
++from collections import OrderedDict
++from contextlib import contextmanager
+ from copy import deepcopy
+ from pathlib import Path
+ from urllib.parse import urlsplit
++from time import perf_counter
+ from langchain.agents.middleware import AgentMiddleware
+-from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage
++from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage, message_to_dict
+ from langgraph.graph.message import REMOVE_ALL_MESSAGES
+ 
+ from nailong.core.compact import compact_messages, normalize_pins
+-from nailong.core.context import configured_context_window, context_budget, request_report
++from nailong.core.context import RequestEstimateCache, configured_context_window, context_budget, request_report
+ from nailong.core.usage import message_usage
+ from nailong.core.task_context import TaskContextError, render_task_context, validate_task_snapshot
+ 
+@@ -20,6 +23,19 @@
+ _TASK_MESSAGE_NAME = 'nailong_task_context'
+ _MEMORY_PROJECTION_KEY = 'nailong_memory_projection_v1'
+ _UNSET_SYSTEM_MESSAGE = object()
++
++
++def _same_archive_value(left,right):
++    """Deep equality with JSON value types preserved (1 != true)."""
++    if type(left) is not type(right):
++        return False
++    if isinstance(left,dict):
++        return len(left)==len(right) and all(
++            _same_archive_value(key,other_key) and _same_archive_value(value,other_value)
++            for (key,value),(other_key,other_value) in zip(left.items(),right.items()))
++    if isinstance(left,(list,tuple)):
++        return len(left)==len(right) and all(_same_archive_value(a,b) for a,b in zip(left,right))
++    return left==right if type(left) in (str,int,float,bool,type(None)) else False
+ 
+ 
+ class ContextLimitExceeded(RuntimeError):
+@@ -50,6 +66,27 @@
+         self._task_versions={}
+         self.provider=urlsplit(settings.api_base).hostname or settings.api_base
+         self.compaction=None
++        self._estimate_cache=RequestEstimateCache()
++        self._archived_tools=OrderedDict()
++        self._archived_characters=0
++        self._last_compaction_failure=None
++        self._preflight_view=[]
++        self._metrics=self._new_metrics()
++        self._preflight_performance=None
++
++    @staticmethod
++    def _new_metrics():
++        return {'durations_ms':{},'archive_saved':0,'archive_reused':0,
++                'compaction_attempts':0,'compaction_skipped':False}
++
++    @contextmanager
++    def _measure(self,phase):
++        started=perf_counter()
++        try:
++            yield
++        finally:
++            durations=self._metrics['durations_ms']
++            durations[phase]=durations.get(phase,0.0)+(perf_counter()-started)*1000
+ 
+     def _policy(self,requested_output=4096):
+         from nailong.core.preferences import read_config
+@@ -63,9 +100,10 @@
+     def _report(self,messages,system_message=_UNSET_SYSTEM_MESSAGE,tools=None):
+         if system_message is _UNSET_SYSTEM_MESSAGE:
+             system_message=SystemMessage(content=self.system_prompt)
+-        return request_report(messages,system_message=system_message,
+-            tools=self.tools if tools is None else tools,parts=self.parts,
+-            factor=self.calibration.factor_for(self.settings.model,self.provider))
++        with self._measure('estimate'):
++            return request_report(messages,system_message=system_message,
++                tools=self.tools if tools is None else tools,parts=self.parts,
++                factor=self.calibration.factor_for(self.settings.model,self.provider),cache=self._estimate_cache)
+ 
+     def _record(self,kind,data):
+         if self.store is not None and self.thread_id:
+@@ -292,12 +330,71 @@
+         # reads need not destructively replace the persistent originals.
+         if self.memory_request_context is not None and memory_view is None:
+             self._refresh_memory_view()
+-        view=self._filter_request_messages(messages)
+-        return self._report(self._task_request_view(view,task_projection))
++        with self._measure('request_view'):
++            view=self._filter_request_messages(messages)
++            self._preflight_view=self._task_request_view(view,task_projection)
++        return self._report(self._preflight_view)
++
++    def _archive_tool(self,message,arguments):
++        """Reuse eager preservation only; compaction still revalidates on disk.
++
++        No cached reference is used to clear history. compact_messages calls the
++        real archive again before replacing an original with a reference.
++        """
++        key=(message.id,message.tool_call_id)
++        serialized=message_to_dict(message)
++        previous=self._archived_tools.get(key)
++        if previous is not None and _same_archive_value(previous[0],serialized) and _same_archive_value(previous[1],arguments):
++            self._archived_tools.move_to_end(key)
++            self._metrics['archive_reused']+=1
++            return
++        self.archive.save(self.thread_id,message,arguments=arguments)
++        self._metrics['archive_saved']+=1
++        size=len(json.dumps([serialized,arguments],ensure_ascii=False,default=str))
++        if previous is not None:
++            self._archived_characters-=self._archived_tools.pop(key)[2]
++        if size>2_000_000:
++            return
++        try:
++            saved=(deepcopy(serialized),deepcopy(arguments),size)
++        except Exception:
++            # Cache support is optional. A valid ToolMessage may carry an
++            # artifact that can be archived as text but cannot be deep-copied.
++            return
++        while self._archived_tools and (len(self._archived_tools)>=256 or self._archived_characters+size>2_000_000):
++            _,entry=self._archived_tools.popitem(last=False)
++            self._archived_characters-=entry[2]
++        self._archived_tools[key]=saved
++        self._archived_characters+=size
++
++    def _compaction_key(self,policy):
++        payload={'messages':[message_to_dict(message) for message in self._preflight_view],
++                 'system':self.system_prompt,'parts':self.parts,'policy':policy,
++                 'tools':[self._estimate_cache.definition_text(tool) for tool in self.tools],
++                 'factor':self.calibration.factor_for(self.settings.model,self.provider),
++                 'model':self.settings.model,'provider':self.provider,'archive':self.archive is not None}
++        return hashlib.sha256(json.dumps(payload,ensure_ascii=False,sort_keys=True,default=str).encode('utf-8')).hexdigest()
+ 
+     def before_model(self,state,runtime):
+-        memory_view=self._refresh_memory_view()
+-        task_projection,_=self._task_projection()
++        self._metrics=self._new_metrics()
++        self.compaction=None
++        started=perf_counter()
++        failed=True
++        try:
++            result=self._before_model(state,runtime)
++            failed=False
++            return result
++        finally:
++            self._metrics['total_ms']=(perf_counter()-started)*1000
++            self._preflight_performance=deepcopy(self._metrics)
++            if failed:
++                self._record('context_performance',{'stage':'preflight','failed':True,**self._metrics})
++
++    def _before_model(self,state,runtime):
++        with self._measure('memory_refresh'):
++            memory_view=self._refresh_memory_view()
++        with self._measure('task_projection'):
++            task_projection,_=self._task_projection()
+         original=list(state.get('messages',[])); messages,removed=normalize_pins(original)
+         changed=bool(removed)
+         goal=self.goal_store.active() if self.goal_store is not None else None
+@@ -313,28 +410,44 @@
+         # Preserve completed originals before they are cleared. Tool calls are
+         # recoverable even after a short failure is folded into an older turn.
+         if self.archive is not None and self.thread_id:
+-            args={call['id']:call.get('args',{}) for m in messages for call in getattr(m,'tool_calls',[]) or []}
+-            for m in messages:
+-                if isinstance(m,ToolMessage) and not m.additional_kwargs.get('nailong_tool_cleared'):
+-                    self.archive.save(self.thread_id,m,arguments=args.get(m.tool_call_id))
+-        policy=self._policy(self.requested_output)
++            with self._measure('archive'):
++                args={call['id']:call.get('args',{}) for m in messages for call in getattr(m,'tool_calls',[]) or []}
++                for m in messages:
++                    if isinstance(m,ToolMessage) and not m.additional_kwargs.get('nailong_tool_cleared'):
++                        self._archive_tool(m,args.get(m.tool_call_id))
++        with self._measure('policy'):
++            policy=self._policy(self.requested_output)
+         report=self._preflight_report(messages,task_projection,memory_view)
+         hard=policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']
+         if report['estimated_tokens']>policy['trigger_tokens']:
+             before=report['estimated_tokens']; levels=[]
+-            for level,keep in [('L1',4),('L2',4),('L2',2),('L2',1)]:
+-                if level=='L2' and not hard and levels: break
+-                result=compact_messages(messages,keep_turns=keep,level=level,hard=hard,archive=self.archive,thread_id=self.thread_id)
+-                if result.compacted:
+-                    messages=result.messages; changed=True; levels.append(result.level)
+-                    report=self._preflight_report(messages,task_projection,memory_view)
+-                hard=policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']
+-                if not hard and report['estimated_tokens']<=policy['trigger_tokens']: break
++            with self._measure('compaction'):
++                key=self._compaction_key(policy)
++                if key==self._last_compaction_failure:
++                    self._metrics['compaction_skipped']=True
++                else:
++                    target=max(1,policy['trigger_tokens']*4//5)
++                    for level,keep in [('L1',4),('L2',4),('L2',2),('L2',1)]:
++                        # Soft compaction retains four recent turns. A hard
++                        # overflow may reduce that protected recent window.
++                        if level=='L2' and not hard and keep<4: break
++                        self._metrics['compaction_attempts']+=1
++                        result=compact_messages(messages,keep_turns=keep,level=level,hard=hard,archive=self.archive,thread_id=self.thread_id)
++                        if result.compacted:
++                            messages=result.messages; changed=True; levels.append(result.level)
++                            report=self._preflight_report(messages,task_projection,memory_view)
++                        hard=policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']
++                        if not hard and report['estimated_tokens']<=target: break
++                    # A hard failure returns no checkpoint update, so the next
++                    # call sees the original input, not this temporary result.
++                    self._last_compaction_failure=(key if hard else self._compaction_key(policy)) if report['estimated_tokens']>policy['trigger_tokens'] else None
+             if levels:
+                 self.compaction={'reason':'hard_window' if before> (policy['input_limit'] or float('inf')) else 'soft_threshold',
+                     'level':'+'.join(levels),'before_tokens':before,'after_tokens':report['estimated_tokens'],
+                     'gain':max(0,(before-report['estimated_tokens'])/max(1,before))}
+                 self._record('compact',self.compaction)
++        else:
++            self._last_compaction_failure=None
+         if policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']:
+             # No provider invocation, current user content and protected state
+             # are kept in the checkpoint for explicit recovery.
+@@ -348,11 +461,29 @@
+         return self.before_model(state,runtime)
+ 
+     def _prepare_request(self,request):
+-        memory_view=self._refresh_memory_view()
++        self._metrics=self._new_metrics()
++        started=perf_counter()
++        try:
++            request,snapshot=self._build_request(request)
++        except BaseException:
++            self._metrics['total_ms']=(perf_counter()-started)*1000
++            self._record('context_performance',{'stage':'request','failed':True,**self._metrics})
++            raise
++        self._metrics['total_ms']=(perf_counter()-started)*1000
++        snapshot['performance']={'preflight':deepcopy(self._preflight_performance),
++                                 'request':deepcopy(self._metrics),'cache':self._estimate_cache.snapshot()}
++        if self.thread_id and self.profile!='subagent': self.reports[self.thread_id]=snapshot
++        self._record('context_request',snapshot)
++        return request,snapshot
++
++    def _build_request(self,request):
++        with self._measure('memory_refresh'):
++            memory_view=self._refresh_memory_view()
+         if memory_view is not None:
+             request=self._rewrite_memory_system(request,memory_view)
+             request=request.override(messages=self._filter_request_messages(request.messages))
+-        task_projection,task_info=self._task_projection(request.tools)
++        with self._measure('task_projection'):
++            task_projection,task_info=self._task_projection(request.tools)
+         if self.task_snapshot_provider is not None:
+             request=request.override(messages=self._task_request_view(request.messages,task_projection))
+         if self.profile != 'subagent':
+@@ -361,7 +492,8 @@
+             if budget is not None:
+                 request = budget.prepare(request)
+         maximum=int(request.model_settings.get('max_tokens') or getattr(request.model,'max_tokens',None) or 4096)
+-        policy=self._policy(maximum)
++        with self._measure('policy'):
++            policy=self._policy(maximum)
+         report=self._report(request.messages,request.system_message,request.tools)
+         if policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']:
+             raise ContextLimitExceeded('实际模型请求超过完整输入预算，尚未调用提供商。')
+@@ -378,8 +510,6 @@
+             'actual_main_input_tokens':None}
+         if self.memory_budget is not None: snapshot['memory_budget']=self.memory_budget
+         if self.task_snapshot_provider is not None: snapshot['task_projection']=task_info or {'projected':False}
+-        if self.thread_id and self.profile!='subagent': self.reports[self.thread_id]=snapshot
+-        self._record('context_request',snapshot)
+         return request,snapshot
+ 
+     def _settle(self,response,snapshot):
+--- a/nailong/core/compact.py
++++ b/nailong/core/compact.py
+@@ -8,6 +8,7 @@
+ from dataclasses import dataclass
+ 
+ from langchain_core.messages import HumanMessage, ToolMessage
++from nailong.core.context import _text_statistics
+ 
+ _READ_TOOLS = {'read_file','list_files','glob','grep','search_text','load_skill','read_skill_resource','run_command','read_memory','memory_list','memory_read','read_history_result'}
+ MAX_SUMMARY_CHARS = 6_000
+@@ -31,7 +32,8 @@
+     count=0.0
+     for message in messages:
+         text=str(getattr(message,'content',''))
+-        count+=sum(1 if ord(c)>127 else .25 for c in text)
++        characters,ascii_chars=_text_statistics(text)
++        count+=characters-ascii_chars+ascii_chars*.25
+         if getattr(message,'tool_calls',None):
+             count+=len(json.dumps(message.tool_calls,ensure_ascii=False))
+     return math.ceil(count)

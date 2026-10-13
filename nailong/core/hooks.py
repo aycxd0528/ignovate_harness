@@ -32,6 +32,8 @@ class HookRunResult:
     outputs: tuple[HookOutput, ...] = ()
     blocked: bool = False
     reason: str = ""
+    # Runtime work, including approval persistence, can be replayed on resume.
+    side_effects: bool = False
 
     @property
     def feedback(self) -> str:
@@ -130,6 +132,7 @@ class HookRunner:
         if not isinstance(entries, list):
             return HookRunResult()
         outputs = []
+        side_effects = False
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -149,7 +152,7 @@ class HookRunner:
                 if not command:
                     continue
                 if self.api_key and self.api_key in command:
-                    return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "钩子命令包含模型密钥，已拒绝。")
+                    return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "钩子命令包含模型密钥，已拒绝。", side_effects)
                 fingerprint = self._fingerprint(command)
                 if fingerprint not in self._approved_commands():
                     approved = False
@@ -165,11 +168,12 @@ class HookRunner:
                         approved = answer is True or getattr(answer, "kind", None) in {"approve_once", "approve_session"} or str(answer).strip().lower() in {"a", "approve", "approve_once", "yes", "y", "true"}
                     if not approved:
                         block = event in {"PreToolUse", "UserPromptSubmit"}
-                        return HookRunResult(tuple(outputs), block, "钩子命令未获批准，未执行。")
+                        return HookRunResult(tuple(outputs), block, "钩子命令未获批准，未执行。", side_effects)
                     try:
+                        side_effects = True
                         self._save_approval(fingerprint)
                     except OSError:
-                        return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "无法安全保存钩子批准记录。")
+                        return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "无法安全保存钩子批准记录。", side_effects)
 
                 environment = local_tools._command_environment()
                 environment.update({
@@ -178,6 +182,7 @@ class HookRunner:
                     "NAILONG_PROMPT": prompt.replace(self.api_key, "[密钥已隐藏]") if self.api_key else prompt,
                 })
                 cancel_event = threading.Event()
+                side_effects = True
                 worker = asyncio.create_task(asyncio.to_thread(
                     self._execute, command, environment, cancel_event=cancel_event))
                 try:
@@ -199,8 +204,8 @@ class HookRunner:
                     and result.exit_code == 2
                     and not result.timed_out
                 ):
-                    return HookRunResult(tuple(outputs), True, result.stderr or result.stdout or "钩子阻止了操作。")
-        return HookRunResult(tuple(outputs))
+                    return HookRunResult(tuple(outputs), True, result.stderr or result.stdout or "钩子阻止了操作。", side_effects)
+        return HookRunResult(tuple(outputs), side_effects=side_effects)
 
     def _execute(self, command: str, environment: dict[str, str], *, cancel_event=None) -> HookOutput:
         stdout, stderr, _, timed_out, returncode = capture_streams(

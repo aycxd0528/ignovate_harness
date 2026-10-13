@@ -1,0 +1,94 @@
+[
+  {
+    "scene": "setting-footer",
+    "details": [
+      {
+        "selector": "#setting-dialog",
+        "region": [
+          2,
+          6,
+          76,
+          14
+        ],
+        "content_region": [
+          3,
+          8,
+          74,
+          11
+        ],
+        "visible": true,
+        "opacity": 1.0,
+        "render": "<textual.renderables.blank.Blank object at 0x10b9b7810>",
+        "lines": "[Strip([Segment('──────────────────────────────────────────────────────────────────────────', Style(color=Color('#fea62b', ColorType.TRUECOLOR, triplet=ColorTriplet(red=254, green=166, blue=43)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment('                                                                          ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74), Strip([Segment(' ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)))), Segment('                                                                         ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74)]"
+      },
+      {
+        "selector": "#setting-title",
+        "region": [
+          3,
+          8,
+          74,
+          1
+        ],
+        "content_region": [
+          3,
+          8,
+          74,
+          1
+        ],
+        "visible": true,
+        "opacity": 1.0,
+        "render": "推理强度",
+        "lines": "[Strip([Segment('推理强度', Style(color=Color('#fea62b', ColorType.TRUECOLOR, triplet=ColorTriplet(red=254, green=166, blue=43)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), bold=True, meta={'offset': (0, 0)})), Segment('                                                                  ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74)]"
+      },
+      {
+        "selector": "#setting-options",
+        "region": [
+          3,
+          9,
+          74,
+          10
+        ],
+        "content_region": [
+          3,
+          9,
+          74,
+          10
+        ],
+        "visible": true,
+        "opacity": 1.0,
+        "render": "<rich.panel.Panel object at 0x10baa2e90>",
+        "lines": "[Strip([Segment('模型默认', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 0, 'offset': (0, 0)})), Segment('                                                                  ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 0}))], 74), Strip([Segment('  沿用模型服务端默认行为', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 0, 'offset': (0, 1)})), Segment('                                                  ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 0}))], 74), Strip([Segment('关闭推理', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 1, 'offset': (0, 0)})), Segment('                                                                  ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 1}))], 74), Strip([Segment('  关闭思考模式', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 1, 'offset': (0, 1)})), Segment('                                                            ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 1}))], 74), Strip([Segment('低', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 2, 'offset': (0, 0)})), Segment('                                                                        ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 2}))], 74), Strip([Segment('  较少推理，适合简单任务', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 2, 'offset': (0, 1)})), Segment('                                                  ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 2}))], 74), Strip([Segment('高 · 当前', Style(color=Color('#ddedf9', ColorType.TRUECOLOR, triplet=ColorTriplet(red=221, green=237, blue=249)), bgcolor=Color('#0178d4', ColorType.TRUECOLOR, triplet=ColorTriplet(red=1, green=120, blue=212)), bold=True, meta={'option': 3, 'offset': (0, 0)})), Segment('                                                                 ', Style(color=Color('#ddedf9', ColorType.TRUECOLOR, triplet=ColorTriplet(red=221, green=237, blue=249)), bgcolor=Color('#0178d4', ColorType.TRUECOLOR, triplet=ColorTriplet(red=1, green=120, blue=212)), bold=True, meta={'option': 3}))], 74), Strip([Segment('  日常编码与调研', Style(color=Color('#ddedf9', ColorType.TRUECOLOR, triplet=ColorTriplet(red=221, green=237, blue=249)), bgcolor=Color('#0178d4', ColorType.TRUECOLOR, triplet=ColorTriplet(red=1, green=120, blue=212)), bold=True, meta={'option': 3, 'offset': (0, 1)})), Segment('                                                          ', Style(color=Color('#ddedf9', ColorType.TRUECOLOR, triplet=ColorTriplet(red=221, green=237, blue=249)), bgcolor=Color('#0178d4', ColorType.TRUECOLOR, triplet=ColorTriplet(red=1, green=120, blue=212)), bold=True, meta={'option': 3}))], 74), Strip([Segment('最高', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 4, 'offset': (0, 0)})), Segment('                                                                      ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 4}))], 74), Strip([Segment('  更充分的推理，可能增加等待和用量', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 4, 'offset': (0, 1)})), Segment('                                        ', Style(color=Color('#e0e0e0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=224, green=224, blue=224)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'option': 4}))], 74)]"
+      },
+      {
+        "selector": "#setting-keys",
+        "region": [
+          3,
+          19,
+          74,
+          1
+        ],
+        "content_region": [
+          3,
+          19,
+          74,
+          1
+        ],
+        "visible": true,
+        "opacity": 1.0,
+        "render": "↑↓ 选择 · Enter 确认 · Esc 取消",
+        "lines": "[Strip([Segment('↑↓ 选择 · Enter 确认 · Esc 取消', Style(color=Color('#a0a0a0', ColorType.TRUECOLOR, triplet=ColorTriplet(red=160, green=160, blue=160)), bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18)), meta={'offset': (0, 0)})), Segment('                                           ', Style(bgcolor=Color('#121212', ColorType.TRUECOLOR, triplet=ColorTriplet(red=18, green=18, blue=18))))], 74)]"
+      }
+    ]
+  },
+  {
+    "scene": "setup-submit-error",
+    "focused": "setup-next",
+    "error": "DEEPSEEK_BASE_URL 必须是包含有效主机名和端口的 HTTP(S) 地址。"
+  },
+  {
+    "scene": "transcript-reflow",
+    "synthetic": true,
+    "entries": 300,
+    "median_reflow_ms": 153.7
+  }
+]

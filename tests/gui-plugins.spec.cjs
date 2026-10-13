@@ -1,0 +1,45 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+(async()=>{
+ const root=path.resolve(__dirname,'..'),temporary=fs.mkdtempSync(path.join(os.tmpdir(),'ignovate-plugin-test-'));
+ const skillSource=path.join(temporary,'browser-skill');fs.mkdirSync(skillSource);
+ fs.writeFileSync(path.join(skillSource,'SKILL.md'),'---\nname: browser-skill\ndescription: Local browser acceptance instructions\n---\n# Native test\n');
+ const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+ const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark'});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ try{
+  await page.goto('http://127.0.0.1:8767/#token=browser-test-only');await page.locator('#project-name').filter({hasText:'GUI 验证项目'}).waitFor();
+  await page.getByRole('button',{name:'插件',exact:true}).click();
+  await page.getByRole('heading',{name:'Skills',exact:true}).waitFor();
+  assert.equal(await page.locator('.composer-wrap').isVisible(),false);
+  await page.getByRole('button',{name:'添加插件',exact:true}).click();
+  await page.getByLabel('类型',{exact:true}).selectOption('skill');await page.getByLabel('本地 Skill 目录',{exact:true}).fill(fs.realpathSync(skillSource));
+  await page.getByRole('button',{name:'添加',exact:true}).click();await page.locator('#dialog').waitFor({state:'hidden'});
+  const skill=page.locator('.plugin-row').filter({hasText:'browser-skill'});
+  await skill.getByRole('switch',{name:'启用 browser-skill',exact:true}).waitFor();
+  await skill.getByRole('switch',{name:'启用 browser-skill',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[aria-label="启用 browser-skill"]').getAttribute('aria-checked')==='false');
+  await skill.getByRole('switch',{name:'启用 browser-skill',exact:true}).click();
+  await page.getByRole('button',{name:'添加插件',exact:true}).click();
+  await page.getByLabel('名称',{exact:true}).fill('browser-test');
+  await page.getByLabel('服务声明 JSON',{exact:true}).fill(JSON.stringify({transport:'stdio',command:path.join(root,'.venv/bin/python'),args:[path.join(root,'tests/fixtures/mcp_server.py')],timeout_seconds:10}));
+  await page.getByRole('button',{name:'添加',exact:true}).click();await page.locator('#dialog').waitFor({state:'hidden'});
+  const mcp=page.locator('.plugin-row').filter({hasText:'browser-test'});
+  await mcp.getByRole('switch',{name:'连接 browser-test',exact:true}).click();
+  await mcp.filter({hasText:'已连接'}).waitFor();assert.ok((await mcp.textContent()).includes('工具'));
+  await mcp.getByRole('switch',{name:'连接 browser-test',exact:true}).click();await mcp.filter({hasText:'未连接'}).waitFor();
+  await mcp.getByRole('button',{name:'配置 browser-test',exact:true}).click();
+  await page.getByLabel('服务声明 JSON',{exact:true}).fill('{"transport":"http","url":"http://127.0.0.1:2/mcp","headers":{"Authorization":"bad-plaintext"}}');
+  await page.getByRole('button',{name:'保存配置',exact:true}).click();await page.locator('#toast').filter({hasText:'凭据'}).waitFor();
+  assert.equal(await page.locator('#dialog').isVisible(),true);
+  await page.getByRole('button',{name:'取消',exact:true}).click();
+  await page.screenshot({path:'/tmp/ignovate-gui-plugins.png'});
+  await page.getByRole('button',{name:'刷新插件',exact:true}).scrollIntoViewIfNeeded();await page.waitForTimeout(250);await page.getByRole('button',{name:'刷新插件',exact:true}).hover();await page.getByRole('tooltip').filter({hasText:'刷新插件'}).waitFor();
+  await page.setViewportSize({width:838,height:793});await page.screenshot({path:'/tmp/ignovate-gui-plugins-narrow.png'});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.setViewportSize({width:1440,height:960});await page.reload();await page.getByRole('button',{name:'插件',exact:true}).click();await page.locator('.plugin-row').filter({hasText:'browser-test'}).waitFor();
+  await page.getByRole('button',{name:'新会话',exact:true}).click();await page.locator('.composer-wrap').waitFor({state:'visible'});assert.equal(await page.locator('.composer-wrap').isVisible(),true);
+  assert.deepEqual(errors,[]);console.log('Native Skills installation/toggle and MCP add/connect/disconnect/configuration browser flow passed.');
+ }finally{await browser.close();fs.rmSync(temporary,{recursive:true,force:true});}
+})().catch(error=>{console.error(error);process.exitCode=1;});

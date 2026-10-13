@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -98,6 +99,21 @@ def make_settings():
 
 
 class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Real project/user settings must not choose the fake model's reasoning
+        # parameters or receive state writes from a UI test.
+        workspace=tempfile.TemporaryDirectory(prefix='tui-fixture-')
+        self.addCleanup(workspace.cleanup)
+        root=Path(workspace.name)
+        original_settings=make_settings
+        settings_patch=patch(__name__+'.make_settings',
+            side_effect=lambda:replace(original_settings(),project_root=root/'project'))
+        settings_patch.start();self.addCleanup(settings_patch.stop)
+        from nailong.core.preferences import PreferenceStore
+        preferences_patch=patch('ui.actions.PreferenceStore',
+            side_effect=lambda project_root:PreferenceStore(project_root,user_path=root/'user/preferences.json'))
+        preferences_patch.start();self.addCleanup(preferences_patch.stop)
+
     def interaction_state(self, pilot):
         app = pilot.app
         return (f'focus={getattr(app.focused, "id", None)!r}, '

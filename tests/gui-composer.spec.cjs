@@ -1,0 +1,71 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+(async()=>{
+  const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+  const page=await browser.newPage({viewport:{width:1168,height:793},colorScheme:'dark'});
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));let sentProfile;
+  await page.route('**/api/command',route=>{const body=route.request().postDataJSON();if(body.name==='send')sentProfile=body.payload.profile;return route.continue();});
+  const snapshot=()=>page.evaluate(async()=>await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json());
+  try {
+    await page.goto('http://127.0.0.1:8767/#token=browser-test-only');
+    await page.locator('#project-name').filter({hasText:'GUI 验证项目'}).waitFor();
+    await page.locator('#composer').fill('首次会话之前的未发送草稿');
+    await page.getByRole('button',{name:'权限管理',exact:true}).click();
+    await page.getByRole('menuitemradio',{name:'请求批准',exact:true}).waitFor();
+    assert.equal(await page.locator('#composer').inputValue(),'首次会话之前的未发送草稿','opening permissions must preserve the initial draft');
+    await page.getByRole('menuitemradio',{name:'请求批准',exact:true}).click();
+    await page.locator('#composer').fill('');
+    await page.locator('#composer-target').filter({hasText:'发送到 新会话'}).waitFor({state:'attached'});
+    await page.getByRole('button',{name:'发送',exact:true}).hover();
+    await page.getByRole('tooltip').filter({hasText:'发送'}).waitFor();
+    await page.mouse.move(700,300);await page.getByRole('tooltip').waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'添加内容与任务模式',exact:true}).focus();
+    await page.getByRole('tooltip').filter({hasText:'添加内容与任务模式'}).waitFor();
+    await page.locator('#composer').focus();
+    const compact=(await page.locator('.composer-wrap').boundingBox()).height;
+    assert.ok(compact<=110,`empty composer is compact: ${compact}px`);
+    await page.locator('#composer').fill(Array(10).fill('多行草稿').join('\n'));
+    const expanded=(await page.locator('.composer-wrap').boundingBox()).height;
+    assert.ok(expanded>compact&&expanded<230);
+    await page.locator('#composer').fill('');
+    assert.ok((await page.locator('.composer-wrap').boundingBox()).height<=110);
+    const controls=await page.locator('.composer-controls>button').all();
+    assert.equal(await controls[0].getAttribute('aria-label'),'添加内容与任务模式');
+    assert.equal(await controls[1].getAttribute('aria-label'),'权限管理');
+    await page.getByRole('button',{name:'权限管理',exact:true}).click();
+    await page.getByRole('menuitemradio',{name:'帮我批准',exact:true}).click();
+    await page.waitForFunction(async()=>{
+      const s=await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json();
+      return s.branches.some(b=>b.permission_mode==='acceptEdits');
+    });
+    await page.getByRole('button',{name:'添加内容与任务模式',exact:true}).click();
+    await page.getByRole('menuitemradio',{name:'制定计划',exact:true}).click();
+    await page.locator('.composer-mode-chip').filter({hasText:'制定计划'}).waitFor();
+    await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();
+    const slider=page.getByRole('slider',{name:'推理等级',exact:true});
+    await slider.waitFor();await slider.press('End');
+    assert.equal(await slider.getAttribute('aria-valuetext'),'最高');
+    await slider.press('Escape');
+    await page.waitForFunction(async()=>{
+      const s=await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json();
+      return s.configuration.reasoning_effort==='max';
+    });
+    assert.equal((await snapshot()).configuration.reasoning_effort,'max');
+    await page.locator('#composer').fill('制定测试计划');await page.getByRole('button',{name:'发送',exact:true}).click();
+    await page.waitForFunction(async()=>{
+      const s=await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json();
+      return s.runs.some(run=>run.status==='completed');
+    });
+    assert.equal(sentProfile,'plan','task menu must select the actual execution profile');
+    await page.reload();await page.locator('#reasoning-control').filter({hasText:'最高'}).waitFor();
+    await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();
+    await page.screenshot({path:'/tmp/ignovate-gui-reasoning.png'});
+    await slider.press('Escape');
+    await page.setViewportSize({width:838,height:793});
+    if(await page.locator('#sidebar').isVisible())await page.getByRole('button',{name:'收起侧栏',exact:true}).click();
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.screenshot({path:'/tmp/ignovate-gui-compact.png'});
+    assert.deepEqual(errors,[]);
+    console.log('Compact composer, SVG hover/focus names, themed permission menu and native reasoning slider passed.');
+  }finally{await browser.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

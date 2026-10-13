@@ -183,19 +183,26 @@ class ResultArchive:
         # Preserve the business outcome and actionable identifiers before data previews.
         bounded = {key: result[key] for key in (
             "ok", "status", "error", "error_code", "retryable", "hint", "path",
-            "exit_code", "timed_out", "cancelled", "started", "replacements", "line_start",
+            "exit_code", "expected_exit_code", "exit_code_matches", "completed", "execution_mode", "shell",
+            "output_chars", "output_archive", "tool_result_id", "tool_result_turn_id",
+            "timed_out", "cancelled", "started", "replacements", "chars_written", "line_start",
             "line_end", "offset", "next_offset", "next_char_offset", "version",
             "input_fingerprint", "total_matches", "backend", "pattern_mode", "coverage_complete",
         ) if key in result}
         bounded.update(truncated=True, result_truncated=True, coverage="partial", **artifact)
         bounded["coverage_complete"] = False
         bounded["hint"] = "使用 read_tool_result(reference) 分页读取归档；文件/命令证据可能已过期。"
+        for key in ("additions", "deletions", "diff_truncated"):
+            if key in result:
+                bounded[key] = result[key]
         for key in ("content", "output", "diff"):
             if isinstance(result.get(key), str):
                 value = result[key]
                 bounded[key] = value[:4000] + ("\n[中间内容已截断]\n" + value[-4000:] if len(value) > 8000 else value[4000:])
                 if key == "output":
                     bounded["output_truncated"] = True
+                elif key == 'diff':
+                    bounded['diff_truncated'] = True
         for key in ("files", "matches", "skipped_files", "skipped_reasons"):
             if key in result:
                 bounded[key] = result[key][:10]

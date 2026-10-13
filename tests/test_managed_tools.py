@@ -596,12 +596,12 @@ class ManagedAsyncToolsTests(Workspace, unittest.IsolatedAsyncioTestCase):
         specs = {spec.name: spec for spec in build_tool_specs(session=self.session)}
         entered = asyncio.Event()
         release = asyncio.Event()
-        async def process(command, cwd, *, timeout):
+        async def process(command, timeout_seconds=30, *, argv=None, expected_exit_code=0):
             (self.root / 'command.txt').write_text('command entered', newline='\n')
             entered.set()
             await release.wait()
             return {'ok': True, 'exit_code': 0, 'output': 'done', 'timed_out': False, 'output_truncated': False}
-        with patch('nailong.core.processes.execute_process', side_effect=process):
+        with patch('local_tools.run_command_async', side_effect=process):
             command = asyncio.create_task(specs['run_command'].async_handler('true'))
             await asyncio.wait_for(entered.wait(), 2)
             write = asyncio.create_task(asyncio.to_thread(other.write_file, 'new.txt', 'file mutation'))

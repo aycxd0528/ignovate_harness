@@ -94,7 +94,9 @@ class ManagedRuntimeIntegrationTests(unittest.IsolatedAsyncioTestCase):
             first.cancel()
             with self.assertRaises(asyncio.CancelledError): await first
             runtime = await factory.async_runtime(thread_id='owner')
-            self.assertEqual((await runtime.aget_state(self.config)).next, ('tools',))
+            self.assertEqual((await runtime.aget_state(self.config)).next,
+                             ('BatchApprovalMiddleware.after_model',))
+            self.assertFalse((self.root/'a.txt').exists())
             self.assertEqual(factory.task_store.snapshot('owner')['lifecycle'], 'paused')
             events = [event async for event in service.stream_turn('继续执行', self.config,
                 allowed_tools=allowed_tools,

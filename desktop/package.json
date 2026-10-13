@@ -1,0 +1,9 @@
+{
+  "name": "ignovate-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ignovate Harness local desktop workbench",
+  "main": "main.cjs",
+  "scripts": { "start": "electron .", "install-electron": "node node_modules/electron/install.js", "check": "node --check main.cjs && node --check preload.cjs" },
+  "devDependencies": { "electron": "44.7.0" }
+}

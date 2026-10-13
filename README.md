@@ -58,6 +58,17 @@ ignovate doctor --output-format json
 
 完整的安装位置、PATH、校验、升级和源码构建说明见 [Release 安装说明](docs/INSTALL.md)。
 
+## 本地 GUI
+
+源码版本已提供聊天、非线性会话地图与分支比较，执行由 Ignovate Harness 驱动：
+
+```sh
+python -m nailong.gui --project /path/to/project
+# 或安装包后：ignovate gui --project /path/to/project
+```
+
+有 Electron 依赖时打开桌面窗口，也可加 `--browser` 使用本机浏览器。启动、分叉与共享工作区说明见 [GUI 使用说明](docs/GUI.md)。当前 macOS 源码版本已验证，安装包与其他平台仍待验收。
+
 ## 欢迎与模型配置
 
 首次在交互终端运行 `ignovate`，会显示左对齐的品牌欢迎页。Textual 引导分为“连接模型 → 推理强度 → 本次权限”三步：Enter 前进、方向键选择，Esc 返回上一步，Ctrl+C 退出。模型连接页填写 API 地址、模型 ID 和隐藏的 API Key；已有密钥留空保留。最后确认权限后才保存并进入会话，中途退出不写配置。可随时重新打开指引：

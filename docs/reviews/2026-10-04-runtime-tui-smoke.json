@@ -1,0 +1,61 @@
+{
+  "all_passed": true,
+  "measurements": [
+    {
+      "size": [
+        100,
+        32
+      ],
+      "expanded": false,
+      "approval_height": 9,
+      "approval_bottom": 27,
+      "composer_top": 27,
+      "metrics_bottom": 32,
+      "choices_on_screen": true,
+      "hint_on_screen": true,
+      "no_overlap": true
+    },
+    {
+      "size": [
+        100,
+        32
+      ],
+      "expanded": true,
+      "approval_height": 18,
+      "approval_bottom": 27,
+      "composer_top": 27,
+      "metrics_bottom": 32,
+      "choices_on_screen": true,
+      "hint_on_screen": true,
+      "no_overlap": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "expanded": false,
+      "approval_height": 9,
+      "approval_bottom": 19,
+      "composer_top": 19,
+      "metrics_bottom": 24,
+      "choices_on_screen": true,
+      "hint_on_screen": true,
+      "no_overlap": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "expanded": true,
+      "approval_height": 13,
+      "approval_bottom": 19,
+      "composer_top": 19,
+      "metrics_bottom": 24,
+      "choices_on_screen": true,
+      "hint_on_screen": true,
+      "no_overlap": true
+    }
+  ]
+}

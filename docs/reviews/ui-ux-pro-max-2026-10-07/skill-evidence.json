@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-07",
+  "skill": {
+    "path": "/Users/aycxd/.codex/skills/ui-ux-pro-max",
+    "source": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+    "commit": "477bcb28c9812b385cb51a4605ddf30d7b2266e2"
+  },
+  "verifiedSearches": [
+    {
+      "query": "keyboard focus visible",
+      "domain": "ux",
+      "verified_match": "Focus States / All",
+      "applied": "每个键盘可操作控件必须显示焦点；裁切检查使用控件与父容器实际区域。"
+    },
+    {
+      "query": "text contrast dark mode",
+      "domain": "ux",
+      "verified_match": "Contrast Readability / All",
+      "applied": "正常文字以 4.5:1 为审查基准，实测两种主题及选中状态。"
+    },
+    {
+      "query": "reduced motion animation",
+      "domain": "ux",
+      "verified_match": "Reduced Motion / All",
+      "applied": "保留已选定的字符旋转动画；可增加显式减少动画设置。"
+    },
+    {
+      "query": "form validation error clarity",
+      "domain": "ux",
+      "verified_match": "Error Messages / All; Focusable Error Summary / Web",
+      "applied": "错误内容关联具体字段并让键盘用户到达；焦点建议为跨平台语义适配，不采用 HTML/ARIA 代码。"
+    },
+    {
+      "query": "sparkline trend history",
+      "domain": "chart",
+      "verified_match": "Trend Over Time",
+      "applied": "历史趋势带可读的数值和增量；不采用浏览器绘图库和数据量阈值。"
+    },
+    {
+      "query": "progressive disclosure form",
+      "domain": "ux",
+      "verified_match": "Submit Feedback / All; Form Labels / All",
+      "applied": "新增与切换模型保持明确的字段标签和提交结果；该查询没有直接命中 progressive-disclosure，相关建议仍使用一般规则。"
+    }
+  ],
+  "fallback": [
+    {
+      "query": "progressive disclosure information overload / progressive disclosure",
+      "reason": "一次改写后仍无相关数据库匹配；采用 references/quick-reference.md 的 progressive-disclosure 一般规则，未保存无关搜索结果。"
+    },
+    {
+      "query": "virtualize lists / scroll performance",
+      "reason": "一次改写后仍无相关数据库匹配；采用 quick-reference.md 的 reduce-reflows、virtualize-lists、main-thread-budget、input-latency 一般规则，并以本地测量验证。"
+    },
+    {
+      "query": "predictable back cancel / keyboard escape cancel",
+      "reason": "检索结果限定 Web/Mobile，没有直接验证 Textual 返回行为规则；使用 quick-reference.md 的 escape-routes、keyboard-nav 通用原则，并以实际键盘路径验证。"
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+from nailong.tools.diffs import committed_patch, diff_statistics
 import codecs
 import fnmatch
 import hashlib
@@ -375,10 +376,14 @@ class FileSession:
                 if self.resolve(path, allow_missing=True) != target:
                     raise ValueError("文件路径发生变化，请重新读取。")
                 self.check_version(path, version)
+                before = self._read_bytes(target).decode('utf-8') if target.exists() else ''
+                if version['exists'] and hashlib.sha256(before.encode('utf-8')).hexdigest() != version['digest']:
+                    self.invalidate_read(target)
+                    raise ValueError('文件在读取或审批后被外部修改，请重新读取和审批。')
                 mode = target.stat().st_mode if target.exists() else 0o644
                 self._atomic_write(target, content.encode("utf-8"), mode, create_only=not version["exists"])
                 self.invalidate_read(target)
-                return {"ok": True, "path": self.display_path(target),
+                return {"ok": True, "path": self.display_path(target), **committed_patch(before, content, self.display_path(target)),
                         "chars_written": len(content), "version": hashlib.sha256(content.encode("utf-8")).hexdigest()}
         except (OSError, ValueError) as error:
             return {"ok": False, "error": str(error) if isinstance(error, ValueError) else "文件无法写入。"}
@@ -499,6 +504,7 @@ class FileSession:
                 "line_start": self._line_number(before, first_start),
                 "line_end": self._line_number(before, max(first_start, last_end - 1)),
                 "diff": diff,
+                **diff_statistics(diff),
                 "fuzzy": fuzzy,
             }
         except UnicodeDecodeError:

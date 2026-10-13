@@ -1,0 +1,38 @@
+[
+  {
+    "element": "help-selected-name",
+    "foreground": "#88c0d0",
+    "background": "#0178d4",
+    "contrast_ratio": 2.26
+  },
+  {
+    "element": "help-selected-description",
+    "foreground": "#ddedf9",
+    "background": "#0178d4",
+    "contrast_ratio": 3.78
+  },
+  {
+    "element": "setting-light-title",
+    "foreground": "#fea62b",
+    "background": "#e0e0e0",
+    "contrast_ratio": 1.49
+  },
+  {
+    "element": "light-muted-on-surface",
+    "foreground": "#65717a",
+    "background": "#e9edf1",
+    "contrast_ratio": 4.25
+  },
+  {
+    "element": "light-success-on-surface",
+    "foreground": "#16803c",
+    "background": "#e9edf1",
+    "contrast_ratio": 4.26
+  },
+  {
+    "element": "setup-placeholder",
+    "foreground": "#8290a7",
+    "background": "#252c40",
+    "contrast_ratio": 4.29
+  }
+]

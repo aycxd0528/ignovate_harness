@@ -1,0 +1,23 @@
+{
+  "results": [
+    {
+      "reasoning_effort": "low",
+      "ok": true,
+      "answer_matches": true,
+      "tools": [
+        "read_file"
+      ],
+      "model_calls": 2,
+      "tokens": 21287
+    },
+    {
+      "reasoning_effort": "none",
+      "ok": true,
+      "answer_matches": true,
+      "tools": [],
+      "model_calls": 1,
+      "tokens": 6153
+    }
+  ],
+  "ok": true
+}
