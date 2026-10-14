@@ -34,7 +34,7 @@ class RuntimeHintTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report['runtime_environment']['temporary_directory'],tempfile.gettempdir())
         self.assertFalse(report['runtime_environment']['active_goal_bound'])
         body='\n'.join(str(m.content) for m in model.requests[-1])
-        self.assertIn(sys.executable,body)
+        self.assertIn(json.dumps(sys.executable),body)
         self.assertIn('active_goal_bound',body)
         self.assertEqual(events[-1].kind,'final')
 

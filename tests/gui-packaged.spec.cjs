@@ -1,0 +1,15 @@
+const {_electron:electron}=require('playwright');const assert=require('node:assert/strict');const fs=require('node:fs');const os=require('node:os');const path=require('node:path');const {execFileSync}=require('node:child_process');
+(async()=>{const source=process.env.IGNOVATE_APP;assert.ok(source,'Set IGNOVATE_APP to the built Ignovate.app');const temp=fs.mkdtempSync(path.join(os.tmpdir(),'ignovate-installed-smoke-'));let app;
+ try{
+  const relocated=path.join(temp,'应用程序','Ignovate.app'),project=path.join(temp,'项目 空格'),home=path.join(temp,'home');fs.mkdirSync(path.dirname(relocated));fs.mkdirSync(project);fs.mkdirSync(home);fs.writeFileSync(path.join(project,'README.md'),'# 安装版验证\n');execFileSync('ditto',[source,relocated]);
+  execFileSync('codesign',['--verify','--deep','--strict',relocated]);const resources=path.join(relocated,'Contents/Resources'),python=path.join(resources,'runtime/bin/python3');
+  const env={...process.env,HOME:home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',PYTHONPATH:'/not-a-python-project',IGNOVATE_CONFIG_DIR:path.join(temp,'config'),NAILONG_DATA_DIR:path.join(temp,'data')};for(const name of ['IGNOVATE_PYTHON','DEEPSEEK_API_KEY','DEEPSEEK_API_BASE','DEEPSEEK_MODEL','VIRTUAL_ENV'])delete env[name];
+  const metadata=JSON.parse(execFileSync(python,['-I','-B','-c','import sys, json, importlib.metadata, nailong.gui; print(json.dumps({"prefix":sys.prefix,"version":importlib.metadata.version("ignovate-harness"),"bytecode":sys.dont_write_bytecode}))'],{env,encoding:'utf8'}));
+  assert.equal(metadata.version,'1.1.0');assert.equal(metadata.bytecode,true);assert.equal(fs.realpathSync(metadata.prefix),fs.realpathSync(path.join(resources,'runtime')));
+  app=await electron.launch({executablePath:path.join(relocated,'Contents/MacOS/Ignovate'),args:['--project',project],env});const page=await app.firstWindow();await page.locator('#project-name').filter({hasText:'项目 空格'}).waitFor({timeout:30000});await page.locator('#startup-screen').waitFor({state:'detached'});
+  assert.equal(await app.evaluate(({app})=>app.isPackaged),true);const bridge=await page.evaluate(()=>({choose:typeof window.ignovateDesktop.chooseProject,node:typeof require}));assert.deepEqual(bridge,{choose:'function',node:'undefined'});
+  const options=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());assert.equal(options.sandbox,true);assert.equal(options.contextIsolation,true);assert.equal(options.nodeIntegration,false);
+  await page.screenshot({path:'/tmp/ignovate-macos-installed.png'});await app.close();app=null;execFileSync('codesign',['--verify','--deep','--strict',relocated]);assert.ok(!fs.existsSync(path.join(resources,'runtime/lib/python3.11/site-packages/nailong/gui/__pycache__')),'launch must not mutate the signed bundle');
+  console.log('Installed app relocation, embedded Python, isolated paths, desktop bridge, signature and clean close passed.');
+ }finally{if(app)await app.close();fs.rmSync(temp,{recursive:true,force:true});}
+})().catch(e=>{console.error(e);process.exitCode=1;});

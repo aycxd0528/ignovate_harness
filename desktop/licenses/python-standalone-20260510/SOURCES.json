@@ -1,0 +1,86 @@
+{
+  "distribution": "python-build-standalone",
+  "build": "20260510",
+  "notices": [
+    {
+      "name": "LICENSE",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE"
+    },
+    {
+      "name": "LICENSE.bdb.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.bdb.txt"
+    },
+    {
+      "name": "LICENSE.bzip2.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.bzip2.txt"
+    },
+    {
+      "name": "LICENSE.cpython.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.cpython.txt"
+    },
+    {
+      "name": "LICENSE.expat.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.expat.txt"
+    },
+    {
+      "name": "LICENSE.libX11.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.libX11.txt"
+    },
+    {
+      "name": "LICENSE.libXau.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.libXau.txt"
+    },
+    {
+      "name": "LICENSE.libedit.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.libedit.txt"
+    },
+    {
+      "name": "LICENSE.libffi.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.libffi.txt"
+    },
+    {
+      "name": "LICENSE.liblzma.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.liblzma.txt"
+    },
+    {
+      "name": "LICENSE.libuuid.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.libuuid.txt"
+    },
+    {
+      "name": "LICENSE.libxcb.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.libxcb.txt"
+    },
+    {
+      "name": "LICENSE.mpdecimal.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.mpdecimal.txt"
+    },
+    {
+      "name": "LICENSE.ncurses.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.ncurses.txt"
+    },
+    {
+      "name": "LICENSE.openssl-1.1.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.openssl-1.1.txt"
+    },
+    {
+      "name": "LICENSE.openssl-3.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.openssl-3.txt"
+    },
+    {
+      "name": "LICENSE.sqlite.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.sqlite.txt"
+    },
+    {
+      "name": "LICENSE.tcl.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.tcl.txt"
+    },
+    {
+      "name": "LICENSE.tix.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.tix.txt"
+    },
+    {
+      "name": "LICENSE.zlib.txt",
+      "source": "https://raw.githubusercontent.com/astral-sh/python-build-standalone/20260510/LICENSE.zlib.txt"
+    }
+  ]
+}

@@ -153,6 +153,8 @@ class ResultArchive:
             try:
                 with (open_regular_file(path, binary=False) if os.name == 'nt'
                       else path.open("r", encoding="utf-8")) as stream:
+                    # Offsets count the archived transcript, including raw CR/LF.
+                    stream.reconfigure(newline="")
                     # Read bounded chunks, even when the requested offset is large.
                     remaining = min(offset, length)
                     while remaining:

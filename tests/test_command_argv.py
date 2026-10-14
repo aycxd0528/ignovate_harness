@@ -82,7 +82,7 @@ class CommandArgvTests(unittest.TestCase):
         with local_tools.use_project_root(self.root):
             output, truncated, timed_out, exit_code = local_tools._capture_command_output(
                 python_command("print('legacy');raise SystemExit(3)"), 3)
-        self.assertEqual(output, "legacy\n")
+        self.assertEqual(output, "legacy" + os.linesep)
         self.assertFalse(truncated)
         self.assertFalse(timed_out)
         self.assertEqual(exit_code, 3)
@@ -144,7 +144,7 @@ class CommandArgvTests(unittest.TestCase):
         self.assertLessEqual(len(result["output"]), local_tools.MAX_OUTPUT_CHARS)
         artifact = result["output_archive"]
         self.assertTrue(artifact["artifact_complete"])
-        self.assertEqual(artifact["original_chars"], 30009)
+        self.assertEqual(artifact["original_chars"], 30008 + len(os.linesep))
         recovered = ""
         offset = 0
         while True:
@@ -154,7 +154,7 @@ class CommandArgvTests(unittest.TestCase):
             if not page["truncated"]:
                 break
             offset = page["next_offset"]
-        self.assertEqual(recovered, "HEAD" + "x" * 30000 + "TAIL\n")
+        self.assertEqual(recovered, "HEAD" + "x" * 30000 + "TAIL" + os.linesep)
 
     def test_archive_cap_is_explicit_about_missing_output(self):
         # Break caught: marking a bounded output prefix as the complete process transcript.
@@ -163,10 +163,23 @@ class CommandArgvTests(unittest.TestCase):
             result = self.run_process(argv=[sys.executable, "-c", "print('x'*1000050 + 'TAIL')"])
         artifact = result["output_archive"]
         self.assertFalse(artifact["artifact_complete"])
-        self.assertEqual(artifact["original_chars"], 1000055)
+        self.assertEqual(artifact["original_chars"], 1000054 + len(os.linesep))
         self.assertEqual(artifact["artifact_chars"], 1000000)
         self.assertIn("TAIL", result["output"])
         self.assertTrue(result["ok"])
+
+    def test_preview_and_archive_preserve_mixed_raw_line_endings(self):
+        # Break caught: normalizing pipe newlines changes the transcript or archive lengths.
+        archive = ResultArchive(self.root / "artifacts")
+        with self.archive_scope(archive):
+            result = self.run_process(argv=[sys.executable, "-c", "import os;os.write(1,b'one\\r\\ntwo\\nthree\\r')"])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["output"], "one\r\ntwo\nthree\r")
+        artifact = result["output_archive"]
+        self.assertEqual(artifact["original_chars"], 15)
+        self.assertEqual(artifact["artifact_chars"], 15)
+        self.assertTrue(artifact["artifact_complete"])
+        self.assertEqual(archive.read(artifact["reference"])["content"], "one\r\ntwo\nthree\r")
 
     def test_archive_failure_does_not_change_the_actual_process_outcome(self):
         # Break caught: a failed archive is silently complete or rewrites an exit result.
@@ -248,7 +261,7 @@ class AsyncCommandArgvTests(unittest.IsolatedAsyncioTestCase):
         # Break caught: the runtime's cancellable handler still uses a shell or zero-only success.
         result = await self.run_process(argv=[sys.executable, "-c", "import sys;print(sys.argv[1]);raise SystemExit(7)", "$(touch injected)"], expected_exit_code=7)
         self.assertTrue(result["ok"], result)
-        self.assertEqual(result["output"], "$(touch injected)\n")
+        self.assertEqual(result["output"], "$(touch injected)" + os.linesep)
         self.assertFalse((self.root / "injected").exists())
         self.assertEqual(result["execution_mode"], "argv")
         self.assertEqual(result["exit_code"], 7)

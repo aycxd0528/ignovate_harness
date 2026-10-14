@@ -1,6 +1,6 @@
 # Ignovate GUI
 
-PRD：[飞书 PRD v0.2](https://qcnvafay57br.feishu.cn/wiki/NSDnwv74PiTwrlkSISScV3aYnyf)。当前交付为可运行的源码版本，macOS 已进行 Electron 与 Chrome 验证；安装包、签名、Windows/Linux 实机验收留在后续阶段。
+PRD：[飞书 PRD v0.2](https://qcnvafay57br.feishu.cn/wiki/NSDnwv74PiTwrlkSISScV3aYnyf)。macOS 已进行 Electron 与 Chrome 验证，Apple Silicon 可使用内置 Python 的 DMG 桌面安装包；当前为本地签名，Developer ID、公证、Intel Mac 与 Windows/Linux 桌面安装包留在后续阶段。
 
 ## 启动
 

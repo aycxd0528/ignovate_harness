@@ -1,6 +1,6 @@
 # ignovate harness 项目说明
 
-本文面向希望使用或维护编码代理的开发者，从实际开发痛点说明项目定位，再介绍结构、上下文压缩、工作流、工具调用、记忆与轨迹统计。安装与操作指引放在核心机制之后。适用版本为 1.0.3，维护日期为 2026-10-08。支持 macOS、Linux 和 Windows 11 x64（原生运行，无需 WSL）；Release 安装器会自动准备缺少的 Python 和应用依赖。
+本文面向希望使用或维护编码代理的开发者，从实际开发痛点说明项目定位，再介绍结构、上下文压缩、工作流、工具调用、记忆与轨迹统计。安装与操作指引放在核心机制之后。适用版本为 1.1.0，维护日期为 2026-10-08。支持 macOS、Linux 和 Windows 11 x64（原生运行，无需 WSL）；Release 安装器会自动准备缺少的 Python 和应用依赖。
 
 仓库：[aycxd0528/ignovate_harness](https://github.com/aycxd0528/ignovate_harness)。完整命令与界面细节见 [README](../README.md)，本次问题与验证记录见 [项目审查报告](reviews/2026-10-08-project-audit.md)。
 
@@ -241,15 +241,15 @@ MCP 支持 stdio 和 Streamable HTTP，将外部工具 schema 转换后接入相
 
 ## 快速开始
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包，无需预装 Python 或克隆源码。当前版本为 [v1.0.3](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.0.3)。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包，无需预装 Python 或克隆源码。当前版本为 [v1.1.0](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.1.0)。
 
 ### macOS / Linux
 
-下载 [ignovate-1.0.3-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.3/ignovate-1.0.3-unix.tar.gz)，支持 Intel / Apple Silicon macOS 和 x86_64 / ARM64 Linux。在下载目录执行：
+下载 [ignovate-1.1.0-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.1.0/ignovate-1.1.0-unix.tar.gz)，支持 Intel / Apple Silicon macOS 和 x86_64 / ARM64 Linux。在下载目录执行：
 
 ```sh
-tar -xzf ignovate-1.0.3-unix.tar.gz
-cd ignovate-1.0.3
+tar -xzf ignovate-1.1.0-unix.tar.gz
+cd ignovate-1.1.0
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -257,11 +257,11 @@ ignovate set up
 
 ### Windows 11
 
-下载 [ignovate-1.0.3-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.0.3/ignovate-1.0.3-windows.zip)，在 PowerShell 中执行：
+下载 [ignovate-1.1.0-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.1.0/ignovate-1.1.0-windows.zip)，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.0.3-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.0.3
+Expand-Archive .\ignovate-1.1.0-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.1.0
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -304,7 +304,7 @@ ignovate doctor --project /path/to/work-project --output-format json
 在已安装 Git、Python 3.11 或更新版本的 macOS/Linux 终端执行：
 
 ```bash
-git clone --branch v1.0.3 https://github.com/aycxd0528/ignovate_harness.git
+git clone --branch v1.1.0 https://github.com/aycxd0528/ignovate_harness.git
 cd ignovate_harness
 python3 -m venv .venv
 source .venv/bin/activate
@@ -393,7 +393,7 @@ py -3.11 -m venv .venv
 ```bash
 python -m unittest discover -s tests -v
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.0.3-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.1.0-py3-none-any.whl
 ```
 
 离线测试使用假模型、临时项目和本地 MCP 服务，不调用真实模型 API。wheel smoke 从源码目录之外加载实际发行内容，验证 `--help`、JSON doctor 和依赖检查，避免仅验证 editable 安装。

@@ -1,9 +1,11 @@
 import importlib
+import asyncio
 import os
 import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -495,6 +497,51 @@ asyncio.run(main())
 
 
 class AgentRuntimeAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_during_async_sqlite_open_joins_and_closes_connection(self):
+        # Break caught: cancelling aiosqlite startup discards an already opened SQLite handle.
+        async with AsyncExitStack() as resources:
+            directory = resources.enter_context(tempfile.TemporaryDirectory())
+            root = Path(directory)
+            store = ProjectSessionStore(root, base_dir=root / 'state')
+            with patch('agent.ChatDeepSeek', return_value=object()):
+                factory = AgentRuntimeFactory(make_settings(root), session_store=store)
+            resources.push_async_callback(factory.aclose)
+            opened, release = threading.Event(), threading.Event()
+            connections = []
+            connect = sqlite3.connect
+
+            def blocked_connect(*args, **kwargs):
+                # Disable only the thread check so the test can inspect the real handle after joining.
+                connection = connect(*args, **{**kwargs, 'check_same_thread': False})
+                connections.append(connection)
+                opened.set()
+                release.wait(5)
+                return connection
+
+            operation = None
+            try:
+                with patch('sqlite3.connect', side_effect=blocked_connect):
+                    operation = asyncio.create_task(factory.async_runtime(thread_id='cancel-opening'))
+                    self.assertTrue(await asyncio.to_thread(opened.wait, 2))
+                    operation.cancel('cancel while connecting')
+                    await asyncio.sleep(0)
+                    operation.cancel('repeated cancellation')
+                    release.set()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await operation
+                await factory.aclose()
+                self.assertEqual(len(connections), 1)
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connections[0].execute('SELECT 1')
+            finally:
+                release.set()
+                if operation is not None and not operation.done():
+                    operation.cancel()
+                    await asyncio.gather(operation, return_exceptions=True)
+                # On the unfixed path retain the handle long enough to observe the leak, then close it.
+                for connection in connections:
+                    connection.close()
+
     async def test_aclose_releases_both_sqlite_connections_and_is_repeatable(self):
         async with AsyncExitStack() as resources:
             directory = resources.enter_context(tempfile.TemporaryDirectory())

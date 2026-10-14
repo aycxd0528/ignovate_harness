@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
+const { runtimePaths } = require('./runtime.cjs');
 const root = path.resolve(__dirname, '..');
 let child, origin, window, selectedProjects = new Set();
 let shuttingDown = false, adapterExited = false;
@@ -13,11 +14,16 @@ async function launch() {
   app.enableSandbox();
   await app.whenReady();
   const index = process.argv.indexOf('--project');
-  const project = fs.realpathSync(index >= 0 ? process.argv[index + 1] : process.cwd());
+  let projectPath=index >= 0 ? process.argv[index + 1] : process.cwd();
+  if(app.isPackaged&&index<0){
+    const result=await dialog.showOpenDialog({properties:['openDirectory'],title:'选择 Ignovate 工作区',defaultPath:app.getPath('documents')});
+    if(result.canceled){app.quit();return;}projectPath=result.filePaths[0];
+  }
+  const project = fs.realpathSync(projectPath);
   selectedProjects.add(project);
-  const localPython = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-  const python = process.env.IGNOVATE_PYTHON || (fs.existsSync(localPython) ? localPython : process.platform === 'win32' ? 'python' : 'python3');
-  child = spawn(python, ['-m', 'nailong.gui', '--stdio', '--project', project], { cwd: root, stdio: ['ignore','pipe','pipe'], windowsHide: true });
+  const {python,pythonArgs}=runtimePaths({packaged:app.isPackaged,resourcesPath:process.resourcesPath,sourceRoot:root});
+  const environment=app.isPackaged?{...process.env,PATH:path.join(process.resourcesPath,'tools')+path.delimiter+(process.env.PATH||'')}:process.env;
+  child = spawn(python, [...pythonArgs,'-m', 'nailong.gui', '--stdio', '--project', project], { cwd: app.isPackaged?project:root, env:environment, stdio: ['ignore','pipe','pipe'], windowsHide: true });
   const url = await new Promise((resolve,reject) => {
     let pending = '';
     const timer = setTimeout(() => reject(new Error('Python adapter did not start within 30 seconds')), 30000);

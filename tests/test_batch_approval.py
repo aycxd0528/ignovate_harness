@@ -20,6 +20,7 @@ from config import Settings
 from nailong.core.sessions import ProjectSessionStore
 from nailong.core.tool_approval import BatchApprovalMiddleware
 from nailong.tools.files import FileSession
+from platform_fixtures import python_command
 
 
 class OfflineModel(FakeMessagesListChatModel):
@@ -111,7 +112,7 @@ class BatchApprovalTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_command_with_schema_defaults_runs_after_approval(self):
         # Approved arguments must match the real adapter's inserted defaults.
         await self.make_service([{'name': 'run_command',
-            'args': {'command': 'printf executed > ran.txt'}, 'id': 'command'}])
+            'args': {'command': python_command("from pathlib import Path;Path('ran.txt').write_text('executed', encoding='utf-8')")}, 'id': 'command'}])
         events = await self.drive()
         self.assertEqual((self.root / 'ran.txt').read_text(), 'executed')
         results = [e for e in events if e.kind == 'tool_end']

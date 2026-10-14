@@ -718,7 +718,24 @@ class AgentRuntimeFactory:
             context = AsyncSqliteSaver.from_conn_string(
                 str(self.session_store.database_path)
             )
-            self.async_checkpointer = await context.__aenter__()
+            # aiosqlite opens on a worker thread. Cancelling its entry can lose
+            # the handle before the context owns it, so join entry and close it.
+            opening = asyncio.create_task(context.__aenter__())
+            try:
+                self.async_checkpointer = await asyncio.shield(opening)
+            except asyncio.CancelledError:
+                async def close_opened():
+                    await opening
+                    await context.__aexit__(None, None, None)
+
+                cleanup = asyncio.create_task(close_opened())
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        pass
+                cleanup.result()
+                raise
             self._async_checkpointer_context = context
             await self.async_checkpointer.setup()
         return self._build_runtime(

@@ -1,5 +1,6 @@
 """Native preference and read-only workspace adapters for GUI controls."""
 from dataclasses import replace
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 
@@ -70,7 +71,7 @@ def workspace_catalog(controller, paths):
         database = sessions.root / 'branches.sqlite'
         if database.is_file():
             try:
-                with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as db:
+                with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
                     db.row_factory = sqlite3.Row
                     branches = [dict(row) for row in db.execute('''SELECT b.*,
                         COALESCE((SELECT MAX(created) FROM nodes WHERE branch_id=b.id),b.created) AS updated_at

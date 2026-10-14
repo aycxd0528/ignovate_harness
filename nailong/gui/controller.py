@@ -219,7 +219,7 @@ class GUIController:
                          'runs': [self._public_run(run) for run in self.runs.values()], 'paused': self.paused,
                          'approvals': [a['public'] for a in self.approvals.values()], 'layout': self.branches.layout(),
                          'layouts': {b['conversation_id']: self.branches.layout(b['conversation_id']) for b in branches},
-                         'error': self.error, 'kernel_version': '1.0.3'})
+                         'error': self.error, 'kernel_version': '1.1.0'})
 
     def _weather(self, path, window):
         from ui.presentation import SessionMetrics

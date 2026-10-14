@@ -2,7 +2,6 @@
 
 import json
 import importlib.util
-import shlex
 import sys
 import tempfile
 import unittest
@@ -12,6 +11,7 @@ from langchain_core.messages import ToolMessage
 
 import local_tools
 from agent_service import AgentService
+from platform_fixtures import python_command, shell_join
 
 
 class CommandTestEvidenceTests(unittest.TestCase):
@@ -30,8 +30,7 @@ class CommandTestEvidenceTests(unittest.TestCase):
                 "class Check(unittest.TestCase):\n"
                 "    def test_expected(self): self.assertEqual(1, 2)\n"
                 "if __name__ == '__main__': unittest.main()\n", encoding="utf-8")
-            python = shlex.quote(sys.executable)
-            command = f"{python} check.py; {python} -c " + shlex.quote(
+            command = shell_join([sys.executable, "check.py"]) + "; " + python_command(
                 "print('report one\\nreport two\\nreport three\\nreport four')")
             with local_tools.use_project_root(directory):
                 payload = local_tools.run_command(command, timeout_seconds=5)
@@ -41,12 +40,26 @@ class CommandTestEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["exit_code"], 0)
         self.assertNotIn("FAILED", summary["output_snippet"])
         evidence = summary.get("test_output", {})
-        self.assertEqual(evidence.get("status"), "reported_failure")
+        self.assertEqual(evidence.get("status"), "reported_failure", payload["output"])
         self.assertTrue(evidence["failure_observed"])
         self.assertEqual(evidence["source"], "run_command.output")
         self.assertEqual(evidence["summaries"], [
             {"framework": "unittest", "status": "failed", "tests_run": 1,
              "counts": {"failures": 1}}])
+
+    def test_traceback_highlight_does_not_hide_following_runner_summary(self):
+        # Break caught: Python 3.13's source underline is mistaken for a Markdown fence.
+        output = ("Traceback (most recent call last):\n"
+                  "    self.assertEqual(1, 2)\n"
+                  "    ~~~~~~~~~~~~~~~~^^^^^^\n"
+                  "AssertionError: 1 != 2\n\n"
+                  "Ran 1 test in 0.001s\n\nFAILED (failures=1)\n")
+        evidence = self.summary(output)["test_output"]
+        self.assertEqual(evidence["status"], "reported_failure")
+        self.assertEqual(evidence["summaries"], [
+            {"framework": "unittest", "status": "failed", "tests_run": 1,
+             "counts": {"failures": 1}}])
+        self.assertFalse(evidence["execution_verified"])
 
     def test_standard_terminal_summaries_are_observations_with_literal_counts(self):
         # Break caught: missing standard formats, conflating zero tests or collection errors with pass.
@@ -84,6 +97,7 @@ class CommandTestEvidenceTests(unittest.TestCase):
             "2 passed in 0.03s additional instructions\n",
             "```console\n2 passed in 0.03s\n```\n",
             "```\nRan 2 tests in 0.002s\n\nOK\n```\n",
+            "~~~console\nRan 2 tests in 0.002s\n\nFAILED (failures=1)\n~~~\n",
         ]
         for output in prose:
             with self.subTest(output=output):
@@ -98,10 +112,9 @@ class CommandTestEvidenceTests(unittest.TestCase):
 
     def test_exact_stdout_spoof_is_labeled_as_output_only(self):
         # Break caught: promoting syntactically valid stdout to executed-test or acceptance proof.
-        python = shlex.quote(sys.executable)
-        command = f"{python} -c " + shlex.quote("print('Ran 2 tests in 0.002s\\n\\nOK')")
         with tempfile.TemporaryDirectory() as directory, local_tools.use_project_root(directory):
-            payload = local_tools.run_command(command, timeout_seconds=5)
+            payload = local_tools.run_command(
+                argv=[sys.executable, "-c", "print('Ran 2 tests in 0.002s\\n\\nOK')"], timeout_seconds=5)
         message = ToolMessage(content=json.dumps(payload), name="run_command", tool_call_id="spoof")
         evidence = AgentService(lambda **kwargs: None)._tool_result_summary(message).get("test_output", {})
         self.assertEqual(evidence.get("source"), "run_command.output")
@@ -148,10 +161,9 @@ class CommandTestEvidenceTests(unittest.TestCase):
                 "class Check(unittest.TestCase):\n"
                 "    def test_expected(self): self.assertEqual(1, 1)\n"
                 "if __name__ == '__main__': unittest.main()\n", encoding="utf-8")
-            python = shlex.quote(sys.executable)
-            command = (f"{python} test_pass.py; {python} -m pytest "
-                       "--this-argument-is-intentionally-invalid; "
-                       f"{python} -c " + shlex.quote("print('done')"))
+            command = (shell_join([sys.executable, "test_pass.py"]) + "; "
+                       + shell_join([sys.executable, "-m", "pytest", "--this-argument-is-intentionally-invalid"])
+                       + "; " + python_command("print('done')"))
             with local_tools.use_project_root(directory):
                 payload = local_tools.run_command(command, timeout_seconds=5)
         self.assertIn("python -m pytest: error: unrecognized arguments:", payload["output"])

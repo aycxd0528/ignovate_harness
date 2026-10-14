@@ -6,7 +6,6 @@ worker cancellation and (where needed) process cleanup are real.
 import asyncio
 import inspect
 import json
-import shlex
 import sys
 import tempfile
 import threading
@@ -28,6 +27,7 @@ from nailong.core.sessions import ProjectSessionStore
 from nailong.core.hooks import HookRunResult
 from nailong.tools.files import FileSession
 import tools
+from platform_fixtures import shell_join
 
 
 class OfflineModel(FakeMessagesListChatModel):
@@ -172,7 +172,7 @@ class ApprovalCancellationTests(unittest.IsolatedAsyncioTestCase):
         script = self.root / 'started.py'
         script.write_text("from pathlib import Path\nimport time\n"
                           "Path('started.marker').write_text('effect')\ntime.sleep(10)\n")
-        command = shlex.quote(sys.executable) + ' ' + shlex.quote(str(script))
+        command = shell_join([sys.executable, str(script)])
         await self.make_service([
             request('run_command', {'command': command}, 'started-command'),
             request('run_command', {'command': 'pwd'}, 'approval-command')])
@@ -353,7 +353,7 @@ class ApprovalCancellationTests(unittest.IsolatedAsyncioTestCase):
         script.write_text("from pathlib import Path\nimport time\n"
                           "with Path('hook-effect.txt').open('a') as stream: stream.write('effect\\n')\n"
                           f"time.sleep({sleep_seconds})\n")
-        command = shlex.quote(sys.executable) + ' ' + shlex.quote(str(script))
+        command = shell_join([sys.executable, str(script)])
         (self.root / '.nailong').mkdir()
         (self.root / '.nailong' / 'settings.json').write_text(json.dumps({'hooks': {
             'PreToolUse': [{'matcher': '^read_file$', 'hooks': [

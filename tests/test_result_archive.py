@@ -42,6 +42,25 @@ class ResultArchiveTests(unittest.TestCase):
                 self.assertFalse(result['ok'])
                 self.assertNotIn('content', result)
 
+    def test_raw_newline_paging_keeps_character_offsets_and_complete_coverage(self):
+        # Break caught: newline translation changes archived text and invalidates stored offsets.
+        archive = ResultArchive(self.root / 'results')
+        record = archive.save('one\r\ntwo\nthree\r')
+        first = archive.read(record['reference'], max_chars=4)
+        self.assertEqual(first['content'], 'one\r')
+        self.assertEqual(first['next_offset'], 4)
+        self.assertEqual(first['total_chars'], 15)
+        second = archive.read(record['reference'], offset=4, max_chars=3)
+        self.assertEqual(second['content'], '\ntw')
+        self.assertEqual(second['next_offset'], 7)
+        last = archive.read(record['reference'], offset=7)
+        self.assertEqual(last['content'], 'o\nthree\r')
+        self.assertEqual(last['next_offset'], 15)
+        self.assertFalse(last['truncated'])
+        complete = archive.read(record['reference'])
+        self.assertEqual(complete['content'], 'one\r\ntwo\nthree\r')
+        self.assertEqual(complete['coverage'], 'complete')
+
     def test_invalid_utf8_is_unavailable_without_disclosing_partial_content(self):
         archive = ResultArchive(self.root / 'results')
         reference = archive.save('private text')['reference']

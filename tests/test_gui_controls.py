@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,12 +64,23 @@ class GUIControlsTests(unittest.IsolatedAsyncioTestCase):
         branch = branches.create('Second workspace'); branches.close()
         empty = self.root / 'empty'; empty.mkdir()
         empty_sessions = ProjectSessionStore(empty, base_dir=self.root / 'data')
-        result = await self.controller.command('workspaces', {'paths':[str(other),str(empty)]})
+        connections = []
+        connect = sqlite3.connect
+        def record_connection(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+        with patch('nailong.gui.controls.sqlite3.connect', side_effect=record_connection):
+            result = await self.controller.command('workspaces', {'paths':[str(other),str(empty)]})
         self.assertEqual(result[0]['branches'][0]['id'], branch['id'])
         self.assertEqual(result[0]['branches'][0]['name'], 'Second workspace')
         self.assertEqual(result[1]['branches'], [])
         self.assertFalse(empty_sessions.root.exists())
         self.assertEqual(self.controller.project, self.project.resolve())
+        self.assertEqual(len(connections), 1)
+        for connection in connections:
+            with self.assertRaises(sqlite3.ProgrammingError):
+                connection.execute('SELECT 1')
 
     async def test_folder_reference_is_bounded_and_does_not_read_contents(self):
         (self.project/'src').mkdir(); (self.project/'src/code.py').write_text('secret source')

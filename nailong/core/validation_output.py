@@ -31,7 +31,10 @@ def _output_lines(output):
     # A Markdown example is still documentation when printed by a command.
     fence = None
     for line in _ANSI.sub("", output).splitlines():
-        marker = re.match(r"^[ \t]*(`{3,}|~{3,})", line)
+        # Python 3.13 tracebacks underline expressions with tildes and carets.
+        # These diagnostic lines do not begin a printed Markdown example.
+        pointer = re.fullmatch(r"[ \t]*[~^]*\^[~^]*[ \t]*", line)
+        marker = None if pointer else re.match(r"^[ \t]*(`{3,}|~{3,})", line)
         if marker:
             kind = marker[1][0]
             fence = None if fence == kind else kind if fence is None else fence
