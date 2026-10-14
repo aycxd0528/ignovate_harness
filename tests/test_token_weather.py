@@ -55,6 +55,45 @@ class TokenWeatherTests(unittest.TestCase):
                 self.assertIn(delta, row)
                 self.assertIn('200k', row)
 
+    def test_small_growth_in_large_window_has_a_visible_rising_trend(self):
+        metrics = SessionMetrics.from_events(events((11_200,), (20_300,)))
+        row = self.render(metrics, window=1_000_000, width=200).plain
+        self.assertIn('last turns ▁█', row)
+        self.assertIn('Clear 2%', row)
+        self.assertIn('20.3k / 1m', row)
+        self.assertIn('▲ +9.1k', row)
+        self.assertEqual(metrics.context_history, [11_200, 20_300])
+
+    def test_relative_trend_preserves_decline_plateau_and_missing_samples(self):
+        cases = [
+            (events((20_300,), (11_200,)), '█▁', '▼ -9.1k'),
+            (events((20_300,), (20_300,)), '▁▁', '= +0'),
+            (events((0,), (0,)), '▁▁', '= +0'),
+            (events((20_300,)), '▁', '▲ +20.3k'),
+            (events((11_200,)) + [{'kind': 'turn_start'}, {'kind': 'usage_missing'}]
+             + events((20_300,)), '▁·█', '增量待统计'),
+        ]
+        for records, trend, growth in cases:
+            with self.subTest(trend=trend, growth=growth):
+                row = self.render(SessionMetrics.from_events(records), window=1_000_000, width=200).plain
+                self.assertIn('last turns ' + trend + ' · ', row)
+                self.assertIn(growth, row)
+
+    def test_trend_rescales_after_old_extreme_leaves_recent_eight_turns(self):
+        samples = (1_000_000, 11_200, 12_500, 13_800, 15_100, 16_400, 17_700, 19_000, 20_300)
+        metrics = SessionMetrics.from_events(events(*((sample,) for sample in samples)))
+        row = self.render(metrics, window=1_000_000, width=200).plain
+        self.assertIn('last turns ▁▂▃▄▅▆▇█', row)
+        self.assertIn('▲ +1.3k', row)
+
+    def test_ascii_trend_shows_small_changes_without_color(self):
+        theme = Theme(glyph_running='>', no_color=True)
+        metrics = SessionMetrics.from_events(events((11_200,), (20_300,)))
+        row = self.render(metrics, window=1_000_000, width=200, theme=theme)
+        self.assertIn('last turns .@', row.plain)
+        self.assertTrue(row.plain.isascii())
+        self.assertFalse(row.spans)
+
     def test_weather_thresholds_and_over_capacity_are_explicit(self):
         for current, label, percent in [
             (0, 'Clear', 0), (58_000, 'Clear', 29),
@@ -143,6 +182,27 @@ class TokenWeatherTests(unittest.TestCase):
 
 
 class TokenWeatherTuiTests(unittest.IsolatedAsyncioTestCase):
+    async def test_live_two_turn_small_growth_updates_the_visible_trend(self):
+        from agent_service import TurnEvent
+        from config import Settings
+        from tui import TerminalAgentApp
+        from textual.widgets import Static
+        with tempfile.TemporaryDirectory() as directory:
+            app = TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None),
+                Settings('fixture-key', 'https://api.invalid', 'deepseek-flash', Path(directory)))
+            async with app.run_test(size=(213, 56)) as pilot:
+                app._append_user('第一轮')
+                app._observe_usage(TurnEvent('usage', {'input_tokens': 11_200, 'output_tokens': 10}))
+                await pilot.pause()
+                self.assertIn('last turns ▁', app.query_one('#token-weather', Static).content.plain)
+                app._append_user('第二轮')
+                app._observe_usage(TurnEvent('usage', {'input_tokens': 20_300, 'output_tokens': 10}))
+                await pilot.pause()
+                row = app.query_one('#token-weather', Static).content.plain
+                self.assertIn('last turns ▁█', row)
+                self.assertIn('2%', row)
+                self.assertIn('+9.1k', row)
+
     async def test_live_usage_updates_weather_without_filling_transcript(self):
         from agent_service import TurnEvent
         from config import Settings

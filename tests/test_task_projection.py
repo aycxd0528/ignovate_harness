@@ -145,7 +145,7 @@ class TaskHistoryTests(TaskFixture):
         self.assertEqual(len(paths),1)
         record=json.loads(paths[0].read_text())
         record['message']['data']['content']=record['message']['data']['content'].replace('保持边界','改写内容')
-        paths[0].write_text(json.dumps(record,ensure_ascii=False))
+        paths[0].write_text(json.dumps(record,ensure_ascii=False), newline='\n')
         with self.assertRaises(ValueError): history.read(ref)
 
     def test_incomplete_archive_is_not_a_recovery_source(self):

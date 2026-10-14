@@ -55,20 +55,20 @@ TOOL_DESCRIPTIONS = {
         " 应是唯一的原文片段，new_string 是替换内容；不要加入显示用的行号。"
         "replace_all=false 时多处匹配会失败，只有确实要全部替换才设为 true。"
         "无精确匹配时仅允许唯一的空白规范化匹配。成功结果含 replacements、diff 和"
-        " fuzzy；匹配失败或冲突时不要改用整文件覆盖绕过检查。"
+        " fuzzy；同一批次对同一文件最多一次变更，多处修改合并为一次补丁；分批时重新读取。匹配失败或冲突时不要改用整文件覆盖绕过检查。"
     ),
     "write_file": (
         "创建或完整替换项目内 UTF-8 文件，content 最多 120,000 字符，依照当前权限执行，"
         "需审批时等待批准。已有文件局部修改优先使用可用的 edit_file；完整覆盖前应读取"
-        "全部原内容并保留用户改动，不能根据截断输出重建文件。init 模式只能写入"
+        "全部原内容并保留用户改动，不能根据截断输出重建文件。同一批次对同一文件最多一次变更。init 模式只能写入"
         " .nailong/context.md；越界、受保护路径和指向其他位置的初始化路径会被拒绝。"
     ),
     "run_command": (
-        "在当前项目根目录运行 shell 命令，依照当前权限执行，需审批时等待批准。"
+        "在当前项目根目录执行 command shell字符串或 argv 字符串数组，两者只选一种。argv 直接启动程序而不经shell解释，测试优先用argv；expected_exit_code默认0，返回实际退出码及预期匹配状态，不能自动证明测试或功能验收通过。依照当前权限执行，需审批时等待批准。"
         "优先用可用的文件工具读取和搜索；此工具用于项目实际支持的测试、构建或其他必要命令。"
         "timeout_seconds 默认为 30 且最多 30 秒。先判断副作用，不要拼接不可信内容为命令。"
         "审批不是操作系统沙箱，仍须遵守项目与凭据边界。返回 ok、exit_code、output、"
-        "timed_out、output_truncated；失败、超时或未执行不能声称通过，输出截断不代表完整日志。"
+        "timed_out、output_truncated、execution_mode和output_archive；output_archive含归档引用和完整性，可用read_tool_result分页恢复。失败、超时或未执行不能声称通过，输出截断不代表完整日志。"
     ),
     "exit_plan_mode": (
         "仅在 plan 模式完成只读探索后提交可执行的 Markdown 计划。plan_markdown 写明目标、"
@@ -274,26 +274,28 @@ def build_tool_specs(
                 goal_store.invalidate_verification(thread_id=thread_id)
             return result
 
-    def run_command(command: str, timeout_seconds: int = 30) -> dict[str, Any]:
+    def run_command(command: str = '', timeout_seconds: int = 30, *,
+                    argv: list[str] | None = None, expected_exit_code: int = 0) -> dict[str, Any]:
+        from nailong.core.permissions import command_for_permission
         with file_session.mutation_lock:
             if goal_store is not None: goal_store.invalidate_verification(thread_id=thread_id)
-            with local_tools.use_project_root(file_session.project_root):
-                result = local_tools.run_command(command=command, timeout_seconds=timeout_seconds)
+            with local_tools.use_project_root(file_session.project_root), local_tools.use_command_result_archive(result_store):
+                result = local_tools.run_command(command=command, timeout_seconds=timeout_seconds,
+                    argv=argv, expected_exit_code=expected_exit_code)
             if goal_store is not None:
-                goal_store.record_verification(command, result, thread_id=thread_id)
+                goal_store.record_verification(command_for_permission({'command':command,'argv':argv}) or '', result, thread_id=thread_id)
         return result
 
-    async def run_command_async(command: str, timeout_seconds: int = 30) -> dict[str, Any]:
-        from nailong.core.processes import execute_process
-        if not command or not command.strip(): return {'ok':False,'error':'命令不能为空。'}
-        if len(command)>4000: return {'ok':False,'error':'命令不能超过 4,000 个字符。'}
+    async def run_command_async(command: str = '', timeout_seconds: int = 30, *,
+                                argv: list[str] | None = None, expected_exit_code: int = 0) -> dict[str, Any]:
+        from nailong.core.permissions import command_for_permission
         async with file_session.mutation_lock.async_scope():
             if goal_store is not None: goal_store.invalidate_verification(thread_id=thread_id)
-            try:
-                result=await execute_process(command,file_session.project_root,
-                    timeout=local_tools._safe_limit(timeout_seconds,30))
-            except OSError: return {'ok':False,'error':'命令未能启动。'}
-            if goal_store is not None: goal_store.record_verification(command,result,thread_id=thread_id)
+            with local_tools.use_project_root(file_session.project_root), local_tools.use_command_result_archive(result_store):
+                result = await local_tools.run_command_async(command=command, timeout_seconds=timeout_seconds,
+                    argv=argv, expected_exit_code=expected_exit_code)
+            if goal_store is not None:
+                goal_store.record_verification(command_for_permission({'command':command,'argv':argv}) or '',result,thread_id=thread_id)
         return result
 
     def exit_plan_mode(plan_markdown: str) -> dict[str, Any]:

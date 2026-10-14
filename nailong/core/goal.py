@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 import threading
 import uuid
 from contextlib import nullcontext, contextmanager
@@ -12,6 +11,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+
+from nailong.core.file_locks import file_lock
+from nailong.core.safe_files import atomic_write_bytes, is_link_or_reparse, open_regular_file, pinned_directory
 
 
 GoalState = Literal["active", "paused", "complete", "blocked"]
@@ -52,14 +54,18 @@ class Goal:
 
 class GoalStore:
     def __init__(self, path: str | Path, *, api_key: str = "", project_root=None):
-        self.path = Path(path).expanduser().resolve()
+        original = Path(path).expanduser().absolute()
+        if is_link_or_reparse(original):
+            raise ValueError('目标状态路径不能是符号链接或重解析点。')
+        self.path = original if os.name == 'nt' else original.resolve()
         self.api_key = api_key
         self.project_root = Path(project_root).resolve() if project_root else None
         self.task_store = None  # Optional factory-owned continuity/coverage guard.
         self._lock = threading.RLock()
         self._lock_depth = 0
         self._driver_owner = None
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with pinned_directory(self.path.parent, create=True):
+            pass
 
     @contextmanager
     def _locked(self):
@@ -68,24 +74,18 @@ class GoalStore:
             if self._lock_depth:
                 yield
                 return
-            import fcntl
             lock_path = self.path.with_name(self.path.name + '.lock')
-            descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX)
+            with file_lock(lock_path):
                 self._lock_depth += 1
                 try:
                     yield
                 finally:
                     self._lock_depth -= 1
-            finally:
-                os.close(descriptor)
 
     @contextmanager
     def driver_lease(self):
         """One goal driver per project, with a nonblocking cross-process lease."""
         import asyncio
-        import fcntl
         try:
             task = asyncio.current_task()
         except RuntimeError:
@@ -95,12 +95,10 @@ class GoalStore:
             if self._driver_owner == owner:
                 yield
                 return
-            descriptor = os.open(self.path.with_name(self.path.name + '.driver.lock'),
-                                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            lease = file_lock(self.path.with_name(self.path.name + '.driver.lock'), blocking=False)
             try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lease.__enter__()
             except BlockingIOError:
-                os.close(descriptor)
                 raise ValueError('此项目的目标已在另一运行中执行，请等待或停止该运行。') from None
             self._driver_owner = owner
         try:
@@ -108,11 +106,12 @@ class GoalStore:
         finally:
             with self._lock:
                 self._driver_owner = None
-                os.close(descriptor)
+                lease.__exit__(None, None, None)
 
     def _load(self) -> dict[str, Goal]:
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            with open_regular_file(self.path, binary=False) as source:
+                payload = json.load(source)
         except (OSError, UnicodeError, json.JSONDecodeError):
             return {}
         goals = {}
@@ -125,7 +124,6 @@ class GoalStore:
         return goals
 
     def _save(self, goals: dict[str, Goal]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         content = []
         for goal in goals.values():
             data = asdict(goal)
@@ -134,26 +132,8 @@ class GoalStore:
                     if isinstance(value, str):
                         data[key] = value.replace(self.api_key, "[密钥已隐藏]")
             content.append(data)
-        descriptor, filename = tempfile.mkstemp(prefix=".goals.", dir=self.path.parent)
-        temporary = Path(filename)
-        try:
-            os.fchmod(descriptor, 0o600)
-            encoded = json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
-            view = memoryview(encoded)
-            while view:
-                written = os.write(descriptor, view)
-                view = view[written:]
-            os.close(descriptor)
-            descriptor = -1
-            os.replace(temporary, self.path)
-            try:
-                os.chmod(self.path, 0o600)
-            except OSError:
-                pass
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-            temporary.unlink(missing_ok=True)
+        encoded = json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
+        atomic_write_bytes(self.path, encoded)
 
     def create(
         self,

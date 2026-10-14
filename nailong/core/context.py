@@ -127,6 +127,29 @@ def _role(message):
     return {'assistant': 'ai', 'user': 'human'}.get(role, role)
 
 
+def reasoning_text(message):
+    """Return the assistant reasoning string replayed by HarnessChatDeepSeek.
+
+    Dict inputs are coerced by LangChain: nested additional_kwargs override the
+    top-level field. Response metadata and non-string values are never sent.
+    """
+    if _role(message) != 'ai':
+        return ''
+    metadata = _field(message, 'additional_kwargs', {}) or {}
+    root_value = message.get('reasoning_content') if isinstance(message, dict) else None
+    value = metadata.get('reasoning_content', root_value)
+    return value if isinstance(value, str) else ''
+
+
+def message_input_text(message):
+    """Text replayed on the current DeepSeek serialization boundary."""
+    content = _field(message, 'content', '')
+    if _role(message) == 'ai' and isinstance(content, list):
+        content = ''.join(block.get('text', '') for block in content
+                          if isinstance(block, dict) and block.get('type') == 'text')
+    return message_text(content) if content is not None else ''
+
+
 def _tool_calls(message):
     calls = (_field(message, 'tool_calls', None) or []) + (_field(message, 'invalid_tool_calls', None) or [])
     metadata = _field(message, 'additional_kwargs', {}) or {}
@@ -137,9 +160,12 @@ def request_report(messages, system_message=None, tools=(), parts=None,
                    actual_main_input=None, factor=1.0, cache=None) -> dict:
     """Account for one actual request, including schemas, arguments and framing.
 
-    ``parts`` labels exact portions of the supplied system content. Missing or
-    stale parts never add input that is absent from the request. Use the raw
-    estimate, rather than the corrected estimate, when observing provider usage.
+    Replayed assistant reasoning is a separate category when nonempty; assistant
+    content blocks follow DeepSeek's text-only serialization to avoid counting
+    dropped reasoning blocks again. ``parts`` labels exact portions of the
+    supplied system content. Missing or stale parts never add input that is
+    absent from the request. Use the raw estimate, rather than the corrected
+    estimate, when observing provider usage.
     """
     from langchain_core.utils.function_calling import convert_to_openai_tool
 
@@ -200,9 +226,11 @@ def request_report(messages, system_message=None, tools=(), parts=None,
             category = 'fixed_memory'
         else:
             category = 'history'
-        content = _field(message, 'content', '')
-        fragments[category].append(message_text(content) if content is not None else '')
+        fragments[category].append(message_input_text(message))
         if role == 'ai':
+            reasoning = reasoning_text(message)
+            if reasoning:
+                fragments.setdefault('reasoning', []).append(reasoning)
             calls = _tool_calls(message)
             if calls:
                 fragments['history'].append(message_text(calls))

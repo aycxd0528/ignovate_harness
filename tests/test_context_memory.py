@@ -20,7 +20,7 @@ class ContextMemoryTests(unittest.TestCase):
     def write(self, scope, content):
         path = self.store.path(scope)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding='utf-8')
+        path.write_text(content, encoding='utf-8', newline='\n')
         return path
 
     def load(self, **kwargs):
@@ -222,7 +222,7 @@ class ContextMemoryTests(unittest.TestCase):
         self.assertTrue(callable(method), 'MemoryStore.read_section is missing')
         outside = self.root.parent / 'unrelated'
         outside.mkdir()
-        (outside / 'context.md').write_text('never expose this', encoding='utf-8')
+        (outside / 'context.md').write_text('never expose this', encoding='utf-8', newline='\n')
         project_dir = self.root / '.nailong'
         project_dir.symlink_to(outside, target_is_directory=True)
         with self.assertRaises(ValueError):

@@ -108,7 +108,7 @@ class ContextFixture(unittest.TestCase):
 
     def window(self,size):
         (self.root/'.nailong').mkdir(exist_ok=True)
-        (self.root/'.nailong/settings.json').write_text(json.dumps({'context_windows':{'private':size}}))
+        (self.root/'.nailong/settings.json').write_text(json.dumps({'context_windows':{'private':size}}), newline='\n')
 
 class MiddlewareTests(ContextFixture):
     def test_duplicate_task_wrapping_has_one_tail_and_exclusive_budget(self):
@@ -343,7 +343,7 @@ class ManagedGraphTests(unittest.IsolatedAsyncioTestCase):
         # Catch a middleware reorder that reserves before task projection.
         (self.root/'.nailong').mkdir(exist_ok=True)
         (self.root/'.nailong/settings.json').write_text(json.dumps({'pricing':{'private':{
-            'input_per_million':1,'cache_hit_per_million':1,'output_per_million':1}}}))
+            'input_per_million':1,'cache_hit_per_million':1,'output_per_million':1}}}), newline='\n')
         objective='修复认证并保留接口：'+'约束'*1200
         self.factory.task_store.begin('cost',objective)
         runtime=await self.factory.async_runtime(thread_id='cost',allowed_tools=set())
@@ -370,13 +370,13 @@ class ManagedGraphTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_actual_memory_refresh_after_tool_step_updates_validity_without_history_injection(self):
         (self.root/'.nailong').mkdir()
-        path=self.root/'.nailong/context.md'; path.write_text('# 核心约定\n使用已有认证模块。')
+        path=self.root/'.nailong/context.md'; path.write_text('# 核心约定\n使用已有认证模块。', newline='\n')
         self.model.responses=[AIMessage(content='',tool_calls=[{'name':'read_file','id':'read','args':{'path':'example.txt'},'type':'tool_call'}]),AIMessage(content='done')]
-        (self.root/'example.txt').write_text('original')
+        (self.root/'example.txt').write_text('original', newline='\n')
         original_generate=self.model._generate
         def generate(messages,stop=None,run_manager=None,**kwargs):
             response=original_generate(messages,stop=stop,run_manager=run_manager,**kwargs)
-            if len(self.model.requests)==1: path.write_text('# 核心约定\n记忆版本已更新。')
+            if len(self.model.requests)==1: path.write_text('# 核心约定\n记忆版本已更新。', newline='\n')
             return response
         runtime=await self.factory.async_runtime(thread_id='one',allowed_tools={'read_file'})
         with patch.object(OfflineModel,'_generate',side_effect=generate):

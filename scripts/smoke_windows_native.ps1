@@ -1,0 +1,50 @@
+#Requires -Version 5.1
+param([Parameter(Mandatory=$true)][string]$Archive)
+$ErrorActionPreference = 'Stop'
+$root = Join-Path $env:RUNNER_TEMP ('ignovate-native-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $root | Out-Null
+Expand-Archive -LiteralPath $Archive -DestinationPath $root
+$bundle = Get-ChildItem -LiteralPath $root -Directory | Select-Object -First 1
+$env:IGNOVATE_INSTALL_HOME = Join-Path $root 'application with spaces'
+$env:IGNOVATE_WINDOWS_BIN_DIR = Join-Path $root 'bin'
+$env:IGNOVATE_CONFIG_DIR = Join-Path $root 'config'
+$env:IGNOVATE_NO_MODIFY_PATH = '1'
+$env:PYTHONUTF8 = '1'
+$env:PYTHONIOENCODING = 'utf-8'
+# Force real downloads rather than using the CI image's Python / uv / rg.
+$env:UV_PYTHON_PREFERENCE = 'only-managed'
+$env:Path = "$env:SystemRoot\System32;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
+& (Join-Path $bundle.FullName 'install.ps1')
+$exe = Join-Path $env:IGNOVATE_WINDOWS_BIN_DIR 'ignovate.exe'
+& $exe set up --environment-only
+if ($LASTEXITCODE -ne 0) { throw "Fresh setup failed: $LASTEXITCODE" }
+# A broken private tool must be repaired, even when its filename is present.
+[IO.File]::WriteAllText((Join-Path $env:IGNOVATE_INSTALL_HOME 'tools\rg.exe'), 'interrupted tool copy')
+& $exe set up --environment-only
+if ($LASTEXITCODE -ne 0) { throw "Repeat setup failed: $LASTEXITCODE" }
+& $exe --help
+if ($LASTEXITCODE -ne 0) { throw 'CLI help failed.' }
+$doctor = & $exe doctor --output-format json
+if ($LASTEXITCODE -notin @(0,1)) { throw 'Doctor failed.' }
+$report = ($doctor -join "`n") | ConvertFrom-Json
+foreach ($check in $report.checks) {
+    if ($check.name -in @('python','textual','mcp','rg') -and $check.status -ne 'ok') { throw "Doctor check failed: $($check.name)" }
+}
+$version = [IO.File]::ReadAllText((Join-Path $bundle.FullName 'VERSION')).Trim()
+$python = Join-Path $env:IGNOVATE_INSTALL_HOME "venvs\$version\Scripts\python.exe"
+$env:Path = "$(Join-Path $env:IGNOVATE_INSTALL_HOME 'tools');$env:Path"
+# Copy only acceptance tests outside the checkout: imports must come from wheel.
+$tests = Join-Path $root 'acceptance'
+New-Item -ItemType Directory -Path $tests | Out-Null
+foreach ($name in @('test_native_tools.py','test_native_file_backend.py','test_native_processes.py','test_native_plain.py','test_result_archive.py','test_windows_terminal_ui.py','platform_fixtures.py')) {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "..\tests\$name") -Destination $tests
+}
+Push-Location $root
+try {
+    . (Join-Path $bundle.FullName 'common.ps1')
+    Invoke-IgnovateChecked $python @('-c', 'import sys, local_tools; assert sys.platform == "win32"; assert sys.prefix != sys.base_prefix; print(local_tools.__file__)')
+    # Record native shell startup time before the bounded process acceptance tests.
+    Invoke-IgnovateChecked $python @('-c', 'import json,os,time,sys; from nailong.core.process_io import capture_command_output; start=time.monotonic(); command="& " + chr(39) + sys.executable + chr(39) + " -c " + chr(39) + "print(123)" + chr(39); output,truncated,timed_out,code=capture_command_output(command,timeout=30); print(json.dumps(dict(elapsed=time.monotonic()-start,output=output,timed_out=timed_out,exit_code=code))); assert code == 0 and not timed_out and "123" in output')
+    & $python -m unittest discover -s $tests -v
+    if ($LASTEXITCODE -ne 0) { throw 'Native installed-wheel acceptance failed.' }
+} finally { Pop-Location }

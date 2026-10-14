@@ -28,7 +28,7 @@ class SessionsContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.rename('one','bad\nname'),'badname')
         for name in ['', 'x'*81]:
             with self.assertRaises(ValueError): restored.rename('one',name)
-        (restored.root/'session-metadata.json').write_text('{bad')
+        (restored.root/'session-metadata.json').write_text('{bad', newline='\n')
         self.assertEqual(len(restored.list_sessions()),2)
 
     async def test_filtered_indices_remain_bound_to_displayed_snapshot(self):
@@ -45,7 +45,7 @@ class SessionsContextTests(unittest.IsolatedAsyncioTestCase):
         path=Path(result['path']); content=path.read_text()
         self.assertIn('fix auth bug',content); self.assertNotIn('private-key',content); self.assertNotIn('secret command',content)
         async def reject(*args): return 'reject'
-        path.write_text('keep')
+        path.write_text('keep', newline='\n')
         result=await self.actions().export('one',str(path),approval=reject)
         self.assertFalse(result['written']); self.assertEqual(path.read_text(),'keep')
         with self.assertRaises(ValueError): await self.actions().export('one','../escape.md')

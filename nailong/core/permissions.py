@@ -16,6 +16,18 @@ import local_tools
 from nailong.tools.registry import get_tool_specs
 
 
+def command_for_permission(arguments):
+    """Display/match argv as Bash without changing the approved arguments."""
+    argv=arguments.get('argv')
+    command=arguments.get('command','')
+    if argv is None:
+        return str(command)
+    if (not isinstance(argv,list) or not argv or any(not isinstance(a,str) or '\0' in a for a in argv)
+            or not argv[0] or (command and str(command).strip())):
+        return None
+    return shlex.join(argv)
+
+
 class Decision(StrEnum):
     ALLOW = "allow"
     ASK = "ask"
@@ -141,8 +153,12 @@ class PermissionEngine:
         if name.startswith('mcp__'):
             return f'{name}(*)'
         if name == "run_command":
-            command = str(args.get("command", "")).strip()
-            if not command or self._split_shell_command(command) is None:
+            command = (command_for_permission(args) or "").strip()
+            if args.get('argv') is not None and (command != ' '.join(command.split()) or any(
+                    character in '*?[]' or not character.isprintable() for character in command)):
+                # Generated grants must preserve literals through rule matching and parsing.
+                return f"{rule_name}(<无法安全生成规则>)"
+            if not command or (args.get('argv') is None and self._split_shell_command(command) is None):
                 return f"{rule_name}(<无法安全生成规则>)"
             return f"{rule_name}({command})"
         path = args.get("path")
@@ -165,6 +181,13 @@ class PermissionEngine:
         mode: str = "default",
         tool_spec=None,
     ) -> PermissionResult:
+        command_segments=None
+        if name == 'run_command':
+            argv_mode=args.get('argv') is not None
+            command=command_for_permission(args)
+            if command is None:
+                return PermissionResult(Decision.DENY, '命令参数无效；command和argv必须只指定一种。')
+            command_segments=[command] if argv_mode else self._split_shell_command(command)
         rule_name = _TOOL_RULE_NAMES.get(name, name)
         spec = tool_spec if tool_spec is not None else _TOOL_SPECS.get(name)
         if spec is not None and spec.name != name:
@@ -224,7 +247,7 @@ class PermissionEngine:
         matching = [
             rule
             for rule in candidates
-            if self._rule_matches(rule, rule_name, name, args, normalized_path)
+            if self._rule_matches(rule, rule_name, name, args, normalized_path, command_segments=command_segments)
         ]
         denied = next((rule for rule in matching if rule.effect == "deny"), None)
         if denied:
@@ -237,14 +260,15 @@ class PermissionEngine:
         allowed = next((rule for rule in matching if rule.effect == "allow"), None)
         allowed_text = allowed.text if allowed else None
         if rule_name == "Bash":
-            segments = self._split_shell_command(str(args.get("command", "")))
+            segments = command_segments
             allow_rules = [rule for rule in candidates if rule.effect == "allow" and rule.tool.casefold() in {"*", rule_name.casefold()}]
             segment_rules = [
                 [
                     rule
                     for rule in allow_rules
                     if rule.specifier is not None
-                    and self._command_matches(rule.specifier, segment)
+                    and self._command_matches(rule.specifier, segment,
+                                              literal_argv=args.get('argv') is not None)
                 ]
                 for segment in segments or []
             ]
@@ -351,6 +375,7 @@ class PermissionEngine:
         tool_name: str,
         args: dict,
         normalized_path: str | None,
+        *, command_segments=None,
     ) -> bool:
         if tool_name.startswith('mcp__'):
             if rule.tool not in {'*', tool_name}:
@@ -360,11 +385,13 @@ class PermissionEngine:
         if rule.specifier is None or rule.specifier == "*":
             return True
         if rule_name == "Bash":
-            command = str(args.get("command", "")).strip()
-            segments = self._split_shell_command(command)
+            command = (command_for_permission(args) or "").strip()
+            segments = command_segments if command_segments is not None else self._split_shell_command(command)
             if segments is None:
                 return rule.effect in {"deny", "ask"} and rule.specifier == "*"
-            return any(self._command_matches(rule.specifier, segment) for segment in segments)
+            return any(self._command_matches(rule.specifier, segment,
+                                            literal_argv=args.get('argv') is not None)
+                       for segment in segments)
         if normalized_path is None:
             return False
         pattern = rule.specifier.removeprefix("./")
@@ -379,9 +406,11 @@ class PermissionEngine:
         return False
 
     @staticmethod
-    def _command_matches(pattern: str, command: str) -> bool:
-        candidate = " ".join(command.split())
-        allowed = " ".join(pattern.split())
+    def _command_matches(pattern: str, command: str, *, literal_argv=False) -> bool:
+        # Whitespace inside a quoted argv value is part of the executable or
+        # argument. Keep legacy shell normalization only for shell input.
+        candidate = command if literal_argv else " ".join(command.split())
+        allowed = pattern.strip() if literal_argv else " ".join(pattern.split())
         if allowed.endswith(":*"):
             prefix = allowed[:-2].rstrip()
             return candidate == prefix or (

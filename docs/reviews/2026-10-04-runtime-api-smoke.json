@@ -1,0 +1,60 @@
+{
+  "model": "deepseek-flash",
+  "managed_budget_usd": 0.15,
+  "managed_spent_usd": 0.004200924,
+  "scenarios": [
+    {
+      "scenario": "real_read_edit_and_bound_verify",
+      "ok": true,
+      "file_changed": true,
+      "verification": "passed",
+      "delivery": "verified",
+      "approvals": [
+        {
+          "name": "edit_file",
+          "allowed": true
+        },
+        {
+          "name": "run_command",
+          "allowed": true
+        }
+      ]
+    },
+    {
+      "scenario": "real_static_review_input_coverage",
+      "ok": true,
+      "delivery": "reviewed"
+    },
+    {
+      "scenario": "real_approval_denial_zero_write",
+      "ok": true,
+      "approval_count": 1,
+      "file_exists": false,
+      "evidence_status": [
+        "denied"
+      ]
+    },
+    {
+      "scenario": "separate_process_recovery",
+      "ok": true,
+      "task_id": "da7064382495458687268cc259af0efa",
+      "delivery": "verified",
+      "objective_preserved": true,
+      "criteria": 2
+    },
+    {
+      "scenario": "real_headless_plain_answer",
+      "ok": true,
+      "exit_code": 0,
+      "status": "success",
+      "tools": 0,
+      "usage": {
+        "input_tokens": 9811,
+        "output_tokens": 4,
+        "cache_hit_tokens": 1408,
+        "total_tokens": 9815
+      }
+    }
+  ],
+  "all_passed": true
+}

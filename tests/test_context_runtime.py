@@ -37,7 +37,7 @@ class RuntimeContextTests(unittest.IsolatedAsyncioTestCase):
 
     def configure_window(self,size):
         (self.root/'.nailong').mkdir(exist_ok=True)
-        (self.root/'.nailong/settings.json').write_text(json.dumps({'context_windows':{'private':size}}))
+        (self.root/'.nailong/settings.json').write_text(json.dumps({'context_windows':{'private':size}}), newline='\n')
 
     async def ask(self,thread='one',text='读取项目',allowed=None):
         runtime=await self.factory.async_runtime(thread_id=thread,allowed_tools=allowed)
@@ -61,7 +61,7 @@ class RuntimeContextTests(unittest.IsolatedAsyncioTestCase):
     async def test_every_tool_loop_call_clears_completed_output_in_checkpoint(self):
         self.configure_window(15000)
         self.model.responses=[AIMessage(content='',tool_calls=[{'name':'read_file','args':{'path':f'{i}.txt'},'id':f'r{i}','type':'tool_call'}]) for i in range(3)]+[AIMessage(content='done')]
-        for i in range(3): (self.root/f'{i}.txt').write_text('调查内容'*2800)
+        for i in range(3): (self.root/f'{i}.txt').write_text('调查内容'*2800, newline='\n')
         result=await self.ask(allowed={'read_file'})
         self.assertEqual(len(self.model.requests),4)
         final_tools=[m for m in self.model.requests[-1] if isinstance(m,ToolMessage)]

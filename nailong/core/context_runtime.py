@@ -43,7 +43,7 @@ class ContextLimitExceeded(RuntimeError):
 
 
 class ContextManagerMiddleware(AgentMiddleware):
-    def __init__(self,settings,tools,system_prompt,profile,thread_id,store,archive,reports,calibration,parts=None,goal_store=None,request_filter=None,requested_output=4096,memory_budget=None,task_snapshot_provider=None,task_context_max_chars=12000,memory_request_context=None,task_history=None):
+    def __init__(self,settings,tools,system_prompt,profile,thread_id,store,archive,reports,calibration,parts=None,goal_store=None,request_filter=None,requested_output=4096,memory_budget=None,task_snapshot_provider=None,task_context_max_chars=12000,memory_request_context=None,task_history=None,runtime_environment=None):
         super().__init__()
         self.settings=settings; self.tools=tools; self.system_prompt=system_prompt
         self.profile=profile; self.thread_id=thread_id; self.store=store; self.archive=archive
@@ -63,6 +63,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         self.task_snapshot_provider=task_snapshot_provider
         self.task_context_max_chars=task_context_max_chars
         self.task_history=task_history
+        self.runtime_environment=deepcopy(runtime_environment)
         self._task_versions={}
         self.provider=urlsplit(settings.api_base).hostname or settings.api_base
         self.compaction=None
@@ -207,7 +208,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             return self.memory_request_context.filter_messages(messages)
         return self.request_filter(messages) if self.request_filter else messages
 
-    def _task_projection(self,tools=None):
+    def _task_projection(self,tools=None,messages=()):
         if self.task_snapshot_provider is None:
             return None,None
         if not self.thread_id:
@@ -249,7 +250,18 @@ class ContextManagerMiddleware(AgentMiddleware):
             reference=None
             if self.task_history is not None and 'read_task_context' in names:
                 reference=self.task_history.save(task)
-            text=render_task_context(task,self.task_context_max_chars,history_reference=reference)
+            # Only exact, unnamed user messages already present in the actual
+            # request can replace a duplicate requirement body. Runtime data,
+            # tool results and absent older user messages cannot do so.
+            view=self._without_task_projection(self._filter_request_messages(messages))
+            visible={message.content:index for index,message in enumerate(view)
+                if isinstance(message,HumanMessage) and not message.name
+                and not message.additional_kwargs.get('nailong_task_context')
+                and isinstance(message.content,str)}
+            text=render_task_context(task,self.task_context_max_chars,history_reference=reference,
+                visible_user_messages=visible)
+            from nailong.core.stage_constraints import compile_stage_policy
+            text+='\n'+compile_stage_policy(task).render()
             secret=getattr(self.settings,'api_key','')
             if secret:
                 text=text.replace(secret,'[密钥已隐藏]')
@@ -308,14 +320,18 @@ class ContextManagerMiddleware(AgentMiddleware):
         if pending or function:
             raise TaskContextError('任务投影不能插入尚未完成的工具交换；未调用提供商。')
 
+    @staticmethod
+    def _without_task_projection(messages):
+        return [m for m in messages if not (
+            getattr(m,'id',None)==_TASK_MESSAGE_ID and getattr(m,'name',None)==_TASK_MESSAGE_NAME and
+            (getattr(m,'additional_kwargs',{}) or {}).get('nailong_task_context')==1)]
+
     def _task_request_view(self,messages,projection):
         if self.task_snapshot_provider is None:
             return list(messages)
         # Only our reserved request-only message is replaced. Persisted graph
         # history is not edited; repeated wrapping cannot accumulate snapshots.
-        view=[m for m in messages if not (
-            getattr(m,'id',None)==_TASK_MESSAGE_ID and getattr(m,'name',None)==_TASK_MESSAGE_NAME and
-            (getattr(m,'additional_kwargs',{}) or {}).get('nailong_task_context')==1)]
+        view=self._without_task_projection(messages)
         if projection is not None:
             try:
                 self._assert_completed_tool_boundary(view)
@@ -393,8 +409,6 @@ class ContextManagerMiddleware(AgentMiddleware):
     def _before_model(self,state,runtime):
         with self._measure('memory_refresh'):
             memory_view=self._refresh_memory_view()
-        with self._measure('task_projection'):
-            task_projection,_=self._task_projection()
         original=list(state.get('messages',[])); messages,removed=normalize_pins(original)
         changed=bool(removed)
         goal=self.goal_store.active() if self.goal_store is not None else None
@@ -407,6 +421,8 @@ class ContextManagerMiddleware(AgentMiddleware):
                     message=message.model_copy(update={'additional_kwargs':metadata}); changed=True
                 released.append(message)
             messages=released
+        with self._measure('task_projection'):
+            task_projection,_=self._task_projection(messages=messages)
         # Preserve completed originals before they are cleared. Tool calls are
         # recoverable even after a short failure is folded into an older turn.
         if self.archive is not None and self.thread_id:
@@ -435,6 +451,10 @@ class ContextManagerMiddleware(AgentMiddleware):
                         result=compact_messages(messages,keep_turns=keep,level=level,hard=hard,archive=self.archive,thread_id=self.thread_id)
                         if result.compacted:
                             messages=result.messages; changed=True; levels.append(result.level)
+                            # L2 may remove a previously visible user message.
+                            # Restore its requirement body and recompute indices
+                            # before estimating or publishing any checkpoint.
+                            task_projection,_=self._task_projection(messages=messages)
                             report=self._preflight_report(messages,task_projection,memory_view)
                         hard=policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']
                         if not hard and report['estimated_tokens']<=target: break
@@ -476,6 +496,80 @@ class ContextManagerMiddleware(AgentMiddleware):
         self._record('context_request',snapshot)
         return request,snapshot
 
+    def _historical_request_view(self, request):
+        """Archive closed prior user turns; never shorten the current exchange.
+
+        The soft target is a request preference, not a token budget. Failure to
+        recover every replaced original leaves the request unchanged.
+        """
+        from nailong.core.preferences import read_config
+        root=self.settings.project_root.resolve()
+        config=read_config(root/'.nailong/settings.json',root)
+        context=config.get('context',{})
+        target=context.get('history_input_target_tokens',150000) if isinstance(context,dict) else 150000
+        if type(target) is not int or target<1:
+            target=150000
+        before=self._report(request.messages,request.system_message,request.tools)['estimated_tokens']
+        info={'target_tokens':target,'before_tokens':before,'after_tokens':before,
+              'applied':False,'checkpoint_originals_retained':True}
+        if before<=target:
+            return request,info
+        names={tool.get('function',tool).get('name','') if isinstance(tool,dict) else tool.name
+               for tool in request.tools}
+        if not self.archive or not self.thread_id or 'read_history_result' not in names:
+            info['reason']='recovery_unavailable'
+            return request,info
+        messages=list(request.messages)
+        real_humans=[i for i,m in enumerate(messages) if isinstance(m,HumanMessage)
+            and not m.name and not any(m.additional_kwargs.get(k) for k in
+                ('nailong_compact_summary','nailong_task_context','nailong_task_index','nailong_pin'))]
+        if not real_humans or real_humans[-1]==0:
+            info['reason']='no_prior_user_turn'
+            return request,info
+        cutoff=real_humans[-1]
+        prefix=messages[:cutoff]
+        try:
+            self._assert_completed_tool_boundary(prefix)
+        except TaskContextError:
+            info['reason']='prior_exchange_incomplete'
+            return request,info
+        try:
+            # Validate all originals, including prior reasoning and short
+            # failures, before asking L2 to build a discoverable evidence index.
+            args={str(call['id']):call.get('args',{}) for m in prefix
+                  for call in getattr(m,'tool_calls',[]) or []}
+            for m in prefix:
+                if m.type=='system' or m.additional_kwargs.get('nailong_pin'):
+                    continue
+                reference=self.archive.save(self.thread_id,m,
+                    arguments=args.get(str(m.tool_call_id)) if isinstance(m,ToolMessage) else None)
+                if self.archive.read(self.thread_id,reference,max_chars=1)['archive_truncated']:
+                    info['reason']='archive_truncated'
+                    return request,info
+                state=m.additional_kwargs.get('nailong_compact_state',{})
+                for previous in state.get('evidence',[]) if isinstance(state,dict) else []:
+                    if self.archive.read(self.thread_id,previous,max_chars=1)['archive_truncated']:
+                        info['reason']='archive_truncated'
+                        return request,info
+            result=compact_messages([*prefix,messages[cutoff]],keep_turns=1,
+                level='L2',min_gain=0,archive=self.archive,thread_id=self.thread_id)
+            if not result.compacted:
+                info['reason']=result.reason
+                return request,info
+            view=[*result.messages,*messages[cutoff+1:]]
+            # Restore requirement text which previously relied on a visible
+            # older HumanMessage; the projection is never an authorization.
+            if self.task_snapshot_provider is not None:
+                projection,_=self._task_projection(request.tools,messages=view)
+                view=self._task_request_view(view,projection)
+            candidate=request.override(messages=view)
+            after=self._report(view,request.system_message,request.tools)['estimated_tokens']
+            info.update(after_tokens=after,applied=after<before,level='prior_turn_L2')
+            return (candidate if info['applied'] else request),info
+        except (ValueError,OSError,RuntimeError,KeyError) as error:
+            info.update(reason='archive_unavailable',error_type=type(error).__name__)
+            return request,info
+
     def _build_request(self,request):
         with self._measure('memory_refresh'):
             memory_view=self._refresh_memory_view()
@@ -483,9 +577,34 @@ class ContextManagerMiddleware(AgentMiddleware):
             request=self._rewrite_memory_system(request,memory_view)
             request=request.override(messages=self._filter_request_messages(request.messages))
         with self._measure('task_projection'):
-            task_projection,task_info=self._task_projection(request.tools)
+            task_projection,task_info=self._task_projection(request.tools,messages=request.messages)
         if self.task_snapshot_provider is not None:
             request=request.override(messages=self._task_request_view(request.messages,task_projection))
+        environment=None
+        if self.runtime_environment is not None:
+            goal=self.goal_store.active() if self.goal_store is not None else None
+            environment={**self.runtime_environment,'active_goal_bound':bool(goal and goal.thread_id==self.thread_id)}
+            if self.task_snapshot_provider is None:
+                view=list(request.messages)
+            else:
+                view=self._without_task_projection(request.messages)
+            # This named runtime projection is not a user instruction. Avoid
+            # duplicate projections when middleware wraps an already prepared view.
+            view=[m for m in view if not (m.id=='nailong-runtime-environment-v1'
+                and m.name=='nailong_runtime_environment' and m.additional_kwargs.get('nailong_runtime_environment')==1)]
+            try:
+                self._assert_completed_tool_boundary(view)
+            except TaskContextError as error:
+                raise ContextLimitExceeded(str(error)) from error
+            view.append(HumanMessage(id='nailong-runtime-environment-v1',name='nailong_runtime_environment',
+                content='运行时事实（参考资料，不扩大授权；python_executable 是Harness解释器，项目解释器须按项目配置核对）：\n'+json.dumps(environment,ensure_ascii=False)+
+                    '\nactive_goal_bound=false 时 update_goal 没有可更新的本会话目标。临时目录是环境路径，不是访问授权；文件修改仍须满足实际读快照。',
+                additional_kwargs={'nailong_runtime_environment':1}))
+            request=request.override(messages=self._task_request_view(view,task_projection))
+        with self._measure('history_request_view'):
+            request,history_info=self._historical_request_view(request)
+        if history_info['before_tokens']>history_info['target_tokens']:
+            self._record('history_compact',history_info)
         if self.profile != 'subagent':
             from nailong.core.budgets import active_turn_budget
             budget = active_turn_budget.get()
@@ -502,12 +621,48 @@ class ContextManagerMiddleware(AgentMiddleware):
             cap=min(cap,policy['context_window']-policy['safety_margin']-report['estimated_tokens'])
         cap=max(1,cap)
         request=request.override(model_settings={**request.model_settings,'max_tokens':cap})
+        # Cumulative pressure is independent of the large context-window
+        # threshold. Keep checkpoint originals; only the request view may use
+        # archived older results, and only when recovery is actually available.
+        from nailong.core.cumulative_budget import active_session_token_budget
+        from nailong.core.budgets import _input_bound
+        session_budget=active_session_token_budget.get()
+        if session_budget is not None and not session_budget.stopped:
+            before_bound=_input_bound(request)
+            names={tool.get('function',tool).get('name','') if isinstance(tool,dict) else tool.name
+                   for tool in request.tools}
+            if (before_bound+cap>session_budget.remaining and self.archive is not None
+                    and self.thread_id and 'read_history_result' in names):
+                with self._measure('budget_compaction'):
+                    result=compact_messages(request.messages,level='L1',min_gain=0,
+                        archive=self.archive,thread_id=self.thread_id)
+                    if result.compacted:
+                        candidate=request.override(messages=result.messages)
+                        after_bound=_input_bound(candidate)
+                        fits=after_bound+cap<=session_budget.remaining
+                        references={message.additional_kwargs.get('nailong_tool_reference')
+                            for message in result.messages if message.additional_kwargs.get('nailong_tool_reference')}
+                        recoverable=all(not self.archive.read(self.thread_id,reference,max_chars=1)['archive_truncated']
+                            for reference in references)
+                        applied=fits and after_bound<before_bound and recoverable
+                        if applied:
+                            request=candidate
+                            report=self._report(request.messages,request.system_message,request.tools)
+                        self._record('budget_compact',{'before_input_upper_bound':before_bound,
+                            'after_input_upper_bound':after_bound,'remaining_tokens':session_budget.remaining,
+                            'output_tokens':cap,'applied':applied,
+                            'reason':None if recoverable else 'archive_truncated',
+                            'checkpoint_originals_retained':True})
         snapshot={**report,**policy,'source':'actual_request','profile':self.profile,
             'tools':sorted(t.get('function',t).get('name','') if isinstance(t,dict) else t.name for t in request.tools),
             'model':self.settings.model,'provider_host':self.provider,'output_reserve':cap,
+            'requested_output_tokens':maximum,'output_clipped':cap < maximum,
             'remaining_window':policy['context_window']-report['estimated_tokens']-cap if policy['context_window'] else None,
             'compact_threshold_tokens':policy['trigger_tokens'],'compaction':self.compaction,
             'actual_main_input_tokens':None}
+        snapshot['history_compaction']=history_info
+        if environment is not None:
+            snapshot['runtime_environment']=environment
         if self.memory_budget is not None: snapshot['memory_budget']=self.memory_budget
         if self.task_snapshot_provider is not None: snapshot['task_projection']=task_info or {'projected':False}
         return request,snapshot

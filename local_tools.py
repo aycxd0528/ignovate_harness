@@ -8,9 +8,7 @@ an operating-system sandbox.
 
 import os
 import stat
-import codecs
-import selectors
-import signal
+import asyncio
 import subprocess
 import time
 from contextlib import contextmanager
@@ -18,7 +16,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
-from nailong.tools.results import HeadTailBuffer
+from nailong.tools.results import HeadTailBuffer, MAX_ARTIFACT_CHARS
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -30,6 +28,7 @@ MAX_WRITE_CHARS = 120_000
 MAX_SEARCH_FILES = 2_000
 MAX_SEARCH_FILE_CHARS = 200_000
 _active_project_root: ContextVar[Path | None] = ContextVar("local_tool_project_root", default=None)
+_command_result_archive: ContextVar[object | None] = ContextVar("command_result_archive", default=None)
 @dataclass
 class _FileAccessGrant:
     root: Path
@@ -76,12 +75,15 @@ def use_file_access(root: Path, *, unrestricted: bool = False):
 
 def display_file_path(path: Path, root: Path | None = None) -> str:
     root = Path(root or selected_project_root()).resolve()
-    return path.relative_to(root).as_posix() if path.is_relative_to(root) else path.as_posix()
+    return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
 
 
 def open_regular_file(path: Path, *, binary: bool = True):
     """Open a previously resolved path without following replaced path components."""
     path = Path(path)
+    if os.name == "nt":
+        from nailong.core.safe_files import open_regular_file as safe_open
+        return safe_open(path, binary=binary)
     if not path.is_absolute() or not hasattr(os, 'O_NOFOLLOW') or os.open not in os.supports_dir_fd:
         raise OSError('当前平台无法安全打开文件路径。')
     parent = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
@@ -124,6 +126,25 @@ def resolve_file_path(path: str, root: Path, *, allow_missing: bool = False) -> 
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = root / candidate
+
+    if os.name == "nt":
+        from nailong.core.safe_files import validate_windows_path, is_link_or_reparse
+        # Normalize ordinary . / .. paths only after rejecting namespace aliases.
+        from pathlib import PureWindowsPath
+        raw = os.fspath(path)
+        if PureWindowsPath(raw).drive and not PureWindowsPath(raw).is_absolute():
+            raise ValueError("Windows 路径不能使用盘符相对形式。")
+        if raw.startswith(("\\\\", "//")) or ":" in raw[2:]:
+            raise ValueError("Windows 路径不能使用网络、设备命名空间或备用数据流。")
+        # Validate each real component before abspath discards relative navigation.
+        for component in candidate.parts[1:]:
+            if component not in {".", ".."}:
+                validate_windows_path(str(Path(candidate.anchor) / component))
+        candidate = Path(os.path.abspath(candidate))
+        validate_windows_path(candidate)
+        for ancestor in (*reversed(candidate.parents), candidate):
+            if is_link_or_reparse(ancestor):
+                raise ValueError("文件路径不能被链接或重解析点重定向。")
 
     lexical_relative = candidate.relative_to(root) if candidate.is_relative_to(root) else candidate
     if not unrestricted and _is_protected(lexical_relative):
@@ -205,7 +226,7 @@ def read_file(path: str, max_chars: int = MAX_FILE_CHARS) -> dict:
         if not target.is_file():
             return {"ok": False, "error": "目标不是普通文件。"}
         maximum = _safe_limit(max_chars, MAX_FILE_CHARS)
-        with target.open("r", encoding="utf-8") as source:
+        with open_regular_file(target, binary=False) as source:
             content = source.read(maximum + 1)
         truncated = len(content) > maximum
         return {
@@ -244,100 +265,195 @@ def _command_environment() -> dict:
     return {key: value for key, value in os.environ.items() if key != "DEEPSEEK_API_KEY"}
 
 
-def _kill_process_group(process: subprocess.Popen) -> None:
-    if os.name == "posix":
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    elif process.poll() is None:
-        process.kill()
+@contextmanager
+def use_command_result_archive(archive):
+    """Use the execution context's existing output capability, then restore its scope."""
+    token = _command_result_archive.set(archive)
+    try:
+        yield
+    finally:
+        _command_result_archive.reset(token)
 
 
-def _capture_command_output(command: str, timeout: int) -> tuple[str, bool, bool, int]:
-    process = subprocess.Popen(
-        command,
-        shell=True,
-        cwd=selected_project_root(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        env=_command_environment(),
-        start_new_session=(os.name == "posix"),
-        bufsize=0,
-    )
-    output = HeadTailBuffer(MAX_OUTPUT_CHARS)
-    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
-    timed_out = False
-    deadline = time.monotonic() + timeout
-    cleanup_deadline = None
+class _CommandOutput:
+    """Stream-redact before bounding; retain at most the existing artifact budget."""
 
-    with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ)
-        while selector.get_map():
-            now = time.monotonic()
-            if not timed_out and now >= deadline:
-                timed_out = True
-                cleanup_deadline = now + 1.0
-                _kill_process_group(process)
+    def __init__(self):
+        self.archive = _command_result_archive.get()
+        self.preview = HeadTailBuffer(MAX_OUTPUT_CHARS)
+        self.parts = []
+        self.archived_chars = 0
+        self.total_chars = 0
+        self.redacted_chars = 0
+        self.pending = ""
+        self.secrets = sorted({secret for secret in (
+            os.environ.get("DEEPSEEK_API_KEY", ""), getattr(self.archive, "api_key", "")) if secret},
+            key=len, reverse=True)
+        self.overlap = max((len(secret) - 1 for secret in self.secrets), default=0)
 
-            if timed_out:
-                remaining = cleanup_deadline - now
-                if remaining <= 0:
-                    break
-                wait_for = min(remaining, 0.1)
-            else:
-                wait_for = max(0.0, deadline - now)
+    def append(self, text):
+        self.total_chars += len(text)
+        text = self.pending + text
+        for secret in self.secrets:
+            text = text.replace(secret, "[密钥已隐藏]")
+        split = max(0, len(text) - self.overlap)
+        self.pending = text[split:]
+        self._store(text[:split])
 
-            events = selector.select(wait_for)
-            if not events:
-                continue
-            for key, _ in events:
-                chunk = os.read(key.fd, 4096)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    key.fileobj.close()
-                    continue
-                output.append(decoder.decode(chunk, final=False))
+    def _store(self, text):
+        self.preview.append(text)
+        self.redacted_chars += len(text)
+        if self.archive is not None:
+            retained = text[:max(0, MAX_ARTIFACT_CHARS - self.archived_chars)]
+            if retained:
+                self.parts.append(retained)
+                self.archived_chars += len(retained)
 
-    if process.poll() is None and not timed_out:
-        remaining = deadline - time.monotonic()
-        if remaining > 0:
-            try:
-                process.wait(timeout=remaining)
-            except subprocess.TimeoutExpired:
-                timed_out = True
+    def result(self):
+        self._store(self.pending)
+        self.pending = ""
+        metadata = {"artifact_complete": False, "artifact_chars": self.archived_chars,
+                    "original_chars": self.redacted_chars}
+        if self.archive is None:
+            metadata["artifact_error"] = "当前执行上下文未配置完整输出归档。"
         else:
-            timed_out = True
+            # An extra character lets ResultArchive retain its own incomplete
+            # flag for paging, rather than declaring our bounded prefix complete.
+            content = "".join(self.parts)
+            if self.redacted_chars > self.archived_chars:
+                content += " "
+            try:
+                metadata.update(self.archive.save(content))
+                metadata["original_chars"] = self.redacted_chars
+            except (OSError, ValueError):
+                metadata["artifact_error"] = "完整输出未能归档。"
+        return {"output": self.preview.value(), "output_truncated": self.preview.truncated,
+                "output_chars": self.total_chars, "output_archive": metadata}
 
-    if process.poll() is None:
-        _kill_process_group(process)
-    try:
-        process.wait(timeout=1.0)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
 
-    output.append(decoder.decode(b"", final=True))
-    return output.value(), output.truncated, timed_out, process.returncode
+def _start_command_capture(invocation, mode):
+    from nailong.core.process_io import PipeCapture
+    output = _CommandOutput()
+    # The output callback owns the redacted preview and archive. Keep only a
+    # single unused character in PipeCapture's ordinary preview buffer.
+    capture = PipeCapture(invocation, shell=mode == "shell", cwd=selected_project_root(),
+                          env=_command_environment(), max_output_chars=1, on_stdout=output.append)
+    return capture, output
 
 
-def run_command(command: str, timeout_seconds: int = 30) -> dict:
-    """Run a shell command in the project after CLI approval; this is not a sandbox."""
-    if not command or not command.strip():
-        return {"ok": False, "error": "命令不能为空。"}
+def _command_failure(message, expected_exit_code, *, code="invalid_parameters"):
+    return {"ok": False, "error": message, "error_code": code, "started": False,
+            "completed": False, "exit_code": None, "exit_code_matches": False,
+            "expected_exit_code": expected_exit_code if type(expected_exit_code) is int else None,
+            "timed_out": False, "cancelled": False, "output": "", "output_truncated": False}
+
+
+def _command_input(command, argv, expected_exit_code):
+    if type(expected_exit_code) is not int:
+        return None, "expected_exit_code 必须是整数。"
+    if not isinstance(command, str) or "\x00" in command:
+        return None, "command 必须是不含空字符的字符串。"
+    if argv is not None:
+        if command != "":
+            return None, "command 与 argv 只能提供一个。"
+        if not isinstance(argv, (list, tuple)) or not 1 <= len(argv) <= 256:
+            return None, "argv 必须是包含 1–256 个字符串的数组。"
+        if any(not isinstance(item, str) or "\x00" in item for item in argv) or not argv[0].strip():
+            return None, "argv 必须包含有效的程序名及不含空字符的字符串参数。"
+        if sum(len(item) + 1 for item in argv) > 4_000:
+            return None, "argv 总长度不能超过 4,000 个字符。"
+        return list(argv), None
+    if not command.strip():
+        return None, "命令不能为空。"
     if len(command) > 4_000:
-        return {"ok": False, "error": "命令不能超过 4,000 个字符。"}
-    timeout = _safe_limit(timeout_seconds, 30)
+        return None, "命令不能超过 4,000 个字符。"
+    return command, None
+
+
+def _command_result(capture, output, expected_exit_code, mode, *, timed_out=False, cancelled=False):
+    exit_code = capture.process.returncode
+    matched = exit_code == expected_exit_code
+    return {"ok": not timed_out and not cancelled and matched,
+            "started": True, "completed": not timed_out and not cancelled,
+            "execution_mode": mode, "shell": mode == "shell",
+            "exit_code": exit_code, "expected_exit_code": expected_exit_code,
+            "exit_code_matches": matched, "timed_out": timed_out, "cancelled": cancelled,
+            **output.result()}
+
+
+def _capture_command_output(command, timeout, *, expected_exit_code=0, with_metadata=False):
+    """Keep the legacy capture tuple while allowing the adapter to retain metadata."""
+    mode = "shell" if isinstance(command, str) else "argv"
+    capture, output = _start_command_capture(command, mode)
+    deadline = time.monotonic() + timeout
+    timed_out = False
     try:
-        output, output_truncated, timed_out, exit_code = _capture_command_output(
-            command, timeout
-        )
-        return {
-            "ok": not timed_out and exit_code == 0,
-            "exit_code": exit_code,
-            "timed_out": timed_out,
-            "output": output,
-            "output_truncated": output_truncated,
-        }
+        while not capture.finished:
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(.01)
+    finally:
+        capture.close()
+    if capture.errors:
+        raise capture.errors[0]
+    result = _command_result(capture, output, expected_exit_code, mode, timed_out=timed_out)
+    if with_metadata:
+        return result
+    return result["output"], result["output_truncated"], result["timed_out"], result["exit_code"]
+
+
+def run_command(command: str = "", timeout_seconds: int = 30, *, argv=None,
+                expected_exit_code: int = 0) -> dict:
+    """Run an approved shell string or literal argv; output never attests test execution."""
+    invocation, error = _command_input(command, argv, expected_exit_code)
+    if error:
+        return _command_failure(error, expected_exit_code)
+    try:
+        timeout = _safe_limit(timeout_seconds, 30)
+    except OverflowError:
+        return _command_failure("timeout_seconds 必须是有限数值。", expected_exit_code)
+    try:
+        return _capture_command_output(invocation, timeout, expected_exit_code=expected_exit_code,
+                                       with_metadata=True)
     except (OSError, subprocess.SubprocessError):
-        return {"ok": False, "error": "命令未能启动。"}
+        return _command_failure("命令未能启动。", expected_exit_code, code="command_start_failed")
+
+
+async def run_command_async(command: str = "", timeout_seconds: int = 30, *, argv=None,
+                            expected_exit_code: int = 0) -> dict:
+    """Cancellable equivalent; join owned process cleanup before propagating cancellation."""
+    from nailong.core.process_io import join_cleanup
+    from nailong.core.processes import ProcessCancelled
+    invocation, error = _command_input(command, argv, expected_exit_code)
+    if error:
+        return _command_failure(error, expected_exit_code)
+    try:
+        timeout = _safe_limit(timeout_seconds, 30)
+    except OverflowError:
+        return _command_failure("timeout_seconds 必须是有限数值。", expected_exit_code)
+    mode = "argv" if argv is not None else "shell"
+    try:
+        capture, output = _start_command_capture(invocation, mode)
+    except (OSError, subprocess.SubprocessError):
+        return _command_failure("命令未能启动。", expected_exit_code, code="command_start_failed")
+    deadline = time.monotonic() + timeout
+    timed_out, cancelled = False, False
+    try:
+        while not capture.finished:
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            await asyncio.sleep(.01)
+    except asyncio.CancelledError:
+        cancelled = True
+    finally:
+        cleanup = asyncio.create_task(asyncio.to_thread(capture.close))
+        cancelled = await join_cleanup(cleanup) or cancelled
+    if capture.errors:
+        raise capture.errors[0]
+    result = _command_result(capture, output, expected_exit_code, mode,
+                             timed_out=timed_out, cancelled=cancelled)
+    if cancelled:
+        raise ProcessCancelled(result)
+    return result

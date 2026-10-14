@@ -14,7 +14,7 @@ class PermissionEngineTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name).resolve()
         (self.root / "src").mkdir()
-        (self.root / "src" / "main.py").write_text("print('ok')", encoding="utf-8")
+        (self.root / "src" / "main.py").write_text("print('ok')", encoding="utf-8", newline='\n')
         (self.root / ".nailong").mkdir()
         self.engine = PermissionEngine(self.root)
 
@@ -40,13 +40,13 @@ class PermissionEngineTests(unittest.TestCase):
     def test_exact_deny_does_not_block_other_directory_with_same_filename(self):
         self.engine.add_rule('deny', 'Read(./src/main.py)')
         (self.root/'nested/src').mkdir(parents=True)
-        (self.root/'nested/src/main.py').write_text('safe')
+        (self.root/'nested/src/main.py').write_text('safe', newline='\n')
         self.assertEqual(self.decide('read_file', {'path':'src/main.py'}).decision, Decision.DENY)
         self.assertEqual(self.decide('read_file', {'path':'nested/src/main.py'}).decision, Decision.ALLOW)
 
     def test_bypass_skips_permission_rules_without_persisting_them(self):
         self.engine.settings_path.write_text(json.dumps({'permissions': {
-            'deny': ['Edit(*)', 'Bash(*)'], 'ask': ['Write(*)']}}))
+            'deny': ['Edit(*)', 'Bash(*)'], 'ask': ['Write(*)']}}), newline='\n')
         self.engine = PermissionEngine(self.root)
         before = self.engine.settings_path.read_bytes()
         for name, args in (
@@ -288,13 +288,13 @@ class PermissionEngineTests(unittest.TestCase):
         settings.write_text(
             json.dumps({"permissions": {"allow": ["Bash(git status:*)"]}}),
             encoding="utf-8",
-        )
+         newline='\n')
         engine = PermissionEngine(self.root)
         self.assertEqual(
             engine.decide_action("run_command", {"command": "git status"}).decision,
             Decision.ALLOW,
         )
-        settings.write_text("{invalid", encoding="utf-8")
+        settings.write_text("{invalid", encoding="utf-8", newline='\n')
         malformed = PermissionEngine(self.root)
         self.assertEqual(
             malformed.decide_action("run_command", {"command": "git status"}).decision,

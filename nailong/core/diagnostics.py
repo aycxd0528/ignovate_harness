@@ -17,7 +17,10 @@ def terminal_capabilities():
     terminal=sys.stdin.isatty() and sys.stdout.isatty()
     ide=bool(os.environ.get('PYCHARM_HOSTED') or 'pydevd' in sys.modules)
     inline=bool(terminal and not ide)
-    fullscreen=inline and os.environ.get('TERM','').lower() not in {'','dumb'}
+    term=os.environ.get('TERM','').lower()
+    # Native Windows consoles use Textual's Win32 driver; CMD and PowerShell
+    # usually have no POSIX TERM variable, even inside Windows Terminal.
+    fullscreen=inline and term!='dumb' and (sys.platform=='win32' or bool(term))
     if sys.platform=='darwin':
         program=os.environ.get('TERM_PROGRAM','')
         fullscreen=fullscreen and bool(program) and not any(name in program.casefold() for name in ('pycharm','jetbrains'))
@@ -116,7 +119,7 @@ def diagnose(project_root,*,env=None):
         checks.append({'name':name,'status':status,'detail':detail,'repair':repair if status!='ok' else ''})
     add('python','ok' if sys.version_info>=(3,11) else 'error',sys.version.split()[0],'使用 Python 3.11 或更新版本创建虚拟环境')
     add('interpreter','ok',sys.executable)
-    add('virtualenv','ok' if sys.prefix!=sys.base_prefix else 'warning',sys.prefix,'python3.11 -m venv .venv && source .venv/bin/activate')
+    add('virtualenv','ok' if sys.prefix!=sys.base_prefix else 'warning',sys.prefix,'ignovate set up --environment-only' if os.name == 'nt' else 'python3.11 -m venv .venv && source .venv/bin/activate')
     add('entrypoint','ok' if shutil.which('ignovate') else 'warning',shutil.which('ignovate') or 'ignovate 不在 PATH',install)
     add('project','ok' if root.is_dir() else 'error',str(root))
     missing=[name for name in ('DEEPSEEK_API_KEY','DEEPSEEK_BASE_URL','DEEPSEEK_MODEL') if not str(env.get(name) or '').strip()]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+from nailong.tools.diffs import committed_patch, diff_statistics
 import codecs
 import fnmatch
 import hashlib
@@ -22,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 import local_tools
+from nailong.core.safe_files import is_link_or_reparse
 from nailong.tools.coordination import project_coordinator, active_read_permission
 
 
@@ -115,8 +117,9 @@ class FileSession:
             directories[:] = sorted(
                 directory
                 for directory in directories
-                if unrestricted or (not self._is_protected(directory)
-                                    and not (root_path / directory).is_symlink())
+                if (not (os.name == "nt" and is_link_or_reparse(root_path / directory))
+                    and (unrestricted or (not self._is_protected(directory)
+                                          and not (root_path / directory).is_symlink())))
             )
             for filename in sorted(filenames):
                 scanned += 1
@@ -345,7 +348,7 @@ class FileSession:
             raise ValueError("文件在审批期间发生变化，请重新读取和审批。")
         before = target.stat()
         digest = hashlib.sha256()
-        with target.open("rb") as source:
+        with (local_tools.open_regular_file(target) if os.name == "nt" else target.open("rb")) as source:
             for chunk in iter(lambda: source.read(65536), b""):
                 digest.update(chunk)
         after = target.stat()
@@ -373,10 +376,14 @@ class FileSession:
                 if self.resolve(path, allow_missing=True) != target:
                     raise ValueError("文件路径发生变化，请重新读取。")
                 self.check_version(path, version)
+                before = self._read_bytes(target).decode('utf-8') if target.exists() else ''
+                if version['exists'] and hashlib.sha256(before.encode('utf-8')).hexdigest() != version['digest']:
+                    self.invalidate_read(target)
+                    raise ValueError('文件在读取或审批后被外部修改，请重新读取和审批。')
                 mode = target.stat().st_mode if target.exists() else 0o644
                 self._atomic_write(target, content.encode("utf-8"), mode, create_only=not version["exists"])
                 self.invalidate_read(target)
-                return {"ok": True, "path": self.display_path(target),
+                return {"ok": True, "path": self.display_path(target), **committed_patch(before, content, self.display_path(target)),
                         "chars_written": len(content), "version": hashlib.sha256(content.encode("utf-8")).hexdigest()}
         except (OSError, ValueError) as error:
             return {"ok": False, "error": str(error) if isinstance(error, ValueError) else "文件无法写入。"}
@@ -414,7 +421,7 @@ class FileSession:
                     "error": "请先读取该文件再编辑。",
                     "hint": "read_file",
                 }
-            raw = target.read_bytes()
+            raw = self._read_bytes(target)
             before = raw.decode("utf-8")
             if hashlib.sha256(raw).hexdigest() != snapshot.digest:
                 self.invalidate_read(target)
@@ -475,12 +482,12 @@ class FileSession:
             if after != before:
                 if self.resolve(path) != target:
                     return {"ok": False, "error": "文件路径在编辑期间发生变化，请重新读取。"}
-                latest = target.read_bytes()
+                latest = self._read_bytes(target)
                 if hashlib.sha256(latest).hexdigest() != snapshot.digest:
                     self.invalidate_read(target)
                     return {"ok": False, "error": "文件在读取后被外部修改，请重新读取。"}
                 self._atomic_write(target, after.encode("utf-8"), target.stat().st_mode)
-            new_raw = target.read_bytes()
+            new_raw = self._read_bytes(target)
             stat = target.stat()
             self._snapshots[target] = FileSnapshot(
                 digest=hashlib.sha256(new_raw).hexdigest(),
@@ -497,6 +504,7 @@ class FileSession:
                 "line_start": self._line_number(before, first_start),
                 "line_end": self._line_number(before, max(first_start, last_end - 1)),
                 "diff": diff,
+                **diff_statistics(diff),
                 "fuzzy": fuzzy,
             }
         except UnicodeDecodeError:
@@ -518,7 +526,7 @@ class FileSession:
             paths, scanned_truncated = self._safe_files(target)
             matches = []
             for file_path in paths:
-                relative = os.path.relpath(file_path, target) if target.is_dir() else file_path.name
+                relative = Path(os.path.relpath(file_path, target)).as_posix() if target.is_dir() else file_path.name
                 path_obj = PurePosixPath(relative)
                 matched = path_obj.match(pattern)
                 if pattern.startswith("**/"):
@@ -668,7 +676,7 @@ class FileSession:
 
     @staticmethod
     def _matches_include(file_path: Path, target: Path, pattern: str) -> bool:
-        relative = os.path.relpath(file_path, target) if target.is_dir() else file_path.name
+        relative = Path(os.path.relpath(file_path, target)).as_posix() if target.is_dir() else file_path.name
         path_obj = PurePosixPath(relative)
         return path_obj.match(pattern) or path_obj.name == pattern or fnmatch.fnmatchcase(path_obj.name, pattern)
 
@@ -761,6 +769,11 @@ class FileSession:
 
     def _bounded_search_output(self, command):
         """Bound subprocess capture before decoding; rg never receives shell interpolation."""
+        if os.name == "nt":
+            from nailong.core.process_io import capture_bytes
+            data, code, truncated = capture_bytes(command, cwd=self.project_root,
+                env=local_tools._command_environment(), timeout=5, max_output_bytes=2_000_000)
+            return data.decode("utf-8", errors="replace"), code, truncated
         process = subprocess.Popen(command, cwd=self.project_root, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, env=local_tools._command_environment())
         output = bytearray()
@@ -861,7 +874,18 @@ class FileSession:
         return after
 
     @staticmethod
+    def _read_bytes(target: Path) -> bytes:
+        if os.name == "nt":
+            with local_tools.open_regular_file(target) as source:
+                return source.read()
+        return target.read_bytes()
+
+    @staticmethod
     def _atomic_write(target: Path, content: bytes, mode: int, *, create_only=False) -> None:
+        if os.name == "nt":
+            from nailong.core.safe_files import atomic_write_bytes
+            atomic_write_bytes(target, content, replace=not create_only, private=False)
+            return
         temporary_path = None
         try:
             temporary_path = target.parent / f'.{target.name}.{uuid.uuid4().hex}'

@@ -1,3 +1,4 @@
+from platform_fixtures import python_command, shell_join, editor_command
 import asyncio
 import io
 import json
@@ -69,10 +70,10 @@ class HeadlessTests(unittest.TestCase):
             project.mkdir()
             (project / '.nailong').mkdir()
             settings_path = project / '.nailong/settings.json'
-            settings_path.write_text(json.dumps({'permissions': {'deny': ['Write(*)', 'Bash(*)']}}))
+            settings_path.write_text(json.dumps({'permissions': {'deny': ['Write(*)', 'Bash(*)']}}), newline='\n')
             before = settings_path.read_bytes()
             calls = [{'name': 'write_file', 'args': {'path': 'unattended.txt', 'content': 'created'}, 'id': 'write'},
-                {'name': 'run_command', 'args': {'command': shlex.join([sys.executable, '-B', '-c',
+                {'name': 'run_command', 'args': {'command': shell_join([sys.executable, '-B', '-c',
                     "from pathlib import Path;Path('command.txt').write_text('ran')"])}, 'id': 'command'}]
             code, payload, _ = self.run_permission_fixture(project, Path(directory) / 'state',
                 [AIMessage(content='', tool_calls=calls), AIMessage(content='请求完成。')],
@@ -295,7 +296,7 @@ class HeadlessTests(unittest.TestCase):
                     "cache_hit_per_million": 0.2,
                     "output_per_million": 2,
                 }}
-            }), encoding="utf-8")
+            }), encoding="utf-8", newline='\n')
             settings = self.make_settings(directory)
             store = GoalStore(root / ".nailong" / "goals.json", api_key="private-key")
             factory = SimpleNamespace(

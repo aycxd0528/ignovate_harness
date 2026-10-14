@@ -8,14 +8,13 @@ import inspect
 import json
 import os
 import re
-import signal
-import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 import local_tools
+from nailong.core.process_io import capture_streams, join_cleanup
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,8 @@ class HookRunResult:
     outputs: tuple[HookOutput, ...] = ()
     blocked: bool = False
     reason: str = ""
+    # Runtime work, including approval persistence, can be replayed on resume.
+    side_effects: bool = False
 
     @property
     def feedback(self) -> str:
@@ -60,12 +61,15 @@ class HookRunner:
 
     def _safe_read(self, path: Path) -> dict:
         try:
+            if os.name == "nt":
+                from nailong.core.preferences import read_config
+                return read_config(path, self.project_root)
             resolved = path.resolve(strict=True)
             if not resolved.is_relative_to(self.project_root):
                 return {}
             payload = json.loads(resolved.read_text(encoding="utf-8"))
             return payload if isinstance(payload, dict) else {}
-        except (OSError, UnicodeError, json.JSONDecodeError, RuntimeError):
+        except (OSError, UnicodeError, ValueError, RuntimeError):
             return {}
 
     def _approved_commands(self) -> set[str]:
@@ -74,6 +78,12 @@ class HookRunner:
 
     def _save_approval(self, fingerprint: str) -> None:
         with self._settings_lock:
+            if os.name == "nt":
+                from nailong.core.preferences import atomic_json
+                current = self._safe_read(self.local_settings_path)
+                current["approved_hook_hashes"] = sorted(self._approved_commands() | {fingerprint})
+                atomic_json(self.local_settings_path, current, self.project_root)
+                return
             parent = self.local_settings_path.parent
             parent.mkdir(parents=True, exist_ok=True)
             resolved_parent = parent.resolve(strict=True)
@@ -86,7 +96,8 @@ class HookRunner:
             descriptor, temporary_name = tempfile.mkstemp(prefix=".settings.local.", dir=resolved_parent)
             temporary = Path(temporary_name)
             try:
-                os.fchmod(descriptor, 0o600)
+                if os.name == "posix":
+                    os.fchmod(descriptor, 0o600)
                 payload = memoryview(json.dumps(current, ensure_ascii=False, indent=2).encode("utf-8"))
                 while payload:
                     written = os.write(descriptor, payload)
@@ -121,6 +132,7 @@ class HookRunner:
         if not isinstance(entries, list):
             return HookRunResult()
         outputs = []
+        side_effects = False
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
@@ -140,7 +152,7 @@ class HookRunner:
                 if not command:
                     continue
                 if self.api_key and self.api_key in command:
-                    return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "钩子命令包含模型密钥，已拒绝。")
+                    return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "钩子命令包含模型密钥，已拒绝。", side_effects)
                 fingerprint = self._fingerprint(command)
                 if fingerprint not in self._approved_commands():
                     approved = False
@@ -156,11 +168,12 @@ class HookRunner:
                         approved = answer is True or getattr(answer, "kind", None) in {"approve_once", "approve_session"} or str(answer).strip().lower() in {"a", "approve", "approve_once", "yes", "y", "true"}
                     if not approved:
                         block = event in {"PreToolUse", "UserPromptSubmit"}
-                        return HookRunResult(tuple(outputs), block, "钩子命令未获批准，未执行。")
+                        return HookRunResult(tuple(outputs), block, "钩子命令未获批准，未执行。", side_effects)
                     try:
+                        side_effects = True
                         self._save_approval(fingerprint)
                     except OSError:
-                        return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "无法安全保存钩子批准记录。")
+                        return HookRunResult(tuple(outputs), event in {"PreToolUse", "UserPromptSubmit"}, "无法安全保存钩子批准记录。", side_effects)
 
                 environment = local_tools._command_environment()
                 environment.update({
@@ -168,7 +181,16 @@ class HookRunner:
                     "NAILONG_FILE_PATH": path,
                     "NAILONG_PROMPT": prompt.replace(self.api_key, "[密钥已隐藏]") if self.api_key else prompt,
                 })
-                result = await asyncio.to_thread(self._execute, command, environment)
+                cancel_event = threading.Event()
+                side_effects = True
+                worker = asyncio.create_task(asyncio.to_thread(
+                    self._execute, command, environment, cancel_event=cancel_event))
+                try:
+                    result = await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancel_event.set()
+                    await join_cleanup(worker)
+                    raise
                 outputs.append(HookOutput(
                     event=event,
                     command="[已批准的项目钩子]",
@@ -182,33 +204,15 @@ class HookRunner:
                     and result.exit_code == 2
                     and not result.timed_out
                 ):
-                    return HookRunResult(tuple(outputs), True, result.stderr or result.stdout or "钩子阻止了操作。")
-        return HookRunResult(tuple(outputs))
+                    return HookRunResult(tuple(outputs), True, result.stderr or result.stdout or "钩子阻止了操作。", side_effects)
+        return HookRunResult(tuple(outputs), side_effects=side_effects)
 
-    def _execute(self, command: str, environment: dict[str, str]) -> HookOutput:
-        process = subprocess.Popen(
-            command,
-            shell=True,
-            cwd=self.project_root,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=(os.name == "posix"),
+    def _execute(self, command: str, environment: dict[str, str], *, cancel_event=None) -> HookOutput:
+        stdout, stderr, _, timed_out, returncode = capture_streams(
+            command, cwd=self.project_root, env=environment, timeout=self.timeout_seconds,
+            max_output_chars=self.max_output_chars, separate_stderr=True, prefix=True,
+            cancel_event=cancel_event, universal_newlines=True,
         )
-        timed_out = False
-        try:
-            stdout, stderr = process.communicate(timeout=self.timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            if os.name == "posix":
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:
-                process.kill()
-            stdout, stderr = process.communicate()
         if self.api_key:
             stdout = stdout.replace(self.api_key, "[密钥已隐藏]")
             stderr = stderr.replace(self.api_key, "[密钥已隐藏]")
@@ -217,6 +221,6 @@ class HookRunner:
             command="[已批准的项目钩子]",
             stdout=stdout[: self.max_output_chars],
             stderr=stderr[: self.max_output_chars],
-            exit_code=process.returncode,
+            exit_code=returncode,
             timed_out=timed_out,
         )

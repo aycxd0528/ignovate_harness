@@ -8,7 +8,8 @@ import re
 from dataclasses import dataclass
 
 from langchain_core.messages import HumanMessage, ToolMessage
-from nailong.core.context import _text_statistics
+from nailong.core.context import _text_statistics, reasoning_text, message_input_text
+from nailong.core.validation_output import command_test_output
 
 _READ_TOOLS = {'read_file','list_files','glob','grep','search_text','load_skill','read_skill_resource','run_command','read_memory','memory_list','memory_read','read_history_result'}
 MAX_SUMMARY_CHARS = 6_000
@@ -31,8 +32,11 @@ def _estimate_tokens(messages):
     # counted by the runtime, rather than by this message-only gain calculation.
     count=0.0
     for message in messages:
-        text=str(getattr(message,'content',''))
+        text=message_input_text(message)
         characters,ascii_chars=_text_statistics(text)
+        count+=characters-ascii_chars+ascii_chars*.25
+        reasoning=reasoning_text(message)
+        characters,ascii_chars=_text_statistics(reasoning)
         count+=characters-ascii_chars+ascii_chars*.25
         if getattr(message,'tool_calls',None):
             count+=len(json.dumps(message.tool_calls,ensure_ascii=False))
@@ -58,6 +62,14 @@ def _tool_summary(message, reference=None):
     payload=_payload(message)
     name=getattr(message,'name','tool') or 'tool'
     record={'tool':name,'historical':True,'status':getattr(message,'status','success')}
+    # Preserve process failure signals before verbose observations/path text.
+    # The bounded L2 excerpt must not hide them behind classifier metadata.
+    for key in ('ok','exit_code','timed_out'):
+        if key in payload: record[key]=payload[key]
+    # L2 renders a bounded action excerpt. Put observed test failures before
+    # potentially long path/output fields so the excerpt cannot hide them.
+    test_output=command_test_output(name,payload)
+    if test_output is not None: record['test_output']=test_output
     for key in ('ok','path','exit_code','timed_out','truncated','output_truncated','offset','next_offset','next_char_offset','version'):
         if key in payload: record[key]=payload[key]
     if reference: record['reference']=reference
@@ -124,6 +136,10 @@ def _clear_tools(messages,archive,thread_id,hard):
             reference=_save(archive,thread_id,m,args.get(m.tool_call_id))
             payload=_payload(m)
             metadata={**metadata,'nailong_tool_cleared':True}
+            if payload.get('tool_result_id'):
+                metadata['nailong_tool_result_id']=payload['tool_result_id']
+            if payload.get('tool_result_turn_id'):
+                metadata['nailong_tool_result_turn_id']=payload['tool_result_turn_id']
             if reference: metadata['nailong_tool_reference']=reference
             if m.name in {'load_skill','read_skill_resource'}:
                 metadata['nailong_skill_state']={k:payload.get(k) for k in ('name','path','version','resource') if payload.get(k)}
@@ -139,6 +155,7 @@ def _append_unique(items,text):
 
 def _summary_state(previous,older,archive=None,thread_id=None):
     state={key:[] for key in ('requests','constraints','actions','conclusions','evidence','skills','request_evidence')}
+    incomplete_archive=False
     for m in previous:
         saved=(m.additional_kwargs or {}).get('nailong_compact_state',{})
         for key in state:
@@ -157,6 +174,13 @@ def _summary_state(previous,older,archive=None,thread_id=None):
             for sentence in re.split(r'[\n。！？]',text):
                 if _CONSTRAINT.search(sentence): _append_unique(state['constraints'],sentence.strip())
         elif getattr(m,'type',None)=='ai':
+            # Discarded assistant messages include provider reasoning and tool
+            # calls. Keep the complete private snapshot, rather than archiving
+            # only user/tool bodies or relying on a conclusion excerpt.
+            ref=_save(archive,thread_id,m)
+            if ref:
+                _append_unique(state['evidence'],ref)
+                incomplete_archive |= archive.read(thread_id,ref,max_chars=1)['archive_truncated']
             _append_unique(state['conclusions'],text[:300])
             for c in m.tool_calls or []: calls[c['id']]=c.get('args',{})
         elif isinstance(m,ToolMessage):
@@ -178,7 +202,8 @@ def _summary_state(previous,older,archive=None,thread_id=None):
         state['index_reference']=_save(archive,thread_id,HumanMessage(
             content=json.dumps(index,ensure_ascii=False),
             additional_kwargs={'nailong_task_index':True}))
-        state['index_truncated']=archive.read(thread_id,state['index_reference'],max_chars=1)['archive_truncated']
+        state['index_truncated']=(incomplete_archive or
+            archive.read(thread_id,state['index_reference'],max_chars=1)['archive_truncated'])
     return state
 
 

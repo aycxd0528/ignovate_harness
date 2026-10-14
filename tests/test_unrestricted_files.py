@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import shutil
 import tempfile
 import threading
@@ -28,10 +29,10 @@ class UnrestrictedFilesTests(unittest.TestCase):
         self.root.mkdir()
         self.external.mkdir()
         for folder in (self.root, self.external):
-            (folder / 'sample.txt').write_text('needle before\nsecond\n')
-            (folder / '.env').write_text('needle synthetic-token\n')
+            (folder / 'sample.txt').write_text('needle before\nsecond\n', newline='\n')
+            (folder / '.env').write_text('needle synthetic-token\n', newline='\n')
             (folder / '.git').mkdir()
-            (folder / '.git' / 'config').write_text('needle configuration\n')
+            (folder / '.git' / 'config').write_text('needle configuration\n', newline='\n')
         self.session = FileSession(self.root)
         self.execution = self.context('bypassPermissions')
         self.normal = self.context('default')
@@ -80,7 +81,7 @@ class UnrestrictedFilesTests(unittest.TestCase):
         self.call('read_file', {'path': str(target), 'max_chars': 3})
         self.assertFalse(self.call('write_file', {'path': str(target), 'content': 'lost'})['ok'])
         self.call('read_file', {'path': str(target)})
-        target.write_text('external change')
+        target.write_text('external change', newline='\n')
         self.assertFalse(self.call('edit_file', {'path': str(target),
             'old_string': 'external change', 'new_string': 'lost'})['ok'])
         self.assertEqual(target.read_text(), 'external change')
@@ -129,6 +130,7 @@ class UnrestrictedFilesTests(unittest.TestCase):
         self.assertEqual(set(result['files']), {str(self.external / name)
             for name in ('sample.txt', '.env', '.git/config')})
 
+    @unittest.skipIf(os.name == 'nt', 'Native Windows rejects all reparse paths even in full access; native junction tests cover that contract.')
     def test_symlink_file_and_directory_escapes_are_scoped_and_cycles_terminate(self):
         (self.root / 'linked.txt').symlink_to(self.external / 'sample.txt')
         (self.root / 'linked-directory').symlink_to(self.external, target_is_directory=True)
@@ -199,7 +201,7 @@ class UnrestrictedFilesTests(unittest.TestCase):
 
     def test_real_configured_key_is_redacted_in_protected_file_result(self):
         secret = 'synthetic-actual-configured-key'
-        (self.root / '.env').write_text('API_KEY=' + secret)
+        (self.root / '.env').write_text('API_KEY=' + secret, newline='\n')
         execution = self.context('bypassPermissions', api_key=secret)
         tools = self.bundle(execution)
         result = self.call('read_file', {'path': '.env'}, tools)
@@ -305,7 +307,7 @@ class UnrestrictedFilesTests(unittest.TestCase):
 
     def test_external_json_clipping_clears_full_read_eligibility_within_scope(self):
         target = self.external / 'encoded.txt'
-        target.write_text('"' * 10000)
+        target.write_text('"' * 10000, newline='\n')
         result = self.call('read_file', {'path': str(target)})
         self.assertTrue(result['ok'])
         self.assertTrue(result['result_truncated'])

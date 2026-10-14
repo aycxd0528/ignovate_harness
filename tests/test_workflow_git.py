@@ -1,4 +1,5 @@
 import importlib
+import os
 import subprocess
 import tempfile
 import unittest
@@ -29,13 +30,14 @@ class WorkflowGitTests(unittest.TestCase):
         self.git('add','-A')
         self.git('commit','-qm','fixture')
 
+    @unittest.skipIf(os.name == 'nt', 'Windows filenames cannot contain the Git magic colon or wildcard.')
     def test_magic_path_is_literal_and_cannot_expand_protected_files(self):
         (self.root/'.venv').mkdir()
-        (self.root/'.venv/private.txt').write_text('before\n')
-        (self.root/':(glob)**').write_text('before\n')
+        (self.root/'.venv/private.txt').write_text('before\n', newline='\n')
+        (self.root/':(glob)**').write_text('before\n', newline='\n')
         self.commit()
-        (self.root/'.venv/private.txt').write_text('PROTECTED_TEST_SENTINEL\n')
-        (self.root/':(glob)**').write_text('safe change\n')
+        (self.root/'.venv/private.txt').write_text('PROTECTED_TEST_SENTINEL\n', newline='\n')
+        (self.root/':(glob)**').write_text('safe change\n', newline='\n')
         changes=self.service().select()
         self.assertIn('safe change',changes.patch)
         self.assertNotIn('PROTECTED_TEST_SENTINEL',changes.patch)
@@ -43,12 +45,12 @@ class WorkflowGitTests(unittest.TestCase):
 
     def test_working_staged_and_untracked_are_distinct(self):
         file=self.root/'file with space.py'
-        file.write_text('before\n')
+        file.write_text('before\n', newline='\n')
         self.commit()
-        file.write_text('staged\n')
+        file.write_text('staged\n', newline='\n')
         self.git('add','--',file.name)
-        file.write_text('working\n')
-        (self.root/'new.py').write_text('new\n')
+        file.write_text('working\n', newline='\n')
+        (self.root/'new.py').write_text('new\n', newline='\n')
         service=self.service()
         working=service.select()
         self.assertIn('working',working.patch)
@@ -59,19 +61,19 @@ class WorkflowGitTests(unittest.TestCase):
         self.assertNotIn('new.py',staged.paths)
 
     def test_unborn_working_diff_uses_current_file_after_staging(self):
-        (self.root/'a.py').write_text('staged first\n'); self.git('add','a.py')
-        (self.root/'a.py').write_text('current second\n')
+        (self.root/'a.py').write_text('staged first\n', newline='\n'); self.git('add','a.py')
+        (self.root/'a.py').write_text('current second\n', newline='\n')
         self.assertIn('+current second',self.service().select().patch)
         self.assertIn('+staged first',self.service().select('staged').patch)
 
     def test_branch_ignores_working_tree_and_rejects_invalid_ref(self):
         file=self.root/'a.py'
-        file.write_text('one\n')
+        file.write_text('one\n', newline='\n')
         self.commit()
         base=self.git('rev-parse','HEAD').strip()
-        file.write_text('two\n')
+        file.write_text('two\n', newline='\n')
         self.commit()
-        file.write_text('not committed\n')
+        file.write_text('not committed\n', newline='\n')
         changes=self.service().select('branch',base)
         self.assertIn('+two',changes.patch)
         self.assertNotIn('not committed',changes.patch)
@@ -80,20 +82,20 @@ class WorkflowGitTests(unittest.TestCase):
     def test_initial_and_non_git_and_empty_are_explicit(self):
         initial=self.service().select()
         self.assertFalse(initial.changes)
-        (self.root/'a').write_text('new')
+        (self.root/'a').write_text('new', newline='\n')
         self.assertIn('a',self.service().select().paths)
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError): self.service(directory).select()
 
     def test_protected_symlink_and_binary_contents_are_excluded(self):
-        (self.root/'safe.py').write_text('old\n')
-        (self.root/'.env').write_text('NEVER_OLD_SECRET')
+        (self.root/'safe.py').write_text('old\n', newline='\n')
+        (self.root/'.env').write_text('NEVER_OLD_SECRET', newline='\n')
         self.commit()
-        (self.root/'.env').write_text('NEVER_NEW_SECRET')
+        (self.root/'.env').write_text('NEVER_NEW_SECRET', newline='\n')
         (self.root/'binary').write_bytes(b'\x00binary secret')
         with tempfile.TemporaryDirectory() as outside:
             target=Path(outside)/'private'
-            target.write_text('NEVER_OUTSIDE_SECRET')
+            target.write_text('NEVER_OUTSIDE_SECRET', newline='\n')
             (self.root/'link').symlink_to(target)
             changes=self.service().select()
             self.assertNotIn('NEVER',changes.patch)
@@ -101,20 +103,20 @@ class WorkflowGitTests(unittest.TestCase):
             self.assertTrue(changes.skipped)
 
     def test_deleted_renamed_and_newline_paths_are_preserved(self):
-        (self.root/'old.py').write_text('many identical lines\n'*20)
-        (self.root/'deleted.py').write_text('delete\n')
+        (self.root/'old.py').write_text('many identical lines\n'*20, newline='\n')
+        (self.root/'deleted.py').write_text('delete\n', newline='\n')
         self.commit()
         self.git('mv','old.py','renamed.py')
         (self.root/'deleted.py').unlink()
-        unusual='-line\nbreak.py'
-        (self.root/unusual).write_text('new\n')
+        unusual='-line break.py' if os.name == 'nt' else '-line\nbreak.py'
+        (self.root/unusual).write_text('new\n', newline='\n')
         changes=self.service().select()
         self.assertIn('renamed.py',changes.paths)
         self.assertIn('deleted.py',changes.paths)
         self.assertIn(unusual,changes.paths)
 
     def test_patch_and_file_caps_report_uncovered_work(self):
-        for index in range(205): (self.root/f'f{index:03}.py').write_text('text\n')
+        for index in range(205): (self.root/f'f{index:03}.py').write_text('text\n', newline='\n')
         changes=self.service().select()
         self.assertLessEqual(len(changes.changes),200)
         self.assertLessEqual(len(changes.patch.encode()),256*1024)
@@ -123,16 +125,16 @@ class WorkflowGitTests(unittest.TestCase):
 
     def test_external_diff_is_not_executed(self):
         file=self.root/'a.py'
-        file.write_text('old\n')
+        file.write_text('old\n', newline='\n')
         self.commit()
         self.git('config','diff.external','touch external-ran')
-        file.write_text('new\n')
+        file.write_text('new\n', newline='\n')
         self.assertIn('+new',self.service().select().patch)
         self.assertFalse((self.root/'external-ran').exists())
 
     def test_review_tool_scope_refuses_other_files(self):
-        (self.root/'allowed.py').write_text('allowed')
-        (self.root/'other.py').write_text('private')
+        (self.root/'allowed.py').write_text('allowed', newline='\n')
+        (self.root/'other.py').write_text('private', newline='\n')
         try:
             specs=build_tool_specs(profile='review',session=FileSession(self.root),
                                    target_path=str(self.root),review_paths=frozenset({'allowed.py'}))

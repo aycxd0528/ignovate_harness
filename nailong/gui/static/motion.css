@@ -1,0 +1,37 @@
+/* Original CSS motion inspired by the Blur Text/Shiny Text visual treatments
+   documented at https://reactbits.dev/. No copied React source or dependency. */
+.startup-screen{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--paper);color:var(--ink);isolation:isolate;overflow:hidden;transition:opacity .18s ease-out}
+.startup-screen.is-ready{opacity:0;pointer-events:none}
+.startup-panel{display:flex;flex-direction:column;align-items:center;gap:20px;padding:24px;text-align:center;max-width:100%;position:relative}
+.startup-glow{position:absolute;z-index:-1;width:min(620px,90vw);height:450px;background:radial-gradient(ellipse,color-mix(in srgb,var(--accent) 13%,transparent),transparent 64%);animation:startup-breathe 4s ease-in-out infinite;pointer-events:none}
+.startup-brand{display:flex;align-items:baseline;justify-content:center;gap:12px;font-size:clamp(28px,5vw,40px);font-weight:650;letter-spacing:-1.5px;line-height:1.3}
+.startup-name{display:inline-flex;color:var(--accent)}
+.startup-letter{display:inline-block;animation:startup-resolve 1.25s cubic-bezier(.2,.75,.2,1) both;animation-delay:calc(var(--letter) * 80ms)}
+.startup-brand>span:last-child{color:var(--ink);font-size:.66em;letter-spacing:-.6px;animation:startup-resolve 1.25s .25s both}
+.startup-note{font-size:13px;line-height:1.7;color:var(--muted);max-width:36ch;overflow-wrap:anywhere}
+.startup-note,.runtime-label{background-image:linear-gradient(110deg,var(--muted) 35%,var(--ink) 50%,var(--muted) 65%);background-size:230% 100%;animation:status-sheen 2.4s linear infinite}
+@supports (background-clip:text){.startup-note,.runtime-label{background-clip:text;-webkit-background-clip:text;color:transparent}}
+.startup-core{width:120px;height:48px;position:relative;margin-bottom:2px;pointer-events:none}
+.startup-core i,.startup-core b{position:absolute;top:21px;left:57px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.startup-core i{animation:startup-gather 1.3s cubic-bezier(.18,.8,.2,1) both}
+.startup-core i:nth-child(1){--from-x:-48px;--from-y:-20px;animation-delay:.06s}
+.startup-core i:nth-child(2){--from-x:-48px;--from-y:20px;animation-delay:.16s}
+.startup-core i:nth-child(3){--from-x:48px;--from-y:0px;animation-delay:.26s}
+.startup-core b{width:9px;height:9px;top:19.5px;left:55.5px;animation:startup-core-pulse 2.1s 1.4s ease-in-out infinite}
+.startup-retry{font-size:12px;border:1px solid var(--border);padding:8px 15px;border-radius:7px}
+.startup-screen[data-state=error] .startup-note{background:none;color:var(--ink);animation:none}
+.startup-screen[data-state=error] .startup-glow,.startup-screen[data-state=error] .startup-core *{animation:none}
+.runtime-label{display:inline-flex;align-items:center;gap:7px}
+.runtime-label::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);animation:runtime-pulse 1.6s ease-in-out infinite;flex-shrink:0}
+.runtime-label[data-phase=tools]::before{animation-duration:1s}
+.tool-activity{animation:tool-arrive .16s ease-out both}
+.active-tool>.svg-icon{animation:runtime-pulse 1.6s ease-in-out infinite}
+.tool-activity>summary,.tool-activity .tool-duration{transition:color .15s ease-out}
+@keyframes startup-resolve{from{filter:blur(7px);opacity:.3;transform:translateY(9px)}to{filter:blur(0);opacity:1;transform:translateY(0)}}
+@keyframes startup-gather{from{transform:translate(var(--from-x),var(--from-y));opacity:.3}to{transform:translate(0,0);opacity:1}}
+@keyframes startup-core-pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 30%,transparent)}50%{box-shadow:0 0 18px 6px color-mix(in srgb,var(--accent) 18%,transparent)}}
+@keyframes startup-breathe{0%,100%{opacity:.6;transform:scale(.95)}50%{opacity:1;transform:scale(1.05)}}
+@keyframes status-sheen{from{background-position:180% 0}to{background-position:-80% 0}}
+@keyframes runtime-pulse{0%,100%{opacity:.4}50%{opacity:1}}
+@keyframes tool-arrive{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.startup-screen{transition:none}.startup-screen *,.runtime-label,.runtime-label::before,.tool-activity,.active-tool>.svg-icon{animation:none!important;transition:none!important;filter:none!important;transform:none!important}.startup-note,.runtime-label{background:none;color:var(--muted)}}

@@ -1,0 +1,21 @@
+{
+  "python": "3.11.15",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "core_files": [
+    {
+      "path": "nailong/core/context.py",
+      "before_sha256": "3790bdaa01d559ca022e20cf5109e22f5715da0e3c39c42f20816cfd7a50c88f",
+      "after_sha256": "373ba309ef01a29a40a4843d80ca17bedc6ee93468fc58f7ae17fe4c0727b909"
+    },
+    {
+      "path": "nailong/core/context_runtime.py",
+      "before_sha256": "a0f681bd1b3051ffc21e05c71a36caceb069b283d7fb1606c5b595af0e2e1d95",
+      "after_sha256": "6cb810060ee1a9cf408acf96666154cf87e6182b25b03dc3d97e9bf3664167ad"
+    },
+    {
+      "path": "nailong/core/compact.py",
+      "before_sha256": "4e0653bb335258041873916b08750dfb16c816eb9242d9f2ad66127dedef7ee7",
+      "after_sha256": "7077b28616fe0b862fb15fc79505537089408c7c6c56c035537ce53cce31c281"
+    }
+  ]
+}

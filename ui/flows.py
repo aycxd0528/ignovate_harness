@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 import asyncio
-import shlex
+from ui.arguments import split_arguments
 import uuid
 from contextlib import aclosing, nullcontext
 from pathlib import Path
@@ -14,7 +14,7 @@ from nailong.core.budgets import CostBudgetExceeded, GoalCostBudget
 
 
 def parse_goal_request(argument: str) -> tuple[str, int, float]:
-    tokens = shlex.split(argument)
+    tokens = split_arguments(argument)
     max_rounds = 20
     max_cost_usd = 1.0
     while tokens and tokens[0].startswith("--"):

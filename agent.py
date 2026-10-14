@@ -2,6 +2,8 @@
 
 import json
 import asyncio
+import uuid
+import hashlib
 from collections import OrderedDict
 from typing import Literal
 from dataclasses import replace
@@ -17,6 +19,9 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 
 from config import Settings
+from nailong.core.generation import (generation_policy, GenerationPolicy, GenerationRecoveryMiddleware,
+    ModelOutputTruncated, response_diagnostics, active_model_responses)
+from nailong.core.cumulative_budget import SessionTokenBudget, active_session_token_budget
 from nailong.core.memory import load_project_memory, MemorySnapshot
 from nailong.core.memory_context import MemoryReadContext
 from nailong.core.goal import GoalStore
@@ -106,16 +111,21 @@ def _redact_nested(value, secret: str):
 class ModelAccountingMiddleware(AgentMiddleware):
     """Reserve each actual request and collect even a child's partial usage."""
 
-    def __init__(self, settings=None, *, main_agent=False):
+    def __init__(self, settings=None, *, main_agent=False, record=None):
         super().__init__()
         self.settings=settings
         self.main_agent = main_agent
+        self.record = record
 
     def _turn_budget(self):
         return active_turn_budget.get() if self.main_agent else None
 
     def _check_response(self, response, budget):
         if budget is not None and budget.summary_only:
+            if any((getattr(message, 'response_metadata', {}) or {}).get('finish_reason') == 'length'
+                   for message in response.result):
+                # The generation guard reports truncation before graph tool routing.
+                return
             if any(getattr(message, 'tool_calls', None) for message in response.result):
                 raise TurnModelLimitExceeded("本轮最后一次模型调用仍请求工具，已停止执行并保留会话。",
                                              completed_response=response)
@@ -129,13 +139,14 @@ class ModelAccountingMiddleware(AgentMiddleware):
 
     @staticmethod
     def _attach(response,provenance):
-        if provenance:
-            for message in response.result:
-                if getattr(message,'type',None)=='ai':
-                    message.response_metadata={**(message.response_metadata or {}),'nailong_call_provenance':provenance}
+        for message in response.result:
+            if getattr(message,'type',None)=='ai':
+                message.response_metadata={**(message.response_metadata or {}),
+                    'nailong_model_call_id':str(uuid.uuid4()),
+                    **({'nailong_call_provenance':provenance} if provenance else {})}
 
     def wrap_model_call(self, request, handler):
-        if active_cost_budget.get() is not None or active_token_budget.get() is not None:
+        if any(value is not None for value in (active_cost_budget.get(), active_token_budget.get(), active_session_token_budget.get())):
             raise RuntimeError("预算控制的模型调用必须使用异步执行。")
         provenance=self._provenance()
         collector = active_usage_collector.get()
@@ -151,6 +162,7 @@ class ModelAccountingMiddleware(AgentMiddleware):
                 collector.complete = False
             raise
         self._attach(response,provenance)
+        self._publish(response)
         if collector is not None:
             collector.observe(response.result)
         self._check_response(response, budget)
@@ -159,7 +171,11 @@ class ModelAccountingMiddleware(AgentMiddleware):
     async def awrap_model_call(self, request, handler):
         token_budget = active_token_budget.get()
         cost_budget = active_cost_budget.get()
-        token_hold = cost_hold = None
+        session_budget = active_session_token_budget.get()
+        token_hold = cost_hold = session_hold = None
+        response = None
+        provider_started = False
+        collector = active_usage_collector.get()
         try:
             if token_budget is not None:
                 token_hold, cap = await token_budget.reserve(request)
@@ -167,21 +183,23 @@ class ModelAccountingMiddleware(AgentMiddleware):
             if cost_budget is not None:
                 cost_hold, cap = await cost_budget.reserve(request)
                 request = request.override(model_settings={**request.model_settings, "max_tokens": cap})
-        except BaseException:
-            if token_hold is not None:
-                await token_budget.release(token_hold)
-            raise
-        provenance=self._provenance()
-        collector = active_usage_collector.get()
-        if collector is not None:
-            collector.attempts += 1
-        response = None
-        try:
+            if session_budget is not None:
+                session_hold, cap = await session_budget.reserve(request)
+            if any(value is not None for value in (token_budget, cost_budget, session_budget)):
+                request = self._single_attempt(request)
+            provenance=self._provenance()
             budget = self._turn_budget()
             if budget is not None:
                 budget.admit()
+            if collector is not None:
+                collector.attempts += 1
+            provider_started = True
             response = await handler(request)
             self._attach(response,provenance)
+            for message in response.result:
+                if getattr(message, 'type', None) == 'ai':
+                    message.response_metadata['nailong_request_max_tokens'] = request.model_settings.get('max_tokens') or getattr(request.model, 'max_tokens', None)
+            self._publish(response)
             if collector is not None:
                 collector.observe(response.result)
             self._check_response(response, budget)
@@ -194,17 +212,48 @@ class ModelAccountingMiddleware(AgentMiddleware):
             messages = response.result if response is not None else None
             settlements = []
             if token_hold is not None:
-                settlements.append(token_budget.settle(token_hold, messages))
+                settlements.append(token_budget.settle(token_hold, messages) if provider_started else token_budget.release(token_hold))
             if cost_hold is not None:
-                settlements.append(cost_budget.settle(cost_hold, messages))
+                settlements.append(cost_budget.settle(cost_hold, messages) if provider_started else cost_budget.release(cost_hold))
+            if session_hold is not None:
+                settlements.append(session_budget.settle(session_hold, messages) if provider_started else session_budget.release(session_hold))
             if settlements:
-                settling=asyncio.gather(*settlements)
+                settling=asyncio.gather(*settlements, return_exceptions=True)
                 interrupted=False
                 while not settling.done():
                     try: await asyncio.shield(settling)
                     except asyncio.CancelledError: interrupted=True
-                settling.result()
+                results = settling.result()
                 if interrupted: raise asyncio.CancelledError()
+                for result in results:
+                    if isinstance(result, BaseException):
+                        raise result
+
+    def _publish(self, response):
+        for message in response.result:
+            if getattr(message, 'type', None) != 'ai':
+                continue
+            info = response_diagnostics(message)
+            if self.record is not None:
+                self.record('model_response' if self.main_agent else 'subagent_model_response', info)
+            pending = active_model_responses.get()
+            if pending is not None and self.main_agent:
+                pending.append(info)
+            message.response_metadata['nailong_response_observed'] = True
+
+    @staticmethod
+    def _single_attempt(request):
+        model = request.model
+        if not isinstance(model, _DeepSeekBase):
+            return request
+        # SDK retries can bill an unseen second attempt under a single hold.
+        updates = {'max_retries': 0}
+        for root_name, client_name in (('root_client', 'client'), ('root_async_client', 'async_client')):
+            root = getattr(model, root_name, None)
+            if root is not None:
+                root = root.with_options(max_retries=0)
+                updates.update({root_name: root, client_name: root.chat.completions})
+        return request.override(model=model.model_copy(update=updates))
 
 
 class SecretRedactionMiddleware(AgentMiddleware):
@@ -254,7 +303,11 @@ class AgentRuntimeFactory:
         settings: Settings,
         *,
         session_store: ProjectSessionStore | None = None,
+        session_token_limit: int | None = None,
     ):
+        if session_token_limit is not None and (type(session_token_limit) is not int or session_token_limit < 1):
+            raise ValueError('session_token_limit 必须是正整数。')
+        self._session_token_limit_override = session_token_limit
         from nailong.core.preferences import PreferenceStore
         self.preferences = PreferenceStore(settings.project_root)
         environment_model=settings.environment_model or settings.model
@@ -271,12 +324,14 @@ class AgentRuntimeFactory:
         )
         self.session_store.api_key = settings.api_key
         self.session_store.ensure_directories()
+        self._session_token_budgets = {}
         self.model = ChatDeepSeek(
             model=settings.model,
             api_key=settings.api_key,
             base_url=settings.api_base,
             timeout=30,
             max_retries=2,
+            max_tokens=generation_policy(settings).max_output_tokens,
             **self._reasoning_kwargs(settings.model, settings.reasoning_effort),
         )
         self._checkpointer_context = SqliteSaver.from_conn_string(
@@ -332,7 +387,9 @@ class AgentRuntimeFactory:
             return (resumed.get('decisions') or [{}])[0] if isinstance(resumed, dict) else {'type': 'reject'}
         self.tool_execution_context = ToolExecutionContext(settings.project_root,
             permission_engine=self._memory_permissions, approval_handler=approve_tool,
-            api_key=settings.api_key, artifact_directory=self.session_store.root/'tool-artifacts')
+            api_key=settings.api_key, artifact_directory=self.session_store.root/'tool-artifacts',
+            task_snapshot_provider=self.task_store.snapshot)
+        self.tool_execution_context._native_approval_handler = approve_tool
         from nailong.mcp.config import MCPConfigStore
         from nailong.mcp.client import MCPManager
         self.mcp_manager = MCPManager(MCPConfigStore(settings.project_root), api_key=settings.api_key)
@@ -358,8 +415,41 @@ class AgentRuntimeFactory:
         """Change the model, keeping the project and existing checkpointers."""
         self.model = ChatDeepSeek(model=model_id, api_key=self.settings.api_key,
                                  base_url=self.settings.api_base,timeout=30,max_retries=2,
+                                 max_tokens=generation_policy(replace(self.settings, model=model_id)).max_output_tokens,
                                  **self._reasoning_kwargs(model_id,self.settings.reasoning_effort))
         self.settings = replace(self.settings,model=model_id)
+
+    def session_token_budget(self, thread_id):
+        if not thread_id:
+            return None
+        from nailong.core.preferences import read_config
+        root = self.settings.project_root.resolve()
+        options = {}
+        for name in ('settings.json', 'settings.local.json'):
+            values = read_config(root/'.nailong'/name, root).get('budgets', {})
+            if not isinstance(values, dict):
+                raise ValueError('budgets 必须是 JSON 对象。')
+            options.update(values)
+        limit = self._session_token_limit_override or options.get('session_token_limit')
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ValueError('budgets.session_token_limit 必须是正整数。')
+        existing = self._session_token_budgets.get(thread_id)
+        if existing is not None:
+            if limit is not None and limit != existing.limit:
+                raise ValueError('已有会话预算不能在执行途中更改。请使用新会话测试新预算。')
+            return existing
+        key = hashlib.sha256(str(thread_id).encode('utf-8')).hexdigest()
+        ledger = self.session_store.root/'token-budgets'/(key+'.json')
+        if limit is None:
+            previous = read_config(ledger, self.session_store.root)
+            if previous or ledger.exists():
+                limit = previous.get('limit_tokens')
+            else:
+                return None
+        budget = SessionTokenBudget(limit, ledger_path=ledger, ledger_boundary=self.session_store.root,
+            record=lambda data: self.session_store.append_event(thread_id, 'session_token_budget', data))
+        self._session_token_budgets[thread_id] = budget
+        return budget
 
     @staticmethod
     def _reasoning_kwargs(model_id, effort):
@@ -369,7 +459,9 @@ class AgentRuntimeFactory:
     def set_reasoning(self, effort: str) -> None:
         options = self._reasoning_kwargs(self.settings.model, effort)
         model = ChatDeepSeek(model=self.settings.model, api_key=self.settings.api_key,
-                            base_url=self.settings.api_base,timeout=30,max_retries=2,**options)
+                            base_url=self.settings.api_base,timeout=30,max_retries=2,
+                            max_tokens=generation_policy(replace(self.settings, reasoning_effort=effort)).max_output_tokens,
+                            **options)
         self.model = model
         self.settings = replace(self.settings,reasoning_effort=effort)
 
@@ -403,20 +495,32 @@ class AgentRuntimeFactory:
             model=child_model,
             tools=child_tools,
             system_prompt=child_prompt,
-            middleware=[ContextManagerMiddleware(self.settings,child_tools,child_prompt,'subagent',None,None,None,{},self.context_calibration,
+            middleware=[GenerationRecoveryMiddleware(GenerationPolicy(output_cap, 0), scope='subagent'),
+                ContextManagerMiddleware(self.settings,child_tools,child_prompt,'subagent',None,None,None,{},self.context_calibration,
                     parts=child_parts,requested_output=output_cap),
-                finish_budget, ModelAccountingMiddleware(self.settings),
+                finish_budget, ModelAccountingMiddleware(self.settings, record=lambda kind, data:
+                    self.session_store.append_event(parent_thread_id, kind, data) if parent_thread_id else None),
                 SecretRedactionMiddleware(self.settings.api_key)],
         )
         with collect_model_usage(reuse=True) as collector:
             budget_failure=None
             try:
-                result = await child.ainvoke(
-                    {"messages": [HumanMessage(content=prompt)]},
-                    {"recursion_limit": 16, **({'configurable': {'thread_id': parent_thread_id}} if parent_thread_id else {})},
-                )
+                # The parent's once-only permit authorizes its task handler,
+                # not nested child tools. Children use their own subagent gate.
+                from nailong.core.tool_approval import active_batch_permit
+                child_batch_token = active_batch_permit.set(None)
+                try:
+                    result = await child.ainvoke(
+                        {"messages": [HumanMessage(content=prompt)]},
+                        {"recursion_limit": 16, **({'configurable': {'thread_id': parent_thread_id}} if parent_thread_id else {})},
+                    )
+                finally:
+                    active_batch_permit.reset(child_batch_token)
                 messages = result.get("messages", []) if isinstance(result, dict) else []
                 answer = str(getattr(messages[-1], "content", "")) if messages else "子代理没有返回文本。"
+            except ModelOutputTruncated as error:
+                answer = str(error)
+                budget_failure = {**error.diagnostics, 'scope': 'subagent', 'reason': 'output_truncated'}
             except (CostBudgetExceeded, TokenBudgetExceeded) as error:
                 answer = str(error)
                 budget_failure=getattr(error,'diagnostics',{'reason':'cost_budget'})
@@ -448,6 +552,14 @@ class AgentRuntimeFactory:
             except ValueError:
                 return None
         return self.task_store.snapshot(thread_id)
+
+    @staticmethod
+    def _runtime_environment():
+        import platform
+        import sys
+        import tempfile
+        return {'python_executable':sys.executable, 'python_version':platform.python_version(),
+                'platform':sys.platform, 'temporary_directory':tempfile.gettempdir()}
 
     def _prompt_parts(self, profile, target_path, tool_names, thread_id, memory_snapshot=None):
         snapshot = memory_snapshot if memory_snapshot is not None else self._memory_snapshot
@@ -548,12 +660,23 @@ class AgentRuntimeFactory:
             parts=self._prompt_parts(profile,target_path,tool_names,thread_id,snapshot),goal_store=self.goal_store,
             request_filter=memory_context.filter_messages,requested_output=getattr(self.model,'max_tokens',None),
             memory_budget=snapshot.report(), task_snapshot_provider=current_task if thread_id else None,
-            memory_request_context=memory_context,task_history=task_history)
+            memory_request_context=memory_context,task_history=task_history,
+            runtime_environment=self._runtime_environment())
         # Budget accounting sees the complete request, including the task tail.
-        # Execution-time permissions own the sole approval gate.
+        # The execution gate still checks permissions and versions. Native graph
+        # approvals are collected before any sibling tool starts a side effect.
+        from nailong.core.tool_approval import BatchApprovalMiddleware
         middleware = [TaskLifecycleMiddleware(self.task_store, current_task(thread_id) if thread_id else None),
-            MemoryContextMiddleware(memory_context), context, ReviewInputMiddleware(),
-            ModelAccountingMiddleware(self.settings, main_agent=True), SecretRedactionMiddleware(self.settings.api_key)]
+            MemoryContextMiddleware(memory_context),
+            GenerationRecoveryMiddleware(
+                generation_policy(self.settings), lambda kind, data: self.session_store.append_event(thread_id, kind, data)
+                if thread_id else None),
+            context, ReviewInputMiddleware(),
+            BatchApprovalMiddleware(self.tool_execution_context, tools, profile, thread_id,
+                                    current_task if thread_id else None),
+            ModelAccountingMiddleware(self.settings, main_agent=True, record=lambda kind, data:
+                self.session_store.append_event(thread_id, kind, data) if thread_id else None),
+            SecretRedactionMiddleware(self.settings.api_key)]
 
         runtime = create_agent(
             model=self.model,
@@ -595,7 +718,24 @@ class AgentRuntimeFactory:
             context = AsyncSqliteSaver.from_conn_string(
                 str(self.session_store.database_path)
             )
-            self.async_checkpointer = await context.__aenter__()
+            # aiosqlite opens on a worker thread. Cancelling its entry can lose
+            # the handle before the context owns it, so join entry and close it.
+            opening = asyncio.create_task(context.__aenter__())
+            try:
+                self.async_checkpointer = await asyncio.shield(opening)
+            except asyncio.CancelledError:
+                async def close_opened():
+                    await opening
+                    await context.__aexit__(None, None, None)
+
+                cleanup = asyncio.create_task(close_opened())
+                while not cleanup.done():
+                    try:
+                        await asyncio.shield(cleanup)
+                    except asyncio.CancelledError:
+                        pass
+                cleanup.result()
+                raise
             self._async_checkpointer_context = context
             await self.async_checkpointer.setup()
         return self._build_runtime(
@@ -608,18 +748,25 @@ class AgentRuntimeFactory:
         )
 
     def close(self) -> None:
+        for budget in getattr(self, '_session_token_budgets', {}).values():
+            budget.close()
         context = getattr(self, "_checkpointer_context", None)
         if context is not None:
             self._checkpointer_context = None
             context.__exit__(None, None, None)
 
     async def aclose(self) -> None:
-        await self.mcp_manager.aclose()
-        context = getattr(self, "_async_checkpointer_context", None)
-        if context is not None:
-            self._async_checkpointer_context = None
-            self.async_checkpointer = None
-            await context.__aexit__(None, None, None)
+        try:
+            await self.mcp_manager.aclose()
+        finally:
+            try:
+                context = getattr(self, "_async_checkpointer_context", None)
+                if context is not None:
+                    self._async_checkpointer_context = None
+                    self.async_checkpointer = None
+                    await context.__aexit__(None, None, None)
+            finally:
+                self.close()
 
 
 def create_agent_runtime(settings: Settings) -> CompiledStateGraph:

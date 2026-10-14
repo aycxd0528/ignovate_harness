@@ -13,6 +13,7 @@ from langchain_core.messages import ToolMessage
 from rich.cells import cell_len
 from rich.console import Console as RichConsole
 from rich.style import Style
+from textual.geometry import Size
 from textual.widgets import RichLog, Static
 
 from agent_service import AgentService, TurnEvent
@@ -149,18 +150,44 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
                 app._append_user('检查项目')
                 for index in range(15):
                     app._append_assistant(f"Paragraph {index:02d}: " + "需要在窄窗口中重新换行并保持滚动位置。" * 4)
-                await pilot.pause()
                 log = app.query_one('#transcript', RichLog)
+
+                async def wait_for_transcript(size):
+                    # Reflow may reach the bottom before its follow-completion callback runs.
+                    async def settle():
+                        while True:
+                            await pilot.pause()
+                            if (app.screen.size == Size(*size)
+                                    and log._render_size == (log._size, log.container_size)
+                                    and log._resize_scroll is None
+                                    and not log._reflow_scheduled
+                                    and not log._full_reflow_pending
+                                    and not log._follow_requested):
+                                return
+
+                    try:
+                        await asyncio.wait_for(settle(), 3)
+                    except TimeoutError:
+                        self.fail(
+                            f'Transcript did not settle at {size!r}: screen={app.screen.size!r}, '
+                            f'render_size={log._render_size!r}, viewport={(log._size, log.container_size)!r}, '
+                            f'resize_scroll={log._resize_scroll!r}, reflow={log._reflow_scheduled!r}, '
+                            f'full_reflow={log._full_reflow_pending!r}, follow={log._follow_requested!r}, '
+                            f'scroll_y={log.scroll_y!r}'
+                        )
+
+                await wait_for_transcript((100, 30))
                 self.assertTrue(log.is_vertical_scroll_end)
                 await pilot.resize_terminal(40, 18)
-                await pilot.pause()
+                await wait_for_transcript((40, 18))
                 self.assertTrue(log.is_vertical_scroll_end)
                 visible = ''.join(log.render_line(y).text for y in range(log.scrollable_content_region.height))
                 self.assertIn('Paragraph 14', visible)
                 log.scroll_to(y=0, animate=False)
-                await pilot.pause()
+                await wait_for_transcript((40, 18))
+                self.assertEqual(log.scroll_y, 0)
                 await pilot.resize_terminal(90, 28)
-                await pilot.pause()
+                await wait_for_transcript((90, 28))
                 self.assertEqual(log.scroll_y, 0, '阅读较早的消息时不应强制跳到末尾')
 
     async def test_theme_switch_recolors_messages_already_in_history(self):

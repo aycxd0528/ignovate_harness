@@ -1,0 +1,13 @@
+{
+  "initial": "256",
+  "after_vt_enabled": "256",
+  "fresh": "truecolor",
+  "cached_ansi": "\u001b[38;5;110;48;5;16msample\u001b[0m",
+  "rgb_ansi": "\u001b[38;2;136;192;208;48;2;17;22;28msample\u001b[0m",
+  "raw_lf_keys": [
+    "ctrl+j"
+  ],
+  "ctrl_j_text": "ab",
+  "ctrl_enter_text": "a\nb",
+  "note": "Separate Style instances used per console, avoiding Rich Style ANSI cache reuse in the comparison."
+}

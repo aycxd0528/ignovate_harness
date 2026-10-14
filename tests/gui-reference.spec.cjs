@@ -1,0 +1,52 @@
+const {chromium}=require('playwright');
+const assert=require('node:assert/strict');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+(async()=>{
+ const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+ const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark'});
+ const second=fs.mkdtempSync(path.join(os.tmpdir(),'GUI-workspace-B-'));
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ const snapshot=()=>page.evaluate(async()=>await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json());
+ try{
+  await page.goto('http://127.0.0.1:8767/#token=browser-test-only');await page.locator('#project-name').filter({hasText:'GUI 验证项目'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'比较',exact:true}).count(),0);
+  assert.equal(await page.locator('#sidebar-toggle').isVisible(),false);
+  await page.getByRole('button',{name:'收起侧栏',exact:true}).click();await page.locator('#sidebar-toggle').waitFor({state:'visible'});await page.locator('#sidebar-toggle').click();
+  await page.getByRole('button',{name:'选择工作区',exact:true}).click();await page.getByRole('menuitemradio',{name:'GUI 验证项目',exact:true}).waitFor();await page.keyboard.press('Escape');
+  await page.route('**/api/command',async route=>{if(route.request().postDataJSON().name==='create')await new Promise(resolve=>setTimeout(resolve,150));return route.continue();});
+  await page.getByRole('button',{name:'新会话',exact:true}).click();await page.getByRole('button',{name:'会话地图',exact:true}).click();
+  await page.getByPlaceholder('从一个新问题开始…').fill('地图中的新会话');await page.locator('.map-draft').getByRole('button',{name:'发送追问',exact:true}).click();
+  await page.locator('.map-card:not(.map-run-card)').filter({hasText:'地图中的新会话'}).waitFor();
+  const first=await snapshot(),node=first.nodes[0];assert.equal(first.branches.length,1,'switching to map while new conversation creation is pending must not create a duplicate');
+  await page.locator(`.map-card[data-node-id="${node.id}"]`).getByRole('button',{name:'继续追问',exact:true}).click();
+  await page.getByPlaceholder('输入追问，继续这条路径…').fill('第二轮追问');await page.locator('.map-draft').getByRole('button',{name:'发送追问',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.map-card:not(.map-run-card)').length===2);
+  await page.locator(`.map-card[data-node-id="${node.id}"]`).getByRole('button',{name:'创建分支',exact:true}).click();
+  await page.getByPlaceholder('输入这个分支的新问题…').fill('平行探索方案');await page.locator('.map-draft').getByRole('button',{name:'权限管理',exact:true}).click();await page.getByRole('menuitemradio',{name:'帮我批准',exact:true}).click();await page.locator('.map-draft').getByRole('button',{name:'发送追问',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelectorAll('.map-card:not(.map-run-card)').length===3);
+  const branched=await snapshot();assert.equal(branched.branches.find(b=>b.id===branched.runs.at(-1).branch_id).permission_mode,'acceptEdits');assert.equal(branched.branches.find(b=>b.id===node.branch_id).permission_mode,'default');assert.equal(branched.branches.length,2);assert.ok(branched.nodes.filter(n=>n.parent_id===node.id).length===2);
+  assert.equal(await page.locator('.conversation-group .branch-row').count(),1);
+  const collapse=page.locator(`.map-card[data-node-id="${node.id}"]`).getByRole('button',{name:'折叠',exact:true});await collapse.focus();await collapse.press('Enter');
+  assert.equal(await page.locator('.map-card').count(),1);assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('aria-label')),'展开');await page.keyboard.press('Enter');assert.equal(await page.locator('.map-card').count(),3);
+  await page.locator(`.map-card[data-node-id="${node.id}"] .map-excerpt`).evaluate(element=>{const range=document.createRange();range.selectNodeContents(element.querySelector('p').firstChild);const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);});await page.mouse.up();
+  await page.getByRole('button',{name:'引用追问',exact:true}).click();assert.match(await page.getByLabel('地图追问').inputValue(),/引用回合/);assert.equal((await snapshot()).runs.length,3,'quoting prepares a draft without execution');await page.getByRole('button',{name:'取消追问',exact:true}).click();
+
+  assert.ok(await page.locator('.map-card .map-excerpt').first().evaluate(e=>getComputedStyle(e).overflowY)==='auto');
+  await page.locator('.map-card').first().getByRole('button',{name:'详情',exact:true}).click();await page.locator('#inspector .answer').waitFor();
+  await page.getByRole('button',{name:'聊天',exact:true}).click();await page.locator('.turn').first().getByRole('button',{name:'详情',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('#inspector .answer'));
+  await page.getByRole('button',{name:'切换详情栏',exact:true}).click();
+  await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();
+  const slider=page.getByRole('slider',{name:'推理等级',exact:true});assert.equal(await slider.getAttribute('max'),'100');
+  const bounds=await slider.boundingBox();await page.mouse.move(bounds.x+bounds.width*.34,bounds.y+10);await page.mouse.down();await page.mouse.move(bounds.x+bounds.width*.43,bounds.y+10);await page.mouse.up();
+  await page.waitForFunction(()=>Number(document.querySelector('.reasoning-slider').value)%25===0);
+  await slider.press('End');await page.waitForFunction(async()=>{const s=await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json();return s.configuration.reasoning_effort==='max'});
+  await page.locator('.effort-fire').waitFor();await page.waitForTimeout(1100);await page.screenshot({path:'/tmp/ignovate-gui-effort-reference.png'});
+  await page.getByRole('button',{name:'主题',exact:true}).click();await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();await slider.waitFor();await page.screenshot({path:'/tmp/ignovate-gui-effort-light.png'});await slider.press('Escape');
+  await page.getByRole('button',{name:'选择工作区',exact:true}).click();await page.getByRole('menuitem',{name:'打开其他工作区',exact:true}).click();await page.getByLabel('目录路径').fill(second);await page.getByRole('button',{name:'打开',exact:true}).click();
+  await page.locator('#project-name').filter({hasText:path.basename(second)}).waitFor();assert.equal(await page.locator('.workspace-group').filter({has:page.locator('#project-name')}).locator('.session').count(),0);
+  await page.getByRole('button',{name:'选择工作区',exact:true}).click();await page.getByRole('menuitemradio',{name:'GUI 验证项目',exact:true}).click();
+  await page.locator('#project-name').filter({hasText:'GUI 验证项目'}).waitFor();await page.locator('.session').first().click();await page.getByRole('button',{name:'会话地图',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.map-card:not(.map-run-card)').length===3);
+  await page.getByRole('button',{name:'适应视图',exact:true}).click();await page.screenshot({path:'/tmp/ignovate-gui-synapse-reference.png'});
+  assert.deepEqual(errors,[]);console.log('Reference map inline follow-up/fork, per-conversation scope, workspace selection/isolation and continuous glowing effort slider passed.');
+ }finally{await browser.close();fs.rmSync(second,{recursive:true,force:true});}
+})().catch(e=>{console.error(e);process.exitCode=1});

@@ -21,13 +21,18 @@ import local_tools
 from nailong.core.permissions import ApprovalDecision, Decision, PermissionEngine
 from nailong.core.sessions import ProjectSessionStore, StreamingRedactor
 from nailong.core.compact import compact_messages
+from nailong.core.tool_events import TurnToolLedger
 from nailong.core.usage import message_usage
 from nailong.core.budgets import active_cost_budget, GoalCostBudget, CostBudgetExceeded
 from nailong.core.budgets import active_turn_budget, TurnModelBudget, TurnModelLimitExceeded
 from nailong.tools.files import FileSession
-from nailong.core.hooks import HookRunner
+from nailong.tools.execution import (ApprovalCancellationScope, active_approval_cancellation,
+                                    attest_native_pre_tool_no_effects)
+from nailong.core.hooks import HookRunner, HookRunResult
 from nailong.core.task_requests import task_request_kind, render_task_status, is_simple_project_question
 from nailong.tools.previews import preview_mutation
+from nailong.core.generation import ModelOutputTruncated, active_model_responses
+from nailong.core.cumulative_budget import active_session_token_budget, SessionTokenBudgetExceeded
 
 
 MAX_TURN_MODEL_CALLS = 40
@@ -39,6 +44,15 @@ TOKEN_LOG_FLUSH_SECONDS = 1.0
 AgentProfile = Literal["chat", "init", "review", "plan"]
 ApprovalHandler = Callable[[dict, int, int], str | ApprovalDecision | Awaitable[str | ApprovalDecision]]
 StatusHandler = Callable[[str], None]
+_NATIVE_HOOK_METHODS = {name: getattr(HookRunner, name) for name in
+    ('run_event', '_safe_read', '_approved_commands', '_save_approval', '_fingerprint', '_execute')}
+
+
+def _native_hook_runner(runner):
+    return type(runner) is HookRunner and all(
+        getattr(getattr(runner, name), '__func__', getattr(runner, name)) is method
+        and (name == '_fingerprint' or getattr(getattr(runner, name), '__self__', None) is runner)
+        for name, method in _NATIVE_HOOK_METHODS.items())
 
 
 @dataclass(frozen=True)
@@ -112,9 +126,15 @@ def _resume_approvals(actions, decisions):
     if actions and all(action.get('_nailong_interrupt_id') for action in actions):
         grouped = {}
         for action, decision in zip(actions, decisions, strict=True):
-            grouped.setdefault(action['_nailong_interrupt_id'], {'decisions': []})['decisions'].append(decision)
+            group = grouped.setdefault(action['_nailong_interrupt_id'], {'decisions': []})
+            group['decisions'].append(decision)
+            if action.get('_nailong_approval_batch'):
+                group['_nailong_approval_batch'] = action['_nailong_approval_batch']
         return Command(resume=grouped)
-    return Command(resume={'decisions': decisions})
+    answer = {'decisions': decisions}
+    if actions and actions[0].get('_nailong_approval_batch'):
+        answer['_nailong_approval_batch'] = actions[0]['_nailong_approval_batch']
+    return Command(resume=answer)
 
 
 def _contains_secret(action: dict, api_key: str) -> bool:
@@ -141,14 +161,17 @@ def _usage_from_message(message) -> dict | None:
 async def _budgeted_events(stream, budget):
     """Apply the budget only while advancing the graph, never across a UI yield."""
     iterator = stream.__aiter__()
+    approval_scope = ApprovalCancellationScope()
     try:
         while True:
             token = active_cost_budget.set(budget)
+            approval_token = active_approval_cancellation.set(approval_scope)
             try:
                 item = await anext(iterator)
             except StopAsyncIteration:
                 return
             finally:
+                active_approval_cancellation.reset(approval_token)
                 active_cost_budget.reset(token)
             yield item
     finally:
@@ -159,9 +182,11 @@ async def _budgeted_events(stream, budget):
 
 async def _budgeted_invoke(agent, inputs, config, budget):
     token = active_cost_budget.set(budget)
+    approval_token = active_approval_cancellation.set(ApprovalCancellationScope())
     try:
         return await agent.ainvoke(inputs, config, version="v2")
     finally:
+        active_approval_cancellation.reset(approval_token)
         active_cost_budget.reset(token)
 
 
@@ -202,15 +227,31 @@ class AgentService:
                         if task is None or task['lifecycle'] in {'paused', 'blocked'}:
                             return {'blocked': True, 'reason': '当前任务已更新或暂停，未启动该操作。'}
                 if action.get('profile') in {'init', 'plan', 'review', 'subagent'} or self.permission_mode == 'plan':
+                    attest_native_pre_tool_no_effects(pre_tool)
                     return None
-                value = self._run_hook('PreToolUse', name=str(action.get('name', '')),
-                    args=action.get('args', {}) or {}, approval_handler=self._hook_approval.get())
+
+                async def run_pre_tool():
+                    run_hook = self._run_hook
+                    runner = self.hook_runner
+                    trusted = (getattr(run_hook, '__func__', None) is _NATIVE_RUN_HOOK
+                               and getattr(run_hook, '__self__', None) is self
+                               and _native_hook_runner(runner))
+                    result = await run_hook('PreToolUse', name=str(action.get('name', '')),
+                        args=action.get('args', {}) or {}, approval_handler=self._hook_approval.get())
+                    if (trusted and self.hook_runner is runner and _native_hook_runner(runner)
+                            and type(result) is HookRunResult and not result.outputs
+                            and not result.side_effects):
+                        attest_native_pre_tool_no_effects(pre_tool)
+                    return result
+
+                value = run_pre_tool()
                 try:
                     asyncio.get_running_loop()
                 except RuntimeError:
                     return asyncio.run(value)
                 return value
             execution.pre_tool_hook = pre_tool
+            execution._native_pre_tool_hook = pre_tool
             def observe_interrupted(observation):
                 if self.task_store is None:
                     return
@@ -222,7 +263,7 @@ class AgentService:
                         return
                     if observation.get('status') != 'interrupted':
                         name = observation.get('name')
-                        call_id = observation.get('call_id')
+                        call_id = observation.get('tool_result_id') or observation.get('call_id')
                         if not call_id:
                             return
                         seen = self._turn_task.get().setdefault('_observed_progress_calls', set())
@@ -239,7 +280,9 @@ class AgentService:
                             self.task_store.set_state(identity, progress=progress['reason'])
                         seen.add(call_id)
                         return
-                    self.task_store.reconcile(identity, interrupted=True)
+                    approval_read = observation.get('interruption_source') == 'approval_sibling_read'
+                    if not approval_read:
+                        self.task_store.reconcile(identity, interrupted=True)
                     name = observation.get('name', '')
                     paths = []
                     for path in observation.get('paths', []):
@@ -257,7 +300,8 @@ class AgentService:
                         'task_revision': task['revision'],
                         'source': 'runtime', 'status': 'interrupted', 'coverage': 'unknown',
                         'paths': paths, 'input_fingerprint': '',
-                        'summary': f'{name} 已中断；已启动操作的效果需要核实。',
+                        'summary': (f'{name} 因同批工具等待审批而取消；读取结果未完成。' if approval_read
+                            else f'{name} 已中断；已启动操作的效果需要核实。'),
                         'artifact_ref': observation.get('artifact_ref') or '',
                     })
             execution.observer = observe_interrupted
@@ -295,6 +339,10 @@ class AgentService:
             return None
         if task is not None and task['lifecycle'] == 'completed' and not engineering:
             return None
+        execution = getattr(self.runtime_factory, 'tool_execution_context', None)
+        if execution is not None and not goal_round:
+            from nailong.core.tool_approval import abandon_approval_batches
+            abandon_approval_batches(execution, thread_id)
         if task is not None and task.get('input_fingerprint'):
             current = await self._task_input_fingerprint(task)
             task = self.task_store.reconcile(thread_id, current_input_fingerprint=current)
@@ -421,7 +469,7 @@ class AgentService:
         with self._bound_turn_task(thread_id, require_revision=False) as task:
             if task is None:
                 return None
-            evidence_id = f"tool-{getattr(message, 'tool_call_id', '') or observation_digest(payload)[:24]}"
+            evidence_id = f"tool-{payload.get('tool_result_id') or getattr(message,'id',None) or getattr(message, 'tool_call_id', '') or observation_digest(payload)[:24]}"
             if any(row.get('id') == evidence_id for row in task['evidence']):
                 return None
             path = body.get('path') or args.get('path')
@@ -466,13 +514,13 @@ class AgentService:
             # cannot pause its new investigation strategy.
             if task['revision'] != turn_task['revision']:
                 return None
-            if str(getattr(message, 'tool_call_id', '') or '') in turn_task.get('_observed_progress_calls', set()):
+            if str(payload.get('tool_result_id') or getattr(message, 'tool_call_id', '') or '') in turn_task.get('_observed_progress_calls', set()):
                 return None
             def stable(value):
                 if isinstance(value, dict):
                     return {key: stable(item) for key, item in value.items() if key not in {
                         'elapsed_ms', 'duration_ms', 'timestamp', 'started_at', 'finished_at',
-                        'call_id', 'artifact_ref', 'result_ref', 'reference'}}
+                        'call_id', 'artifact_ref', 'result_ref', 'reference', 'tool_result_id', 'tool_result_turn_id'}}
                 if isinstance(value, list):
                     return [stable(item) for item in value]
                 return value
@@ -608,18 +656,25 @@ class AgentService:
                 return 0
         return _graph_step(agent, config)
 
-    async def _message_ids_at_boundary_async(self, agent, config: dict) -> list[str]:
-        get_state = getattr(agent, "aget_state", None)
-        if callable(get_state):
-            try:
-                state = await get_state(config)
-                messages = (getattr(state, "values", {}) or {}).get("messages", [])
-            except NotImplementedError:
-                return self._message_ids_at_boundary(agent, config)
-            except Exception:
+    async def _messages_at_boundary_async(self, agent, config: dict) -> list:
+        get_state = getattr(agent, 'aget_state', None)
+        try:
+            if callable(get_state):
+                try:
+                    state = await get_state(config)
+                except NotImplementedError:
+                    state = agent.get_state(config)
+            elif callable(getattr(agent, 'get_state', None)):
+                state = agent.get_state(config)
+            else:
                 return []
-            return [str(message.id) for message in messages if getattr(message, "id", None)]
-        return self._message_ids_at_boundary(agent, config)
+            return list((getattr(state, 'values', {}) or {}).get('messages', []))
+        except Exception:
+            return []
+
+    async def _message_ids_at_boundary_async(self, agent, config: dict) -> list[str]:
+        return [str(m.id) for m in await self._messages_at_boundary_async(agent, config)
+                if getattr(m, 'id', None)]
 
     async def _compact_state(self, agent, config: dict, *, force: bool = False):
         get_state = getattr(agent, "aget_state", None)
@@ -947,7 +1002,10 @@ class AgentService:
             self.permission_engine.project_root,
         )
         if name == "run_command":
-            preview = {"command": self._redact_secret(str(args.get("command", "")))[:2_000], "cwd": str(self.permission_engine.project_root)}
+            from nailong.core.permissions import command_for_permission
+            preview = {"command": self._redact_secret(command_for_permission(args) or '')[:2_000],
+                       "cwd": str(self.permission_engine.project_root),
+                       "execution_mode": 'argv' if args.get('argv') is not None else 'shell'}
         elif not preview and args.get("path"):
             preview = {"path": str(args["path"])}
         return self._redact_preview(
@@ -960,6 +1018,8 @@ class AgentService:
         )
 
     def _tool_result_summary(self, message: ToolMessage) -> dict:
+        from nailong.core.validation_output import command_test_output
+
         content = _message_text(getattr(message, "content", ""))
         try:
             payload = json.loads(content)
@@ -969,10 +1029,18 @@ class AgentService:
         if isinstance(payload, dict):
             if "ok" in payload:
                 summary["ok"] = bool(payload["ok"])
+            if type(payload.get('started')) is bool:
+                summary['started'] = payload['started']
+                summary['execution_state'] = 'started' if payload['started'] else 'not_started'
+            else:
+                summary['execution_state'] = 'unknown'
             if payload.get("path"):
                 summary["path"] = str(payload["path"])
             if payload.get("exit_code") is not None:
                 summary["exit_code"] = payload["exit_code"]
+            for field in ('expected_exit_code','exit_code_matches','completed','execution_mode','shell','output_archive'):
+                if field in payload:
+                    summary[field] = payload[field]
             if payload.get("timed_out"):
                 summary["timed_out"] = True
             if payload.get("error"):
@@ -982,8 +1050,15 @@ class AgentService:
             elif "matches" in payload:
                 summary["summary"] = f"返回 {len(payload.get('matches') or [])} 条匹配"
             elif "diff" in payload:
-                summary["summary"] = f"替换 {payload.get('replacements', 0)} 处"
-                summary["diff"] = str(payload["diff"])[:3_000]
+                from nailong.tools.diffs import DIFF_LIMIT, diff_statistics
+                diff = str(payload['diff'])
+                summary['summary'] = f"写入 {payload['chars_written']} 个字符" if 'chars_written' in payload else f"替换 {payload.get('replacements', 0)} 处"
+                summary['diff'] = diff[:DIFF_LIMIT]
+                summary['diff_truncated'] = bool(payload.get('diff_truncated')) or len(diff) > DIFF_LIMIT
+                counts = diff_statistics(diff)
+                for field in ('additions', 'deletions'):
+                    count = payload.get(field, counts[field])
+                    summary[field] = count if type(count) is int and count >= 0 else counts[field]
             elif "content" in payload:
                 summary["summary"] = f"读取 {len(str(payload['content']))} 个字符"
             elif "output" in payload:
@@ -991,6 +1066,9 @@ class AgentService:
             elif "chars_written" in payload:
                 summary["summary"] = f"写入 {payload['chars_written']} 个字符"
             if "output" in payload:
+                test_output = command_test_output(summary["name"], payload)
+                if test_output is not None:
+                    summary["test_output"] = test_output
                 output = self._redact_secret(str(payload["output"]))
                 lines = [line for line in output.splitlines() if line.strip()]
                 tail = "\n".join(lines[-3:])[-400:]
@@ -1013,7 +1091,18 @@ class AgentService:
                 messages.extend(node_messages)
         return messages
 
-    async def stream_turn(
+    async def stream_turn(self, message, config, **kwargs):
+        """Serialize execution across all clients using this project store."""
+        from nailong.core.project_execution import project_execution
+        with project_execution(self.session_store):
+            stream = self._stream_turn_unlocked(message, config, **kwargs)
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                await stream.aclose()
+
+    async def _stream_turn_unlocked(
         self,
         message: str,
         config: dict,
@@ -1109,7 +1198,10 @@ class AgentService:
                     },
                 )
         initial_step = await self._graph_step_async(agent, config)
-        boundary_ids = await self._message_ids_at_boundary_async(agent, config)
+        boundary_messages = await self._messages_at_boundary_async(agent, config)
+        boundary_ids = [str(m.id) for m in boundary_messages if getattr(m, 'id', None)]
+        turn_id = uuid.uuid4().hex
+        tool_ledger = TurnToolLedger(boundary_messages, turn_id)
         review_collector = (await self._prepare_review(agent, config, participating_task)
             if profile == 'review' and participating_task is not None else None)
         visible_turn = not pin_message or history_display is not None
@@ -1117,7 +1209,7 @@ class AgentService:
             self.session_store.append_event(
                 thread_id,
                 "turn_start",
-                {"message_ids": boundary_ids, "profile": profile, "visible": visible_turn},
+                {"message_ids": boundary_ids, "turn_id": turn_id, "profile": profile, "visible": visible_turn},
             )
         if simple_project_question:
             self._event(thread_id, 'tool_policy', {
@@ -1125,8 +1217,9 @@ class AgentService:
             })
 
         async def invocation_config() -> dict:
+            invocation_base={**config,'metadata':{**(config.get('metadata') or {}),'nailong_turn_id':turn_id}}
             if initial_step is None:
-                return {**config, "recursion_limit": graph_step_limit - 1}
+                return {**invocation_base, "recursion_limit": graph_step_limit - 1}
             current_step = await self._graph_step_async(agent, config)
             consumed = max(0, (current_step or 0) - initial_step)
             remaining = graph_step_limit - consumed
@@ -1136,7 +1229,7 @@ class AgentService:
                 raise TurnRecursionLimitError(
                     f"本轮内部执行已达到上限（{graph_step_limit} 步），已停止本轮。"
                 )
-            return {**config, "recursion_limit": remaining - 1}
+            return {**invocation_base, "recursion_limit": remaining - 1}
 
         safe_message = (
             message.replace(self.api_key, "[密钥已隐藏]") if self.api_key else message
@@ -1175,15 +1268,35 @@ class AgentService:
             self._event(thread_id,"user",{"text":self._redact_secret(history_display if history_display is not None else original_message)})
         started_tools: dict[str, float] = {}
         tool_args_by_id: dict[str, dict] = {}
-        emitted_tool_calls: set[str] = set()
         emitted_usage_message_ids: set[str] = set(boundary_ids)
         stream = None
+        get_session_budget = getattr(self.runtime_factory, 'session_token_budget', None)
+        session_budget = get_session_budget(thread_id) if callable(get_session_budget) else None
         hook_approval_token = self._hook_approval.set(approval_handler)
         from agent import active_review_coverage, TaskExecutionStopped
         review_token = active_review_coverage.set(review_collector)
         task_token = self._turn_task.set(participating_task)
         turn_budget = TurnModelBudget(max_model_calls, lambda data: self._event(thread_id, 'model_call', data))
         budget_token = active_turn_budget.set(turn_budget)
+        session_budget_token = active_session_token_budget.set(session_budget)
+        model_responses = []
+        response_token = active_model_responses.set(model_responses)
+        emitted_model_call_ids = set()
+
+        def response_usage():
+            events = []
+            while model_responses:
+                info = model_responses.pop(0)
+                identity = info['model_call_id']
+                if identity in emitted_model_call_ids:
+                    continue
+                emitted_model_call_ids.add(identity)
+                if info['usage'] is not None:
+                    events.append(self._event(thread_id, 'usage', {**info['usage'], 'model_call_id': identity}))
+                else:
+                    events.append(self._event(thread_id, 'usage_missing', {'scope': 'main', 'model_call_id': identity}))
+            return events
+
         try:
             await self._notify(status_handler, "thinking")
             yield self._event(thread_id, "status", {"status": "thinking"})
@@ -1200,6 +1313,8 @@ class AgentService:
                         stream_mode=["messages", "updates"],
                     ), cost_budget)
                     async for item in stream:
+                        for event in response_usage():
+                            yield event
                         if isinstance(item, tuple) and len(item) == 2:
                             mode, payload = item
                         else:
@@ -1226,6 +1341,11 @@ class AgentService:
                             break
                         for updated_message in self._update_messages(payload):
                             if isinstance(updated_message, AIMessage):
+                                if tool_ledger.historical_ai(updated_message):
+                                    diagnostic = tool_ledger.replay_diagnostic(updated_message, 'boundary_ai')
+                                    if diagnostic:
+                                        yield self._event(thread_id, 'history_replayed', diagnostic)
+                                    continue
                                 # Finish this message's redaction buffer before
                                 # a tool record or the next model message can
                                 # appear in the transcript.
@@ -1239,27 +1359,30 @@ class AgentService:
                                 message_id = str(getattr(updated_message, "id", "") or "")
                                 if usage is not None and (
                                     not message_id or message_id not in emitted_usage_message_ids
-                                ):
+                                ) and updated_message.response_metadata.get('nailong_model_call_id') not in emitted_model_call_ids:
                                     yield self._event(thread_id, "usage", usage)
                                     if message_id:
                                         emitted_usage_message_ids.add(message_id)
-                                elif usage is None:
+                                elif usage is None and updated_message.response_metadata.get('nailong_model_call_id') not in emitted_model_call_ids:
                                     self._event(thread_id, "usage_missing", {"scope": "main", "message_id": message_id})
                                 pending_usage = None
-                                for tool_call in updated_message.tool_calls:
+                                for tool_call in tool_ledger.register(updated_message):
                                     call_id = str(tool_call.get("id", ""))
-                                    if call_id and call_id in emitted_tool_calls:
-                                        continue
-                                    if call_id:
-                                        emitted_tool_calls.add(call_id)
                                     name = str(tool_call.get("name", ""))
                                     args = tool_call.get("args", {}) or {}
                                     tool_args_by_id[call_id] = args
                                     event_data = self._tool_start_data(name, args, call_id, profile=profile,
                                         tool_spec=getattr(agent, '_nailong_tool_specs', {}).get(name))
+                                    event_data.update(tool_ledger.metadata(updated_message, call_id, 'requested'))
                                     started_tools[call_id] = time.monotonic()
                                     yield self._event(thread_id, "tool_start", event_data)
                             elif isinstance(updated_message, ToolMessage):
+                                disposition = tool_ledger.consume(updated_message)
+                                if disposition != 'current':
+                                    diagnostic = tool_ledger.replay_diagnostic(updated_message, disposition)
+                                    if diagnostic:
+                                        yield self._event(thread_id, 'history_replayed', diagnostic)
+                                    continue
                                 call_id = str(getattr(updated_message, "tool_call_id", ""))
                                 elapsed_ms = int(
                                     max(0.0, time.monotonic() - started_tools.pop(call_id, time.monotonic())) * 1000
@@ -1267,21 +1390,23 @@ class AgentService:
                                 tool_summary = self._tool_result_summary(updated_message)
                                 tool_summary["elapsed_ms"] = elapsed_ms
                                 tool_summary["call_id"] = call_id
+                                tool_summary.update(tool_ledger.metadata(updated_message, call_id,
+                                    tool_summary.get('execution_state', 'unknown')))
                                 yield self._event(thread_id, "tool_end", tool_summary)
-                                progress = await self._observe_task_tool(thread_id, updated_message, tool_args_by_id.get(call_id, {}))
+                                progress = await self._observe_task_tool(thread_id, updated_message, tool_args_by_id.get(call_id, tool_ledger.arguments.get(call_id, {})))
                                 if progress and progress['action'] != 'none':
                                     yield self._event(thread_id, 'notice', {'text': progress['reason']})
                                 child_usage = self._child_usage_event(thread_id)
                                 if child_usage is not None:
                                     yield child_usage
                                 tool_name = str(getattr(updated_message, "name", ""))
-                                hook_result = await self._run_hook(
-                                    "PostToolUse",
-                                    name=tool_name,
-                                    args=tool_args_by_id.pop(call_id, {}),
-                                    approval_handler=approval_handler,
-                                    profile=profile,
-                                )
+                                completed_args = tool_args_by_id.pop(call_id, {})
+                                hook_result = HookRunResult()
+                                if tool_summary.get('started') is not False:
+                                    hook_result = await self._run_hook(
+                                        "PostToolUse", name=tool_name, args=completed_args,
+                                        approval_handler=approval_handler, profile=profile,
+                                    )
                                 if hook_result.feedback:
                                     yield self._event(
                                         thread_id,
@@ -1309,7 +1434,9 @@ class AgentService:
                     if remainder:
                         streamed_text.append(remainder)
                         yield self._event(thread_id, "token", {"text": remainder})
-                    if pending_usage is not None:
+                    for event in response_usage():
+                        yield event
+                    if pending_usage is not None and not emitted_model_call_ids:
                         yield self._event(thread_id, "usage", pending_usage)
                 else:
                     try:
@@ -1324,20 +1451,26 @@ class AgentService:
                             f"本轮内部执行已达到上限（{graph_step_limit} 步），已停止本轮。"
                         ) from error
                     latest_value = _output_value(result)
+                    for event in response_usage():
+                        yield event
                     actions = _interrupt_actions(result)
                     messages = latest_value.get("messages", []) if isinstance(latest_value, dict) else []
                     # The non-streaming adapter must only record new tool results.
                     completed_args = {str(call.get('id', '')): call.get('args', {}) or {}
                         for row in messages for call in getattr(row, 'tool_calls', []) or []}
+                    current_results = []
                     for row in messages:
-                        if isinstance(row, ToolMessage) and str(getattr(row, 'id', '') or '') not in boundary_ids:
+                        if isinstance(row, AIMessage):
+                            tool_ledger.register(row)
+                        if isinstance(row, ToolMessage) and tool_ledger.consume(row) == 'current':
+                            current_results.append(row)
                             progress = await self._observe_task_tool(thread_id, row,
                                 completed_args.get(str(getattr(row, 'tool_call_id', '')), {}))
                             if progress and progress['action'] == 'pause':
                                 yield self._event(thread_id, 'task_paused', {'reason': progress['reason']})
                                 yield self._event(thread_id, 'final', {'text': progress['reason'], 'delivery': {'status': 'blocked'}})
                                 return
-                    for completed_message in messages:
+                    for completed_message in current_results:
                         if getattr(completed_message, "name", None) == "exit_plan_mode":
                             try:
                                 plan_result = json.loads(_message_text(completed_message.content))
@@ -1351,6 +1484,10 @@ class AgentService:
                                 )
                     for completed_message in messages:
                         if getattr(completed_message, "type", None) != "ai":
+                            continue
+                        if tool_ledger.historical_ai(completed_message):
+                            continue
+                        if (getattr(completed_message, 'response_metadata', {}) or {}).get('nailong_model_call_id') in emitted_model_call_ids:
                             continue
                         usage = _usage_from_message(completed_message)
                         message_id = str(getattr(completed_message, "id", "") or "")
@@ -1498,16 +1635,53 @@ class AgentService:
                 current_step = await self._graph_step_async(agent, config)
                 stats = {"model_calls": turn_budget.calls, "model_call_limit": max_model_calls,
                          "summary_only": turn_budget.summary_only,
-                         "tool_calls": len(emitted_tool_calls), "graph_step_limit": graph_step_limit,
+                         "tool_calls": tool_ledger.request_count, "graph_step_limit": graph_step_limit,
                          "graph_steps": max(0, current_step - initial_step) if current_step is not None and initial_step is not None else None}
+                recovery = next(((getattr(m, 'response_metadata', {}) or {}).get('nailong_generation_recovery')
+                    for m in reversed((latest_value or {}).get('messages', []))
+                    if isinstance(m, AIMessage)), None)
                 yield self._event(thread_id, "final", {"text": answer, "stats": stats,
+                    **({'output_status': 'recovered', 'recovery': recovery} if recovery else {}),
                     **({'delivery': report} if report is not None else {})})
                 return
+        except SessionTokenBudgetExceeded as error:
+            for event in response_usage():
+                yield event
+            reason = self._redact_secret(str(error))
+            self._pause_turn_task(thread_id, reason)
+            info = self._redact_tree(error.diagnostics)
+            yield self._event(thread_id, 'token_budget_stop', info)
+            yield self._event(thread_id, 'final', {'text': reason, 'output_status': 'budget_stopped',
+                'diagnostics': info, 'delivery': {'status': 'unverified'},
+                'stats': {'model_calls': turn_budget.calls, 'model_call_limit': max_model_calls,
+                          'tool_calls': tool_ledger.request_count}})
+            return
+        except ModelOutputTruncated as error:
+            for event in response_usage():
+                yield event
+            reason = self._redact_secret(str(error))
+            self._pause_turn_task(thread_id, reason)
+            messages = error.completed_response.result
+            partial = _final_answer({'messages': messages})
+            text = reason
+            if partial not in {'模型返回了空回答。', '模型没有返回文本回答。'}:
+                text += '\n\n未完成片段：\n' + self._redact_secret(partial)
+            diagnostics = self._redact_tree(error.diagnostics)
+            yield self._event(thread_id, 'output_truncated', diagnostics)
+            yield self._event(thread_id, 'final', {'text': text, 'output_status': 'truncated',
+                'diagnostics': diagnostics, 'delivery': {'status': 'unverified'},
+                'stats': {'model_calls': turn_budget.calls, 'model_call_limit': max_model_calls,
+                          'tool_calls': tool_ledger.request_count}})
+            return
         except TurnModelLimitExceeded as error:
+            for event in response_usage():
+                yield event
             self._pause_turn_task(thread_id, str(error))
             if error.completed_response is not None:
                 for completed_message in error.completed_response.result:
                     if not isinstance(completed_message, AIMessage):
+                        continue
+                    if completed_message.response_metadata.get('nailong_model_call_id') in emitted_model_call_ids:
                         continue
                     message_id = str(getattr(completed_message, 'id', '') or '')
                     if message_id and message_id in emitted_usage_message_ids:
@@ -1520,7 +1694,7 @@ class AgentService:
                     else:
                         yield self._event(thread_id, 'usage_missing', {'scope': 'main', 'message_id': message_id})
             stats = {"model_calls": turn_budget.calls, "model_call_limit": max_model_calls,
-                     "tool_calls": len(emitted_tool_calls), "graph_step_limit": graph_step_limit,
+                     "tool_calls": tool_ledger.request_count, "graph_step_limit": graph_step_limit,
                      "limit_type": "model"}
             self._event(thread_id, 'turn_limit', {**stats, "message": str(error)})
             raise TurnRecursionLimitError(str(error), stats=stats) from error
@@ -1537,7 +1711,7 @@ class AgentService:
                 f"本轮内部执行已达到上限（{graph_step_limit} 步；模型调用 {turn_budget.calls}/{max_model_calls} 次），已停止本轮。")
             self._pause_turn_task(thread_id, detail)
             stats = {"model_calls": turn_budget.calls, "model_call_limit": max_model_calls,
-                     "tool_calls": len(emitted_tool_calls), "graph_step_limit": graph_step_limit,
+                     "tool_calls": tool_ledger.request_count, "graph_step_limit": graph_step_limit,
                      "limit_type": "graph"}
             self._event(thread_id, 'turn_limit', {**stats, "message": detail})
             raise TurnRecursionLimitError(detail, stats=stats) from error
@@ -1561,6 +1735,8 @@ class AgentService:
                     await close_stream()
             finally:
                 active_review_coverage.reset(review_token)
+                active_model_responses.reset(response_token)
+                active_session_token_budget.reset(session_budget_token)
                 active_turn_budget.reset(budget_token)
                 self._turn_task.reset(task_token)
                 self._hook_approval.reset(hook_approval_token)
@@ -1568,6 +1744,11 @@ class AgentService:
                 self._flush_token_events(thread_id)
 
     async def rewind(self, thread_id: str) -> int | None:
+        from nailong.core.project_execution import project_execution
+        with project_execution(self.session_store):
+            return await self._rewind_unlocked(thread_id)
+
+    async def _rewind_unlocked(self, thread_id: str) -> int | None:
         """Roll back dialog state to the latest user-turn boundary.
 
         This only changes LangGraph messages and the safe event log. It does not
@@ -1665,3 +1846,6 @@ class AgentService:
             if event.kind == "final":
                 answer = event.data.get("text", "")
         return answer
+
+
+_NATIVE_RUN_HOOK = AgentService._run_hook

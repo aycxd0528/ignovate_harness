@@ -1,7 +1,7 @@
 """Shared command resolution and local actions for all interactive interfaces."""
 
 from dataclasses import dataclass
-import shlex
+from ui.arguments import split_arguments
 
 from nailong.core.commands import CommandRegistry
 from nailong.core.costs import CostEstimator
@@ -66,14 +66,14 @@ class CommandController:
             from nailong.mcp.tools import tool_name
             available.update(tool_name(server, descriptor.name) for server, descriptor in manager.tools())
         custom = self.registry.resolve(
-            command[1:], shlex.split(argument),
+            command[1:], split_arguments(argument),
             available_tools=available,
         )
         if custom is None:
             raise ValueError("未知命令。输入 /help 查看可用命令。")
         target = None
         if custom.model_profile == "review":
-            arguments = shlex.split(argument)
+            arguments = split_arguments(argument)
             if not arguments:
                 raise ValueError("此自定义命令需要提供审查目标路径。")
             target = arguments[0]

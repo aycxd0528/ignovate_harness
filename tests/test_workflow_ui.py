@@ -1,3 +1,4 @@
+from platform_fixtures import python_command
 import asyncio
 import tempfile
 import unittest
@@ -9,6 +10,17 @@ from nailong.core.sessions import ProjectSessionStore
 from types import SimpleNamespace
 
 class WorkflowUiTests(unittest.IsolatedAsyncioTestCase):
+    async def wait_for_condition(self, pilot, condition, description):
+        async def ready():
+            while True:
+                await pilot.pause()
+                if condition():
+                    return
+        try:
+            await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for {description}; focus={getattr(pilot.app.focused, "id", None)!r}')
+
     async def test_textual_queue_binding_and_overflow_keep_input(self):
         with tempfile.TemporaryDirectory() as directory:
             service=SimpleNamespace(runtime_factory=None,session_store=None)
@@ -29,15 +41,28 @@ class WorkflowUiTests(unittest.IsolatedAsyncioTestCase):
         from agent_service import AgentService
         with tempfile.TemporaryDirectory() as directory,tempfile.TemporaryDirectory() as data:
             root=Path(directory); (root/'.nailong').mkdir()
-            (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[{'name':'test','kind':'test','command':'true'}]}}))
+            (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[{'name':'test','kind':'test','command':python_command('pass')}]}}), newline='\n')
             settings=Settings('key','https://api.invalid','deepseek-flash',root)
             factory=AgentRuntimeFactory(settings,session_store=ProjectSessionStore(root,base_dir=data))
             app=TerminalAgentApp(AgentService(factory,session_store=factory.session_store),settings)
             async with app.run_test(size=(80,24)) as pilot:
-                app._dispatch('/verify'); await pilot.pause()
-                self.assertTrue(app.query_one('#approval-panel').display)
+                app._dispatch('/verify')
+                approval = app.query_one('#approval-panel')
+                composer = app.query_one('#composer', ChatInput)
+                await self.wait_for_condition(
+                    pilot,
+                    lambda: (approval.display and composer.disabled and app.focused is not None
+                             and app.focused.id == 'approval-choices'),
+                    'verification approval to display and own keyboard focus',
+                )
+                self.assertTrue(approval.display)
                 self.assertEqual(len(app.screen_stack),1)
-                await pilot.press('escape'); await pilot.pause(); await app.session_runner.wait_idle()
+                await pilot.press('escape')
+                await asyncio.wait_for(app.session_runner.wait_idle(), 3)
+                await self.wait_for_condition(
+                    pilot, lambda: not approval.display and not composer.disabled and app.focused is composer,
+                    'rejected verification to restore the composer',
+                )
                 self.assertEqual(factory.session_store.read_events(app.thread_id)[-1]['data']['status'],'unverified')
     async def test_textual_queues_input_and_ctrl_c_preserves_identity(self):
         with tempfile.TemporaryDirectory() as directory,tempfile.TemporaryDirectory() as data:

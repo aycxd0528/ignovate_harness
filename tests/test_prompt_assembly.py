@@ -39,10 +39,10 @@ class PromptAssemblyTests(unittest.TestCase):
         memory = self.root / ".nailong" / "context.md"
         memory.parent.mkdir()
         self.memory_text = "项目约定：保留这个目录标题。\n\n## 可用的本地 Skills\n这是记忆中的示例标题。"
-        memory.write_text(self.memory_text, encoding="utf-8")
+        memory.write_text(self.memory_text, encoding="utf-8", newline='\n')
         skill = self.root / ".agents" / "skills" / "probe" / "SKILL.md"
         skill.parent.mkdir(parents=True)
-        skill.write_text("---\nname: probe\ndescription: 检查示例文件\n---\n只读检查。\n", encoding="utf-8")
+        skill.write_text("---\nname: probe\ndescription: 检查示例文件\n---\n只读检查。\n", encoding="utf-8", newline='\n')
         self.model = RecordingModel(responses=[AIMessage(content="已返回回答")])
         settings = Settings("unit-test-key", "https://api.deepseek.com", "deepseek-chat", self.root)
         store = ProjectSessionStore(self.root, base_dir=Path(directory.name) / "data")
@@ -211,7 +211,7 @@ class PromptAssemblyTests(unittest.TestCase):
     def test_topic_is_read_only_after_actual_model_tool_call(self):
         topic = self.root / '.nailong/memory/build.md'
         topic.parent.mkdir()
-        topic.write_text('---\ndescription: 构建命令\n---\nTOPIC_CONTENT_FROM_TOOL', encoding='utf-8')
+        topic.write_text('---\ndescription: 构建命令\n---\nTOPIC_CONTENT_FROM_TOOL', encoding='utf-8', newline='\n')
         self.model.responses = [AIMessage(content='', tool_calls=[{
             'name': 'memory_read', 'args': {'document': 'project/build.md'},
             'id': 'read-topic', 'type': 'tool_call'}]), AIMessage(content='done')]
@@ -226,7 +226,7 @@ class PromptAssemblyTests(unittest.TestCase):
 
     def test_next_runtime_refreshes_memory_and_preserves_user_store_boundary(self):
         self.assertIn(self.memory_text, self.ask(thread_id='before-change'))
-        (self.root / '.nailong/context.md').write_text('UPDATED_CONTEXT', encoding='utf-8')
+        (self.root / '.nailong/context.md').write_text('UPDATED_CONTEXT', encoding='utf-8', newline='\n')
         prompt = self.ask(thread_id='after-change')
         self.assertIn('UPDATED_CONTEXT', prompt)
         self.assertNotIn(self.memory_text, prompt)
@@ -236,7 +236,7 @@ class PromptAssemblyTests(unittest.TestCase):
         from nailong.core.memory_context import estimate_memory_tokens
         topic = self.root / '.nailong/memory/large.md'
         topic.parent.mkdir()
-        topic.write_text('长文本' * 5000, encoding='utf-8')
+        topic.write_text('长文本' * 5000, encoding='utf-8', newline='\n')
         calls = [{'name': 'memory_read', 'args': {'document': 'project/large.md', 'offset': offset},
                   'id': f'read-{offset}', 'type': 'tool_call'} for offset in (0, 4000, 8000)]
         self.model.responses = [AIMessage(content='', tool_calls=calls), AIMessage(content='done')]

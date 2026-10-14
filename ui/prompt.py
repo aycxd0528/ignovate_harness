@@ -23,6 +23,15 @@ class RedactingFileHistory(FileHistory):
     def store_string(self, string: str) -> None:
         if self.api_key:
             string = string.replace(self.api_key, "[密钥已隐藏]")
+        if os.name == 'nt':
+            from nailong.core.safe_files import atomic_write_bytes, private_file_permissions
+            path = Path(self.filename)
+            if not path.exists():
+                try:
+                    atomic_write_bytes(path, b'', replace=False)
+                except FileExistsError:
+                    pass
+            private_file_permissions(path)
         super().store_string(string)
         try:
             os.chmod(self.filename, 0o600)
@@ -108,7 +117,7 @@ class AtFileCompleter(Completer):
             relative_path = resolved.relative_to(self.project_root)
             if any(local_tools._is_protected_component(part) for part in relative_path.parts):
                 continue
-            completion = str(relative_path)
+            completion = relative_path.as_posix()
             if entry.is_dir():
                 completion += "/"
             yield Completion(

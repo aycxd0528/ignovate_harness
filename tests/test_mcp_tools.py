@@ -4,6 +4,7 @@ from dataclasses import replace
 import sys
 import tempfile
 import unittest
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 from nailong.core.permissions import Decision
@@ -127,12 +128,13 @@ class MCPRuntimeTests(unittest.IsolatedAsyncioTestCase):
         class Model(FakeMessagesListChatModel):
             def bind_tools(self, tools, **kwargs):
                 return self
-        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as data:
+        async with AsyncExitStack() as resources:
+            directory = resources.enter_context(tempfile.TemporaryDirectory())
+            data = resources.enter_context(tempfile.TemporaryDirectory())
             root = Path(directory).resolve()
             settings = Settings('provider-test', 'https://api.invalid', 'deepseek-flash', root)
             factory = AgentRuntimeFactory(settings, session_store=ProjectSessionStore(root, base_dir=data))
-            self.addCleanup(factory.close)
-            self.addAsyncCleanup(factory.aclose)
+            resources.push_async_callback(factory.aclose)
             factory.mcp_manager.store.add('test', {'transport': 'stdio', 'command': sys.executable, 'args': [str(SERVER)]})
             await factory.mcp_manager.connect('test')
             factory.model = Model(responses=[
@@ -157,12 +159,13 @@ class MCPRuntimeTests(unittest.IsolatedAsyncioTestCase):
         from agent import AgentRuntimeFactory
         from config import Settings
         from nailong.core.sessions import ProjectSessionStore
-        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as data:
+        async with AsyncExitStack() as resources:
+            directory = resources.enter_context(tempfile.TemporaryDirectory())
+            data = resources.enter_context(tempfile.TemporaryDirectory())
             root = Path(directory).resolve()
             settings = Settings('provider-test', 'https://api.invalid', 'deepseek-flash', root)
             factory = AgentRuntimeFactory(settings, session_store=ProjectSessionStore(root, base_dir=data))
-            self.addCleanup(factory.close)
-            self.addAsyncCleanup(factory.aclose)
+            resources.push_async_callback(factory.aclose)
             manager = getattr(factory, 'mcp_manager', None)
             self.assertIsNotNone(manager, 'Runtime factory must own MCP connections')
             manager.store.add('test', {'transport': 'stdio', 'command': sys.executable, 'args': [str(SERVER)]})

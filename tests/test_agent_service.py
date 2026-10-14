@@ -501,7 +501,7 @@ class AgentServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_approval_request_contains_reason_and_edit_diff_preview(self):
         with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "hello.txt").write_text("old line\n", encoding="utf-8")
+            Path(directory, "hello.txt").write_text("old line\n", encoding="utf-8", newline='\n')
             request = {
                 "name": "edit_file",
                 "args": {"path": "hello.txt", "old_string": "old line", "new_string": "new line"},
@@ -593,7 +593,7 @@ class AgentServiceTests(unittest.IsolatedAsyncioTestCase):
             context_dir = root / ".nailong"
             context_dir.mkdir()
             readme = root / "README.md"
-            readme.write_text("keep", encoding="utf-8")
+            readme.write_text("keep", encoding="utf-8", newline='\n')
             (context_dir / "context.md").symlink_to(readme)
 
             with patch("local_tools.PROJECT_ROOT", root):

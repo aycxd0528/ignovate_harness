@@ -1,0 +1,155 @@
+{
+  "offline": {
+    "command": ".venv/bin/python -m unittest discover -s tests -v",
+    "tests": 731,
+    "seconds": 59.528,
+    "failures": 0,
+    "errors": 0,
+    "excluded": [],
+    "log_sha256": "cd2c5eda3824e9835854c36b6c7d304c08a86bf49631dcc452a0a26042183038"
+  },
+  "api": {
+    "model": "deepseek-flash",
+    "scenarios": 5,
+    "all_passed": true,
+    "managed_spent_usd": 0.004200924
+  },
+  "tui": {
+    "all_passed": true,
+    "measurements": [
+      {
+        "size": [
+          100,
+          32
+        ],
+        "expanded": false,
+        "approval_height": 9,
+        "approval_bottom": 27,
+        "composer_top": 27,
+        "metrics_bottom": 32,
+        "choices_on_screen": true,
+        "hint_on_screen": true,
+        "no_overlap": true
+      },
+      {
+        "size": [
+          100,
+          32
+        ],
+        "expanded": true,
+        "approval_height": 18,
+        "approval_bottom": 27,
+        "composer_top": 27,
+        "metrics_bottom": 32,
+        "choices_on_screen": true,
+        "hint_on_screen": true,
+        "no_overlap": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "expanded": false,
+        "approval_height": 9,
+        "approval_bottom": 19,
+        "composer_top": 19,
+        "metrics_bottom": 24,
+        "choices_on_screen": true,
+        "hint_on_screen": true,
+        "no_overlap": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "expanded": true,
+        "approval_height": 13,
+        "approval_bottom": 19,
+        "composer_top": 19,
+        "metrics_bottom": 24,
+        "choices_on_screen": true,
+        "hint_on_screen": true,
+        "no_overlap": true
+      }
+    ]
+  },
+  "syntax": {
+    "files": 121,
+    "all_passed": true
+  },
+  "source_sha256": {
+    "agent.py": "51ddd4ab1a7b3fb7bbb1ccd50939f0b3da28a5fd5c3cece7b5499ef80d7ce8e0",
+    "agent_service.py": "11cae9ffc785ae0f18694f2e397483659c431dde724c9f984776d9d9682419db",
+    "headless.py": "45e18f92dfb54d054b7ced5c08bc728877895dd252c556c227f15015dbbea0db",
+    "main.py": "4f2c4b0b55f2d60606055b82b3824e6dd74fe06a348f87ac284ab23fa48e9474",
+    "local_tools.py": "af6c66da52bb02365e8590fdb07e302e59026dcfd5253b31eeb5d61996baf8ec",
+    "tools.py": "576df1a5eb05a4ac39cc78db0194594b3ce82807d8ea291db57e2a1cca12721d",
+    "tui.py": "25fde0aa6fa42e566aa8a68aed9f640b871eface5972bbcc0f08ba17f9b0aaed",
+    "nailong/__init__.py": "d8fe04342cf6853e9a3aef2546fa198685911d6a16c8031fd015ad8bb6cee80c",
+    "nailong/cli.py": "07e20df73a7d4f97409aed80fcd05d2eb3ebc8779d229f6afdc1e61c10c716bd",
+    "nailong/tools/files.py": "9763ef7f6bfe09264dee359212c8dd634c366460b1050db717956b9167ae2779",
+    "nailong/tools/execution.py": "4950c9b3154609cc5bc7b28b7dc5bffff4a78ca78241703329b2851e3381fd37",
+    "nailong/tools/results.py": "e41b647d776384da586fe6f34b57ff7dfe0a2d5e1cf6f65842c7db6ca444625a",
+    "nailong/tools/registry.py": "f004a1c3adfc3346cce4638af22adc8041a8954c74d7b92a90d82bc409658aff",
+    "nailong/tools/previews.py": "62da25a59493dc14e2b19b8fd3f9694b4bb5dcf6537e634a3b786d7e800fddce",
+    "nailong/tools/__init__.py": "ecc638db17165bc5c6c2baa12bdd9f899e1c7a0ece267e3ab1802e1c29d6b889",
+    "nailong/tools/agents.py": "32ad9d976e95bc1ff3a0366925f134bedb5c816fd7ef1f0e87cb103cdfe04e55",
+    "nailong/tools/schemas.py": "8490db093455ce200ee54e6065818613da79d6bfa34e5d1d9068a5ea9eeb5d6a",
+    "nailong/tools/coordination.py": "e9f501c0611b77941cf1b8c14dbad910d3ba270046cc1615316823e4c5eeac9d",
+    "nailong/core/delivery.py": "8bf4957bb57f5befdd4f97340224b5583274fb21d14c3b0b41fe183da0e48c60",
+    "nailong/core/plan.py": "6c27e9a9ec5e168f0fcf70c01106751cfff68ffb6dd8f2d1063c04393302e8c9",
+    "nailong/core/sessions.py": "ecbda5edd839961203066feb8fe6f3895ab46e67363abf94a2c7a4efa88744e7",
+    "nailong/core/runner.py": "30738a67e57cc18e6d3bc9b3edb0fa133ca33f6953e121255b845d35ac64f507",
+    "nailong/core/hooks.py": "ba03d1ade100527670809de90e28764f06f0fcfe91c40ae9282cf60261b8a42c",
+    "nailong/core/verification.py": "719fdc31a2f2a07c0ae79b5337402e78ef27fe7e74d976eb3e5a42a1a6a64e69",
+    "nailong/core/skills.py": "9cc33c4548fcee49a71448daf52d2d5ec493bf4c4dacb11a9a67eb0565c757a0",
+    "nailong/core/memory.py": "c7b9f7e075be32a0c76c7f7502ceba71d48ac45ba778a1f9d0867e1fcc6a05d5",
+    "nailong/core/diagnostics.py": "cef23bb5e84121d78272bb195d99e9f965a3c4f22eeb1671dca3c88bfd85d557",
+    "nailong/core/review_runtime.py": "59ae3820d9a93aa3451b02f79eabe86a4852621bbb84a45c8bdddfe6055a45f7",
+    "nailong/core/memory_context.py": "fbaa2e1525f48cd5c93aeefd503f2137961e1ba5988dd499aadbd5694381d27a",
+    "nailong/core/compact.py": "4e0653bb335258041873916b08750dfb16c816eb9242d9f2ad66127dedef7ee7",
+    "nailong/core/preferences.py": "69c89e89713a09397fc186d9a57655ddeaa6632c5d53f5d30ad98698fc5cdcd6",
+    "nailong/core/__init__.py": "0c6deac9ef8192619984bb566eb637cd91a81f0fdd7414e0c1dcce5e074c3343",
+    "nailong/core/review_evidence.py": "04675e852111f3dfdc9e971766c1c028f27b877e01f971cc61ef7ba22831568e",
+    "nailong/core/prompts.py": "ce93c12e6c2df83a9ecef22deadd7ea964b8082d56ac0f3794b24354704c3c2c",
+    "nailong/core/processes.py": "37fdcc5e9e7e9b8d67e4a346b6e9b788ef1ec9b7315d3a816c22bc06bd9d7588",
+    "nailong/core/git_changes.py": "54e68e0976fc8f09396b539f8f94990738a36af71c0f4f5a6e692bef50e55f83",
+    "nailong/core/memory_knowledge.py": "459898440932bd58ccb6070878b354119e272992146632e44a9a47b8308c6bb5",
+    "nailong/core/context.py": "3790bdaa01d559ca022e20cf5109e22f5715da0e3c39c42f20816cfd7a50c88f",
+    "nailong/core/costs.py": "8f4f5c57a848439c78b23b7ab32733d71cee1f3c77f6a391f60c5084540cc866",
+    "nailong/core/memory_selection.py": "dc911992eaab9bf0674773d1215e6eb9dd95d5ed1597a1f075f160602ed88716",
+    "nailong/core/context_runtime.py": "e7bc86cf7578ea5b529ea958aaf07df25346e183da38fd89f8f2cfc4c4cf065a",
+    "nailong/core/permissions.py": "0d6e5bd82b125db41b76add9b50c54abdd7b182f2406a12f2dc5691f150ed302",
+    "nailong/core/budgets.py": "2eb6c27f684f54e97424719ea7878d1ec24e691a0232d68be219aa493ef271f1",
+    "nailong/core/progress.py": "4f345512e025e7575401da6e6d7ae61c6fdd1aa813e683845c42d3f46849ab09",
+    "nailong/core/goal.py": "87e3d4943a038e316fec8592bb58d62d652f62284b1564ff4bb258adaaea664b",
+    "nailong/core/task_state.py": "15ab0f609e23238cef422715df2f9c404b5c6c445827f0934a8ee351d0ac1716",
+    "nailong/core/task_context.py": "2d4d00768a17392711f1285853231924e9752c7bf7b12a5efb5b0c0b307659d7",
+    "nailong/core/commands.py": "8bebbe3acd788cb52dec131ccae6928033e5c4405faa7a4b48c11292d4bb0bc9",
+    "nailong/core/usage.py": "f34e37a277630c77bf38f87df3a5f088cdf950fbd4734511e83c20d662b87fe9",
+    "nailong/core/session_actions.py": "38decfb3c26a7859e42288bb56a956d699bf68cc964cf28c1ecca6bbd16175bb",
+    "nailong/core/history_archive.py": "61d1b5b26e9f944ab830840efc490a71993e2faad613250995ed25328794bdf2",
+    "ui/approval_view.py": "26c3951df9a2043b7134bae8e135adaa36d21d2e205966e43b9555a91d3d4ea0",
+    "ui/console.py": "696b2508bbc264f2345fd683d3ce2dad3fd0f6ed2ff842e9f850a9c63369963b",
+    "ui/help_view.py": "d3af12cd3d6d252da4a4634348f80a09a9bfe9afebfe7a3efa124c54433a6874",
+    "ui/controller.py": "c53c1e21f2f24f0b7eb5728a3285188aa3bb43821e5f8bdbcd55d4db8dd30e64",
+    "ui/theme.py": "5424e9e27af8d0ba450ef6786172edfa17b674487ac8159df3ed1b2e1d7f0c7e",
+    "ui/transcript.py": "eb16455a2bad6602df529d23f54a6c2a501f0bcd584782863889aecfdd0c4ae7",
+    "ui/render.py": "c95eb3a79c853d494e32484da9bc2ce93d2caf808b18037c8577adb75f8d34d6",
+    "ui/activity.py": "5aadb62b22ebb84fdf290ed24747f5c74bfc297f2580732debf34df3e2e690e6",
+    "ui/actions.py": "12e69439078f7f5a45982739260097bccbda6003c4a8b4f647186bdfe21b4a7c",
+    "ui/__init__.py": "e88f08aec63bf4ff6b40c6c6bf478eb28c57c8bd516551b7bad6e8d2b9dc01a4",
+    "ui/presentation.py": "2306a9015005b9081838f6556279ed548e6cae1bcaa9e5065024dc7d0ba7d8f3",
+    "ui/plain.py": "bfc89c01a108b870d0f23ef6ff4df541cf3aa24dd03a650ced4d7fa37cbcbea1",
+    "ui/approval.py": "b9540043b14146372698192cd452c84874755f06460474291351528aa182316d",
+    "ui/app.py": "2c0f8c637e80f0609aff621abc0a5c79e5c0cc384f18c33c6145070685a8c993",
+    "ui/flows.py": "9ed0a8d67b52d440d63d627172829fb8e2cc6be9db4828268419c2e53c31f472",
+    "ui/prompt.py": "b424360f6dd87953f84124c5ec60b154cc385f058d71508a349dbc1c203e9fa2",
+    "ui/markdown_stream.py": "5e9fd97ff5fda43033d9ce78d33a77db9b3ed55a8f950d23b308ce0cdff5242f",
+    "ui/input_broker.py": "ff2d02a12c9b82f25bf484db479bf9ff3b17c007078b05dce7c6198317835f92",
+    "ui/commands.py": "a4c8a85398dea356ca486b131d77af5230887966027d9752596263c0b837b48c",
+    "ui/banner.py": "ec23d0bc58051b33620da5d771100366e032c6e35e33f86a977f6afa405f525c"
+  }
+}

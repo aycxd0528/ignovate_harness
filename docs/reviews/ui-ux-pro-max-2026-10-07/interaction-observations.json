@@ -1,0 +1,103 @@
+[
+  {
+    "scene": "model-14-(80, 24)",
+    "screen_stack": 2,
+    "numeric_key_2_before": 0,
+    "numeric_key_2_after": 0,
+    "keys_region": [
+      3,
+      22,
+      74,
+      1
+    ],
+    "dialog_content_region": [
+      3,
+      8,
+      74,
+      11
+    ],
+    "button_regions": {
+      "model-add": [
+        13,
+        20,
+        12,
+        1
+      ],
+      "model-use": [
+        27,
+        20,
+        8,
+        1
+      ],
+      "model-cancel": [
+        3,
+        20,
+        8,
+        1
+      ]
+    },
+    "add_button_click_error": "OutOfBounds",
+    "form_opened_programmatically": true,
+    "escape_from_add": {
+      "returns_to_model_list": false,
+      "focused": "composer",
+      "screen_stack": 1
+    }
+  },
+  {
+    "scene": "model-2-(60, 18)",
+    "screen_stack": 2,
+    "numeric_key_2_before": 0,
+    "numeric_key_2_after": 0,
+    "keys_region": [
+      3,
+      15,
+      54,
+      1
+    ],
+    "dialog_content_region": [
+      3,
+      7,
+      54,
+      6
+    ],
+    "button_regions": {
+      "model-add": [
+        13,
+        13,
+        12,
+        1
+      ],
+      "model-use": [
+        27,
+        13,
+        8,
+        1
+      ],
+      "model-cancel": [
+        3,
+        13,
+        8,
+        1
+      ]
+    },
+    "add_button_click": false,
+    "form_opened_programmatically": true,
+    "escape_from_add": {
+      "returns_to_model_list": false,
+      "focused": "composer",
+      "screen_stack": 1
+    }
+  },
+  {
+    "scene": "setup-light-request",
+    "requested_theme": "light",
+    "actual_screen_background": "Color(29, 34, 51)",
+    "back_to_connection": {
+      "step": 1,
+      "model_draft_preserved": true,
+      "key_draft_preserved": true,
+      "config_written": false
+    }
+  }
+]

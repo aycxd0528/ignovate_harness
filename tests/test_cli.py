@@ -254,7 +254,7 @@ class CliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "图书管理系统"
             root.mkdir()
-            (root / "main.c").write_text("int main(void) { return 0; }", encoding="utf-8")
+            (root / "main.c").write_text("int main(void) { return 0; }", encoding="utf-8", newline='\n')
             settings = Settings("unit-test-key", "https://api.deepseek.com", "deepseek-chat", Path(tempfile.gettempdir()))
             original_root = local_tools.PROJECT_ROOT
             observed = []
@@ -333,7 +333,7 @@ class CliTests(unittest.TestCase):
             self.assertIs(observed[1][0], created_agents[1])
             self.assertNotEqual(observed[0][2], observed[1][2])
             self.assertEqual(observed[1][3], root.resolve())
-            self.assertIn(str(root), "\n".join(displayed))
+            self.assertIn(str(root.resolve()), "\n".join(displayed))
             self.assertEqual(local_tools.PROJECT_ROOT, original_root)
 
     def test_run_turn_prompts_for_each_tool_and_resumes_in_order(self):
@@ -368,6 +368,7 @@ class CliTests(unittest.TestCase):
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = create_agent_runtime(settings)
+            self.addCleanup(lambda: asyncio.run(runtime._nailong_runtime_factory.aclose()))
 
         decisions = iter(["a", "r"])
         prompts = []
@@ -390,7 +391,7 @@ class CliTests(unittest.TestCase):
 
         config = {"configurable": {"thread_id": "cli-test"}, "recursion_limit": 40}
         with (
-            patch("nailong.core.processes.execute_process", return_value={"ok": True}) as run_command,
+            patch("local_tools.run_command_async", return_value={"ok": True}) as run_command,
             patch("nailong.tools.files.FileSession.write_file", return_value={"ok": True}) as write_file,
         ):
             answer = main.run_turn(
@@ -480,6 +481,7 @@ class CliTests(unittest.TestCase):
         )
         with patch("agent.ChatDeepSeek", return_value=fake_model):
             runtime = create_agent_runtime(settings)
+            self.addCleanup(lambda: asyncio.run(runtime._nailong_runtime_factory.aclose()))
 
         displayed = []
         prompts = []

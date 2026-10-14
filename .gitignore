@@ -17,6 +17,8 @@ dist/
 htmlcov/
 *.log
 .nailong/settings.local.json
+.nailong/settings.json
+.nailong/gui-settings.json
 .nailong/context.local.md
 .nailong/memory.local/
 .nailong/exports/

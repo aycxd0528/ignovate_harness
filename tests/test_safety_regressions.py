@@ -88,7 +88,7 @@ class RewindSafetyTests(unittest.IsolatedAsyncioTestCase):
             store.ensure_directories()
             ids = [f"prior-{i}" for i in range(102)]
             graph = MessageGraph([HumanMessage(id=value, content=value) for value in ids])
-            store.session_path("legacy").write_text(json.dumps({"kind": "turn_start", "data": {"message_ids": ids[:100]}}) + "\n")
+            store.session_path("legacy").write_text(json.dumps({"kind": "turn_start", "data": {"message_ids": ids[:100]}}) + "\n", newline='\n')
 
             async def runtime(**kwargs):
                 return graph
@@ -187,7 +187,7 @@ class GoalStateSafetyTests(unittest.TestCase):
         goal = self.store.create("work", max_rounds=1)
         payload = json.loads(self.store.path.read_text())
         payload[0]["round"] = 1
-        self.store.path.write_text(json.dumps(payload))
+        self.store.path.write_text(json.dumps(payload), newline='\n')
         result = self.store.prepare_round(goal.id)
         self.assertEqual(result.state, "paused")
         self.assertEqual(result.round, 1)
@@ -199,7 +199,7 @@ class RuntimeTestCase(unittest.IsolatedAsyncioTestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name) / "project"
         self.root.mkdir()
-        (self.root / "probe.txt").write_text("test data")
+        (self.root / "probe.txt").write_text("test data", newline='\n')
         self.settings = Settings("local-test-key", "https://api.deepseek.com", "deepseek-flash", self.root)
         self.factory = AgentRuntimeFactory(self.settings, session_store=ProjectSessionStore(self.root, base_dir=Path(self.temporary.name) / "data"))
         self.service = AgentService(self.factory, api_key=self.settings.api_key)
@@ -293,12 +293,19 @@ class GoalExecutionSafetyTests(RuntimeTestCase):
 
     async def test_cancel_during_model_call_keeps_prior_charge_and_reservation(self):
         model = self.blocking_model()
+        # This test cancels an in-flight model call; finish real SQLite startup first.
+        await self.factory.async_runtime(thread_id="cancel-model")
         goal = self.factory.goal_store.create("work", thread_id="cancel-model")
         task = asyncio.create_task(drive_goal(self.service, self.factory, self.factory.goal_store, self.estimator, goal, thread_id="cancel-model", emit=lambda _: None))
-        await asyncio.wait_for(model._entered.wait(), timeout=3)
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(model._entered.wait(), timeout=3)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         saved = self.factory.goal_store.get(goal.id)
         self.assertEqual(saved.state, "paused")
         self.assertEqual(saved.round, 1)
@@ -330,7 +337,7 @@ class GoalExecutionSafetyTests(RuntimeTestCase):
 
 class SubagentBudgetSafetyTests(RuntimeTestCase):
     async def test_child_uses_bounded_final_instead_of_oversized_next_research_request(self):
-        (self.root / "probe.txt").write_text("x" * 20_000)
+        (self.root / "probe.txt").write_text("x" * 20_000, newline='\n')
         model = RecordingModel(responses=[
             paid_response("", tool_calls=[{"name": "read_file", "args": {"path": "probe.txt"}, "id": "read"}]),
             paid_response("只取得部分文件内容，其余内容未核实。"),

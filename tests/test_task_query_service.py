@@ -18,7 +18,7 @@ class TaskQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         base = Path(self.directory.name)
         self.root = base / 'project'
         self.root.mkdir()
-        (self.root / 'source.py').write_text('value = 1\n')
+        (self.root / 'source.py').write_text('value = 1\n', newline='\n')
         self.sessions = ProjectSessionStore(self.root, base_dir=base / 'private')
         self.tasks = TaskStore(self.sessions)
         self.tasks.begin('owner', '修复 source.py', scope=['source.py'])
@@ -139,7 +139,7 @@ class TaskQueryServiceTests(unittest.IsolatedAsyncioTestCase):
             'status': 'passed', 'complete': True, 'steps': [],
         })
         self.tasks.set_state('owner', lifecycle='paused', blockers=['等待用户'])
-        (self.root / 'source.py').write_text('value = 2\n')
+        (self.root / 'source.py').write_text('value = 2\n', newline='\n')
         after = await self.service._begin_task('owner', '继续执行', 'chat')
         self.assertEqual(after['revision'], task['revision'])
         self.assertEqual(after['lifecycle'], 'active')
@@ -151,7 +151,7 @@ class TaskQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         (self.root / '.nailong').mkdir()
         (self.root / '.nailong/settings.json').write_text(json.dumps({'verification': {'steps': [
             {'name': 'smoke', 'kind': 'test', 'command': 'python3 -c "pass"'}
-        ]}}))
+        ]}}), newline='\n')
         after = await self.service._begin_task('owner', '继续执行', 'chat')
         self.assertEqual(after['lifecycle'], 'active')
         self.assertTrue(any(row['id'] == 'verify:smoke' for row in after['acceptance']))

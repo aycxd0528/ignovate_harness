@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ignovate-harness"
-version = "1.0.0"
+version = "1.1.0"
 description = "Local terminal coding agent"
 readme = "README.md"
 license = "MIT"
@@ -19,6 +19,7 @@ Documentation = "https://github.com/aycxd0528/ignovate_harness/blob/main/docs/PR
 [project.scripts]
 ignovate = "nailong.cli:main"
 nailong = "nailong.cli:main"
+ignovate-gui = "nailong.gui.__main__:main"
 
 [tool.setuptools]
 py-modules = ["main", "agent", "agent_service", "config", "local_tools", "tools", "headless", "tui"]
@@ -28,3 +29,6 @@ include = ["nailong*", "ui*"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = ["requirements.txt"]}
+
+[tool.setuptools.package-data]
+"nailong.gui" = ["static/*.html", "static/*.css", "static/*.js", "static/*LICENSE.md"]

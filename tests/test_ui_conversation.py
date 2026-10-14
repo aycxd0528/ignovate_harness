@@ -19,6 +19,17 @@ def transcript(app):
 
 
 class ConversationLayoutTests(unittest.IsolatedAsyncioTestCase):
+    async def wait_for_condition(self, pilot, condition, description):
+        async def ready():
+            while True:
+                await pilot.pause()
+                if condition(): return
+        try:
+            await asyncio.wait_for(ready(), 3)
+        except TimeoutError:
+            self.fail(f'Timed out waiting for {description}; '
+                      f'focus={getattr(pilot.app.focused,"id",None)!r}')
+
     async def test_help_is_local_and_returns_command_to_composer(self):
         with tempfile.TemporaryDirectory() as directory:
             app = TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None),
@@ -28,16 +39,28 @@ class ConversationLayoutTests(unittest.IsolatedAsyncioTestCase):
                 app._append_user('已有对话')
                 before = transcript(app)
                 app._dispatch('/help')
-                await pilot.pause()
+                await self.wait_for_condition(pilot,
+                    lambda: app.focused is not None and app.focused.id=='help-tabs',
+                    'help tabs to mount and focus')
                 self.assertIsInstance(app._interaction_panel, HelpScreen)
                 self.assertEqual(transcript(app), before)
                 self.assertNotIn('长说明', app.screen.query_one('#help-general', Static).content.plain)
                 await pilot.press('escape')
+                await self.wait_for_condition(pilot,
+                    lambda: app._interaction_panel is None and app.focused is not None
+                        and app.focused.id=='composer',
+                    'help to close and restore composer focus')
                 self.assertEqual(app.focused.id, 'composer')
                 app._dispatch('/help skills')
-                await pilot.pause()
+                await self.wait_for_condition(pilot,
+                    lambda: app.focused is not None and app.focused.id=='help-options'
+                        and app.focused.content_region.height>0,
+                    'skill choices to mount and focus')
                 await pilot.press('ctrl+enter')
-                await pilot.pause()
+                await self.wait_for_condition(pilot,
+                    lambda: app._interaction_panel is None
+                        and app.query_one('#composer',ChatInput).text=='$audit ',
+                    'selected skill to populate the composer')
                 self.assertEqual(app.query_one('#composer', ChatInput).text, '$audit ')
                 self.assertEqual(app.session_runner.queue, [])
                 self.assertEqual(transcript(app), before)
@@ -140,8 +163,9 @@ class ConversationLayoutTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.thread_id, original)
                 self.assertIn('等待验收', transcript(app))
                 app._dispatch('/queue resume')
-                await pilot.pause()
-                await app.session_runner.wait_idle()
+                await self.wait_for_condition(pilot,
+                    lambda: calls==['first','second'] and app.session_runner.state=='idle',
+                    'resumed queued input to finish')
                 self.assertEqual(calls, ['first', 'second'])
 
     async def test_ready_green_and_no_color_fallback(self):

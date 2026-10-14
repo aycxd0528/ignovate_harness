@@ -1,3 +1,4 @@
+from platform_fixtures import python_command
 import tempfile
 import json
 import threading
@@ -71,8 +72,8 @@ class ToolRegistryTests(unittest.TestCase):
                 )
 
     def test_mutating_tool_handlers_are_serialized_for_a_shared_session(self):
-        (self.root / 'edit.txt').write_text('old\n')
-        (self.root / 'write.txt').write_text('original\n')
+        (self.root / 'edit.txt').write_text('old\n', newline='\n')
+        (self.root / 'write.txt').write_text('original\n', newline='\n')
         execution = ToolExecutionContext(self.root, approval_handler=lambda *args: {'type': 'approve'})
         tools = {tool.name: tool for tool in build_tools(file_session=self.session, execution_context=execution)}
         for path in ('edit.txt', 'write.txt'):

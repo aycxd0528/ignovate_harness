@@ -1,3 +1,4 @@
+from platform_fixtures import assert_private
 import tempfile
 import unittest
 import os
@@ -27,7 +28,7 @@ class FileSessionTests(unittest.TestCase):
         target = self.write('visible.txt', 'public')
         with tempfile.TemporaryDirectory() as outside:
             secret = Path(outside)/'secret.txt'
-            secret.write_text('synthetic-private-value')
+            secret.write_text('synthetic-private-value', newline='\n')
             resolve = self.session.resolve
             def swapped(path, **kwargs):
                 resolved = resolve(path, **kwargs)
@@ -43,7 +44,7 @@ class FileSessionTests(unittest.TestCase):
         target = self.write('visible/data.txt', 'public')
         with tempfile.TemporaryDirectory() as outside:
             secret = Path(outside)/'data.txt'
-            secret.write_text('synthetic-private-value')
+            secret.write_text('synthetic-private-value', newline='\n')
             resolve = self.session.resolve
             def swapped(path, **kwargs):
                 resolved = resolve(path, **kwargs)
@@ -67,7 +68,7 @@ class FileSessionTests(unittest.TestCase):
                 return capture(command)
             finally:
                 target.unlink()
-                target.write_text('public\n')
+                target.write_text('public\n', newline='\n')
         with patch.object(self.session, '_bounded_search_output', side_effect=swapped):
             counts = self.session.grep('synthetic-protected-sentinel', path='visible.txt', output_mode='count')
             files = self.session.grep('synthetic-protected-sentinel', path='visible.txt', output_mode='files_with_matches')
@@ -86,6 +87,10 @@ class FileSessionTests(unittest.TestCase):
             return search(*args, **kwargs)
         with patch.object(self.session, '_ripgrep_matches', side_effect=swapped):
             result = self.session.grep('synthetic-protected-sentinel', path='visible.txt', output_mode='count')
+        if os.name == 'nt':
+            self.assertFalse(result['ok'], result)
+            self.assertNotIn('synthetic-protected-sentinel', str(result))
+            return
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['total_matches'], 0)
         self.assertFalse(result['coverage_complete'])
@@ -99,6 +104,7 @@ class FileSessionTests(unittest.TestCase):
         self.assertEqual(len(result['matches']), 1)
         self.assertIn('needle', result['matches'][0]['text'])
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX umask; native Windows new-file DACL inheritance is tested separately.')
     def test_new_file_respects_restrictive_umask(self):
         previous = os.umask(0o077)
         try:
@@ -106,7 +112,7 @@ class FileSessionTests(unittest.TestCase):
         finally:
             os.umask(previous)
         self.assertTrue(result['ok'], result)
-        self.assertEqual((self.root/'private.txt').stat().st_mode & 0o777, 0o600)
+        assert_private(self, self.root/'private.txt')
 
     def test_edit_requires_file_to_be_read_in_this_session(self):
         self.write()
@@ -176,7 +182,7 @@ class FileSessionTests(unittest.TestCase):
         target = self.write()
         self.session.read_file("sample.txt")
         previous_stat = target.stat()
-        target.write_text("change\nafter\n")
+        target.write_text("change\nafter\n", newline='\n')
         os.utime(target, ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns))
         result = self.session.edit_file("sample.txt", "before", "changed")
         self.assertFalse(result["ok"])

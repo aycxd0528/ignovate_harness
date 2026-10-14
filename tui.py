@@ -1690,8 +1690,8 @@ class TerminalAgentApp(App[None]):
                     panel.show_error(self._redact(str(error)))
                     self._interaction_future = asyncio.get_running_loop().create_future()
         finally:
-            await panel.remove()
             host.display = False
+            await panel.remove()
             composer.disabled = was_disabled
             main_screen.remove_class('panel-open')
             self._interaction_panel = None

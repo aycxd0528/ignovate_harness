@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import PurePosixPath, PureWindowsPath
 
+from nailong.core.safe_files import validate_windows_path
+
 
 _ACCEPTANCE_KINDS = {"static", "test", "build", "run", "review", "manual"}
 _ACCEPTANCE_STATES = {"pending", "passed", "failed", "stale", "waived"}
@@ -233,9 +235,17 @@ def build_delivery_report(snapshot: dict | None, *, current_input_fingerprint: s
     if not all(_text(snapshot.get(key)) for key in ("task_id", "thread_id", "project_root")):
         report["reasons"].append("任务、会话或项目身份缺失。")
         return report
-    root = PurePosixPath(snapshot["project_root"])
-    if (not root.is_absolute() or "\0" in snapshot["project_root"] or ".." in root.parts
-            or not _revision(snapshot.get("revision"))):
+    root_value = snapshot["project_root"]
+    root = PurePosixPath(root_value)
+    if PureWindowsPath(root_value).drive or root_value.startswith(('\\', '//')):
+        try:
+            validate_windows_path(root_value)
+            valid_root = True
+        except ValueError:
+            valid_root = False
+    else:
+        valid_root = root.is_absolute() and '\0' not in root_value and '..' not in root.parts
+    if not valid_root or not _revision(snapshot.get("revision")):
         report["reasons"].append("项目根目录或需求版本无效。")
         return report
     report.update(task_id=snapshot["task_id"], thread_id=snapshot["thread_id"],

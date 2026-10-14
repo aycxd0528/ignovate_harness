@@ -1,0 +1,20 @@
+[
+  {
+    "size": [
+      100,
+      32
+    ],
+    "save_button_inside_view": true,
+    "key_visible_in_initial_view": true,
+    "form_scroll_height": 17
+  },
+  {
+    "size": [
+      80,
+      24
+    ],
+    "save_button_inside_view": true,
+    "key_visible_in_initial_view": true,
+    "form_scroll_height": 10
+  }
+]
