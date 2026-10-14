@@ -293,12 +293,19 @@ class GoalExecutionSafetyTests(RuntimeTestCase):
 
     async def test_cancel_during_model_call_keeps_prior_charge_and_reservation(self):
         model = self.blocking_model()
+        # This test cancels an in-flight model call; finish real SQLite startup first.
+        await self.factory.async_runtime(thread_id="cancel-model")
         goal = self.factory.goal_store.create("work", thread_id="cancel-model")
         task = asyncio.create_task(drive_goal(self.service, self.factory, self.factory.goal_store, self.estimator, goal, thread_id="cancel-model", emit=lambda _: None))
-        await asyncio.wait_for(model._entered.wait(), timeout=3)
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(model._entered.wait(), timeout=3)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         saved = self.factory.goal_store.get(goal.id)
         self.assertEqual(saved.state, "paused")
         self.assertEqual(saved.round, 1)

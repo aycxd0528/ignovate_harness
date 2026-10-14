@@ -33,6 +33,16 @@ class ArgvToolIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.engine.add_rule('deny','Bash(*)')
         result=await self.call({'argv':[sys.executable,'-c',"open('marker','w').write('bad')"]})
         self.assertFalse(result['started']);self.assertFalse((self.root/'marker').exists());self.assertEqual(self.approvals,[])
+
+    async def test_suggested_argv_session_grant_starts_real_process_without_approval(self):
+        # Break caught: shell parsing of literal code backslashes makes an exact argv grant unusable.
+        args = {'argv': [sys.executable, '-c', "print('first\\nsecond')"]}
+        self.engine.grant_session(self.engine.suggest_rule('run_command', args))
+        result = await self.call(args)
+        self.assertTrue(result['started'], result)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['output'].splitlines(), ['first', 'second'])
+        self.assertEqual(self.approvals, [])
     async def test_dual_input_never_starts(self):
         result=await self.call({'command':'echo yes','argv':[sys.executable,'-c','pass']})
         self.assertFalse(result['started']);self.assertFalse(result['ok']);self.assertEqual(self.approvals,[])

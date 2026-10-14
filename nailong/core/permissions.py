@@ -154,7 +154,11 @@ class PermissionEngine:
             return f'{name}(*)'
         if name == "run_command":
             command = (command_for_permission(args) or "").strip()
-            if not command or self._split_shell_command(command) is None:
+            if args.get('argv') is not None and (command != ' '.join(command.split()) or any(
+                    character in '*?[]' or not character.isprintable() for character in command)):
+                # Generated grants must preserve literals through rule matching and parsing.
+                return f"{rule_name}(<无法安全生成规则>)"
+            if not command or (args.get('argv') is None and self._split_shell_command(command) is None):
                 return f"{rule_name}(<无法安全生成规则>)"
             return f"{rule_name}({command})"
         path = args.get("path")
@@ -183,8 +187,6 @@ class PermissionEngine:
             command=command_for_permission(args)
             if command is None:
                 return PermissionResult(Decision.DENY, '命令参数无效；command和argv必须只指定一种。')
-            args={**args,'command':command}
-            args.pop('argv',None)
             command_segments=[command] if argv_mode else self._split_shell_command(command)
         rule_name = _TOOL_RULE_NAMES.get(name, name)
         spec = tool_spec if tool_spec is not None else _TOOL_SPECS.get(name)
@@ -265,7 +267,8 @@ class PermissionEngine:
                     rule
                     for rule in allow_rules
                     if rule.specifier is not None
-                    and self._command_matches(rule.specifier, segment)
+                    and self._command_matches(rule.specifier, segment,
+                                              literal_argv=args.get('argv') is not None)
                 ]
                 for segment in segments or []
             ]
@@ -386,7 +389,9 @@ class PermissionEngine:
             segments = command_segments if command_segments is not None else self._split_shell_command(command)
             if segments is None:
                 return rule.effect in {"deny", "ask"} and rule.specifier == "*"
-            return any(self._command_matches(rule.specifier, segment) for segment in segments)
+            return any(self._command_matches(rule.specifier, segment,
+                                            literal_argv=args.get('argv') is not None)
+                       for segment in segments)
         if normalized_path is None:
             return False
         pattern = rule.specifier.removeprefix("./")
@@ -401,9 +406,11 @@ class PermissionEngine:
         return False
 
     @staticmethod
-    def _command_matches(pattern: str, command: str) -> bool:
-        candidate = " ".join(command.split())
-        allowed = " ".join(pattern.split())
+    def _command_matches(pattern: str, command: str, *, literal_argv=False) -> bool:
+        # Whitespace inside a quoted argv value is part of the executable or
+        # argument. Keep legacy shell normalization only for shell input.
+        candidate = command if literal_argv else " ".join(command.split())
+        allowed = pattern.strip() if literal_argv else " ".join(pattern.split())
         if allowed.endswith(":*"):
             prefix = allowed[:-2].rstrip()
             return candidate == prefix or (
