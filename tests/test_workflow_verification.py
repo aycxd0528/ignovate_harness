@@ -86,11 +86,26 @@ class VerificationTests(unittest.IsolatedAsyncioTestCase):
                      'http_url':f'http://127.0.0.1:{port}/','expected_status':200,'timeout_seconds':3}])
         result=await self.run_steps(); self.assertEqual(result['status'],'passed')
         with socket.socket() as connection: self.assertNotEqual(connection.connect_ex(('127.0.0.1',port)),0)
-        self.config([{'name':'cancel','kind':'run','command':self.command('import time; time.sleep(30)'),
-                      'stdout_contains':'never','timeout_seconds':30}])
-        task=asyncio.create_task(self.run_steps()); await asyncio.sleep(.15); task.cancel()
-        with self.assertRaises(asyncio.CancelledError): await task
-        self.assertEqual(self.store.read_events('thread')[-1]['data']['status'],'cancelled')
+        marker = self.root / 'cancel.started'
+        self.config([{'name':'cancel','kind':'run','command':self.command(
+            "import time;from pathlib import Path;Path('cancel.started').touch();time.sleep(30)"),
+            'stdout_contains':'never','timeout_seconds':30,'generated_paths':['cancel.started']}])
+        task=asyncio.create_task(self.run_steps())
+        try:
+            while not marker.exists():
+                if task.done():
+                    self.fail(f'Verification ended before process startup: {await task}')
+                await asyncio.sleep(.01)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError): await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        cancelled = self.store.read_events('thread')[-1]['data']
+        self.assertEqual(cancelled['status'],'cancelled')
+        self.assertTrue(cancelled['steps'][0]['started'])
+        self.assertTrue(cancelled['steps'][0]['cancelled'])
     async def test_invalid_config_and_generated_input_hiding(self):
         for step in [ {'name':'run','kind':'run','command':'true'},
                       {'name':'url','kind':'run','command':'true','http_url':'http://localhost/','expected_status':200},

@@ -172,12 +172,12 @@ class ApprovalCancellationTests(unittest.IsolatedAsyncioTestCase):
         script = self.root / 'started.py'
         script.write_text("from pathlib import Path\nimport time\n"
                           "Path('started.marker').write_text('effect')\ntime.sleep(10)\n")
-        command = shell_join([sys.executable, str(script)])
+        arguments = {'argv': [sys.executable, str(script)]}
         await self.make_service([
-            request('run_command', {'command': command}, 'started-command'),
+            request('run_command', arguments, 'started-command'),
             request('run_command', {'command': 'pwd'}, 'approval-command')])
         engine = self.service.permission_engine
-        engine.grant_session(engine.suggest_rule('run_command', {'command': command}))
+        engine.grant_session(engine.suggest_rule('run_command', arguments))
         execution = self.factory.tool_execution_context
         original = execution.approval_handler
 
@@ -189,14 +189,16 @@ class ApprovalCancellationTests(unittest.IsolatedAsyncioTestCase):
 
         execution.approval_handler = after_effect
         events = await self.drive()
-        self.assertTrue((self.root / 'started.marker').exists())
-        self.assertTrue(any(event.kind == 'task_paused' for event in events))
+        self.assertTrue((self.root / 'started.marker').exists(), self.observations)
+        self.assertTrue(any(event.kind == 'task_paused' for event in events),
+                        f'Started sibling did not pause: {[(event.kind, event.data) for event in events]!r}')
         task = self.factory.task_store.snapshot('owner')
         self.assertEqual(task['lifecycle'], 'paused')
         self.assertTrue(any(row['kind'] == 'run' and row['status'] == 'interrupted'
-                            for row in task['evidence']))
+                            for row in task['evidence']),
+                        f'Started sibling lacks interrupted evidence: {task["evidence"]!r}')
         self.assertFalse(any(row['name'] == 'run_command' and row['status'] == 'passed'
-                             for row in self.observations))
+                             for row in self.observations), self.observations)
 
     async def test_external_handler_cannot_claim_core_name_and_readonly_exemption(self):
         await self.make_service(self.reads_and_command())
