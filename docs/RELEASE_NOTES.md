@@ -1,14 +1,12 @@
-Ignovate v1.2.1 更新 macOS 桌面工作台。下载 `Ignovate-1.2.1-macos-arm64.dmg`，打开后将 `Ignovate.app` 拖入 Applications，替换旧版应用。包内包含 Python 3.11、固定版本依赖和 ripgrep，无需另装 Python 或克隆源码。已有项目配置、会话和工作区数据继续保留。
+Ignovate v1.2.2 新增 Windows 11 x64 桌面版，并修复 Windows Python 3.13 的取消测试启动等待超时。
 
-本次更新：
+- Windows 桌面包：下载 `Ignovate-1.2.2-windows-x64.zip`，解压完整目录后双击 `Ignovate.exe`。内置 Python 3.11、锁定依赖及 ripgrep，无需安装 Python、Node.js 或 WSL。
+- 支持中文及含空格的安装路径、原生剪贴板、工作区选择和现有聊天、会话地图、轨迹与模型设置。
+- 关闭窗口或桌面父进程退出时，通过私有管道通知内核，先取消工具进程并关闭数据库，避免 Windows 强制终止跳过清理。
+- 修复取消计费测试将真实文件读取、SQLite 与图执行误限为 3 秒的问题；保留取消、费用结算与预算断言，增加受控慢启动回归。
+- 修正原生 Windows 测试中的 POSIX `printf`、全局用户配置干扰和后台收尾竞态。
+- 新增 Windows 桌面构建、固定 SHA-256 下载校验、ZIP 重定位启动检查及 Release 发布门禁。
 
-- 修复取消任务时后台 checkpoint 写入与数据库关闭的竞态，确保退出后释放数据库文件。
+Windows 桌面包当前未签名。macOS 13+ Apple Silicon 用户下载 `Ignovate-1.2.2-macos-arm64.dmg`，拖入 Applications；该包采用 ad hoc 本地签名，尚未取得 Developer ID 签名与 Apple 公证。Unix、Windows CLI 安装包、wheel 和各平台 SHA-256 清单继续提供。
 
-- 接入 React Bits 输入栏、模型与推理选择、思考过程和会话分支切换动画。
-- 新增执行轨迹页，按轮次查看输入、模型和工具事件；紧凑概览支持搜索、点击定位及横向滚动。
-- 修复会话地图在追问运行期间无法拖动卡片的问题，保持卡片位置与连线实时更新。
-- 运行期间保留实时工具状态，任务结束后折叠记录，并保留输出与文件变更。
-- 修复桌面版复制回答、用户输入和代码块时被网页剪贴板权限拒绝的问题，成功后提示“已复制”。
-- 更新任务关联、等待条件、验收记录及反馈经验管理。
-
-此安装包适用于 macOS 13 及以上的 Apple Silicon Mac，采用 ad hoc 本地签名，尚未经过 Developer ID 签名与 Apple 公证，首次打开方式见[安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.2.1/docs/INSTALL.md)。Intel Mac 可继续使用 CLI 安装包。Release 同时提供 Unix、Windows CLI 安装包、wheel 及 SHA-256 校验文件。
+升级前退出旧版，将新版解压到新目录或替换 Mac 应用；已有用户配置与项目会话保留。详见 [安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.2.2/docs/INSTALL.md)。

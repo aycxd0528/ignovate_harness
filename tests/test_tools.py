@@ -10,6 +10,7 @@ from nailong.tools.files import FileSession
 from nailong.tools.execution import ToolExecutionContext
 from nailong.tools.registry import build_tool_specs
 import local_tools
+from platform_fixtures import python_command
 
 
 def import_tools(test_case):
@@ -87,7 +88,7 @@ class LangChainToolsTests(unittest.TestCase):
 
     def test_all_tool_results_redact_the_configured_model_key(self):
         run_tool = self.build(approved=True, api_key='secret-sentinel')['run_command']
-        result = run_tool.invoke({'command': "printf 'printed secret-sentinel'"})
+        result = run_tool.invoke({'command': python_command("print('printed secret-sentinel')")})
         self.assertTrue(json.loads(result)['ok'])
         self.assertNotIn("secret-sentinel", result)
         self.assertIn("[密钥已隐藏]", result)

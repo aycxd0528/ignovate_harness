@@ -111,7 +111,7 @@ class ToolRegistryTests(unittest.TestCase):
         ):
             futures = [executor.submit(invoke, 'edit_file', {'path': 'edit.txt', 'old_string': 'old', 'new_string': 'new'}),
                        executor.submit(invoke, 'write_file', {'path': 'write.txt', 'content': 'replacement'}),
-                       executor.submit(invoke, 'run_command', {'command': "printf 'command done'"})]
+                       executor.submit(invoke, 'run_command', {'command': python_command("import sys;sys.stdout.write('command done')")})]
             results = [future.result(timeout=3) for future in futures]
         self.assertTrue(all(result['ok'] for result in results), results)
         self.assertEqual((self.root / 'edit.txt').read_text(), 'new\n')

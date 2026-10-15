@@ -1,16 +1,17 @@
-# ignovate harness v1.2.1：本地桌面与 CLI 编码助手
+# ignovate harness v1.2.2：本地桌面与 CLI 编码助手
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
 
 ## 下载与快速安装
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.2.1](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.1)，无需预装 Python 或克隆源码。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.2.2](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.2)，无需预装 Python 或克隆源码。
 
 | 平台 | 安装包 | 运行环境 |
 | --- | --- | --- |
-| macOS 桌面版（13+，Apple Silicon） | [Ignovate-1.2.1-macos-arm64.dmg](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/Ignovate-1.2.1-macos-arm64.dmg) | 拖入 Applications；内置 Python 和 ripgrep；本地签名，尚未公证 |
-| macOS / Linux | [ignovate-1.2.1-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
-| Windows 11 x64 | [ignovate-1.2.1-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
+| macOS 桌面版（13+，Apple Silicon） | [Ignovate-1.2.2-macos-arm64.dmg](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.2/Ignovate-1.2.2-macos-arm64.dmg) | 拖入 Applications；内置 Python 和 ripgrep；本地签名，尚未公证 |
+| Windows 11 x64 桌面版 | [Ignovate-1.2.2-windows-x64.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.2/Ignovate-1.2.2-windows-x64.zip) | 解压后双击 `Ignovate.exe`；内置 Python 和 ripgrep |
+| macOS / Linux | [ignovate-1.2.2-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.2/ignovate-1.2.2-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
+| Windows 11 x64 | [ignovate-1.2.2-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.2/ignovate-1.2.2-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
 
 ### macOS 桌面版
 
@@ -25,8 +26,8 @@
 下载后，在安装包所在目录执行：
 
 ```sh
-tar -xzf ignovate-1.2.1-unix.tar.gz
-cd ignovate-1.2.1
+tar -xzf ignovate-1.2.2-unix.tar.gz
+cd ignovate-1.2.2
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -34,13 +35,19 @@ ignovate set up
 
 安装器会把启动器加入 shell 的 PATH；也可在安装后重新打开终端，再运行 `ignovate set up`。
 
-### Windows 11
+### Windows 桌面版
+
+下载桌面 ZIP，解压完整目录后双击 `Ignovate.exe`，选择工作区，在模型设置中配置提供商。无需安装 Python、Node.js 或 WSL，支持中文及含空格的安装路径。升级时先退出旧版，再解压至新目录；用户配置与会话继续保留。
+
+Windows 桌面 ZIP 与下述 `ignovate-1.2.2-windows.zip` CLI 安装包分别提供；桌面包无需运行 `install.ps1`。可使用 Release 中的 `SHA256SUMS-windows-desktop` 校验下载文件。桌面包当前未使用代码签名证书。
+
+### Windows 11 CLI
 
 下载后，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.2.1-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.2.1
+Expand-Archive .\ignovate-1.2.2-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.2.2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -69,7 +76,7 @@ ignovate doctor --output-format json
 
 ## 本地 GUI
 
-桌面工作台提供聊天、会话地图和执行轨迹，执行由 Ignovate Harness 内核驱动。macOS 用户可直接安装上方的 DMG。
+桌面工作台提供聊天、会话地图和执行轨迹，执行由 Ignovate Harness 内核驱动。macOS 用户可安装上方的 DMG，Windows 11 x64 用户可解压桌面 ZIP 后双击 `Ignovate.exe`。
 
 ![Ignovate 桌面工作台浅色预览](docs/previews/gui-react-bits-light-2026-10-15.png)
 
@@ -79,7 +86,7 @@ ignovate doctor --output-format json
 - **模型、设置与插件**：选择模型和推理强度，管理提供商、通用设置、权限、项目 Skills 与 MCP 服务。
 - **React Bits 交互**：输入栏、思考过程和侧栏分支使用动画反馈，支持浅色、深色及减少动态效果。预览与组件说明见 [React Bits 接入文档](docs/REACT_BITS.md)。
 
-**v1.2.1** 同时修复桌面端复制回答、用户输入和代码块时的剪贴板权限问题，以及取消任务后后台 checkpoint 写入与数据库关闭的竞态。完整更新见 [发布说明](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.1)。
+**v1.2.2** 新增 Windows 桌面分发：内置 Python 与 ripgrep，支持中文及空格路径、原生剪贴板和父进程退出清理；修复 Windows Python 3.13 取消测试的启动等待超时。此前的聊天、会话地图、执行轨迹和设置继续保留。完整更新见 [发布说明](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.2)。
 
 从源码或已安装的 Python 环境启动：
 
@@ -88,7 +95,7 @@ python -m nailong.gui --project /path/to/project
 # 或安装 Python 包后：ignovate gui --project /path/to/project
 ```
 
-有 Electron 依赖时打开桌面窗口，也可加 `--browser` 使用本机浏览器。启动、分叉、轨迹与共享工作区说明见 [GUI 使用说明](docs/GUI.md)。切换会话或分支不会恢复工作区文件。Windows/Linux 与 Intel Mac 可使用 CLI，暂未提供对应桌面安装包。
+有 Electron 依赖时打开桌面窗口，也可加 `--browser` 使用本机浏览器。启动、分叉、轨迹与共享工作区说明见 [GUI 使用说明](docs/GUI.md)。切换会话或分支不会恢复工作区文件。Windows 11 x64 已提供桌面 ZIP；Linux 与 Intel Mac 可使用 CLI，暂未提供对应桌面安装包。
 
 ## 欢迎与模型配置
 
@@ -612,11 +619,11 @@ check_config.py  环境变量读取示例
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.2.1-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.2.2-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
 
-推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；Mac 桌面应用还会验证签名、重定位、内置 Python 和实际启动；全部检查通过后发布 CLI 安装包、Mac DMG、wheel 和校验清单。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
+推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；Mac 桌面应用还会验证签名、重定位、内置 Python 和实际启动；Windows 桌面 ZIP 还会验证内置 Python/ripgrep、中文路径重定位、沙箱、剪贴板及正常退出；全部检查通过后发布 CLI 安装包、Mac DMG、Windows 桌面 ZIP、wheel 和校验清单。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
 
-真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](docs/reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 和 Windows 实机仍需另行验证。
+真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](docs/reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 仍需按具体服务另行验证。Windows 11 x64 本机已完成桌面启动与退出检查，Python 3.13 全量 1,546 项测试通过（23 项平台跳过），包内 Python 3.11 的 25 项安全回归测试通过。
