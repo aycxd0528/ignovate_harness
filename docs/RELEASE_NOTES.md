@@ -1,7 +1,12 @@
-Ignovate v1.1.0 增加本地桌面工作台和 Apple Silicon macOS 安装包。下载 `Ignovate-1.1.0-macos-arm64.dmg`，将应用拖入 Applications 后打开；首次启动选择工作区，在模型设置中配置提供商。包内包含 Python 3.11、固定版本的应用依赖和 ripgrep，无需克隆源码或安装 Python。
+Ignovate v1.2.0 更新 macOS 桌面工作台。下载 `Ignovate-1.2.0-macos-arm64.dmg`，打开后将 `Ignovate.app` 拖入 Applications，替换旧版应用。包内包含 Python 3.11、固定版本依赖和 ripgrep，无需另装 Python 或克隆源码。已有项目配置、会话和工作区数据继续保留。
 
-桌面工作台支持流式聊天、会话地图与追问分支、实际文件差异、Skills/MCP 插件管理、模型与推理强度选择、权限模式及通用设置。启动动画至少显示两秒，思考和工具执行使用轻微动态反馈。状态更新保留正文、工具展开、滚动和文字选择。
+本次更新：
 
-内核纳入阶段约束、工具事件身份与历史结果关联、累计与生成预算、原生命令参数和文件冲突处理。CLI 保留 Windows 11 原生 Textual 界面与已有配置、会话及项目数据兼容性。CLI 用户可继续使用 `*-unix.tar.gz` 或 `*-windows.zip`。
+- 接入 React Bits 输入栏、模型与推理选择、思考过程和会话分支切换动画。
+- 新增执行轨迹页，按轮次查看输入、模型和工具事件；紧凑概览支持搜索、点击定位及横向滚动。
+- 修复会话地图在追问运行期间无法拖动卡片的问题，保持卡片位置与连线实时更新。
+- 运行期间保留实时工具状态，任务结束后折叠记录，并保留输出与文件变更。
+- 修复桌面版复制回答、用户输入和代码块时被网页剪贴板权限拒绝的问题，成功后提示“已复制”。
+- 更新任务关联、等待条件、验收记录及反馈经验管理。
 
-Mac 桌面包支持 macOS 13 及以上的 Apple Silicon Mac，使用 ad hoc 本地签名，尚未经过 Developer ID 签名与 Apple 公证；macOS 可能阻止首次打开。Intel Mac 可使用 CLI 安装包。安装和 SHA-256 校验说明见 [安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.1.0/docs/INSTALL.md)。
+此安装包适用于 macOS 13 及以上的 Apple Silicon Mac，采用 ad hoc 本地签名，尚未经过 Developer ID 签名与 Apple 公证，首次打开方式见[安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.2.0/docs/INSTALL.md)。Intel Mac 可继续使用 CLI 安装包。Release 同时提供 Unix、Windows CLI 安装包、wheel 及 SHA-256 校验文件。
