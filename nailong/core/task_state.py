@@ -14,6 +14,7 @@ from nailong.core.preferences import atomic_json, read_config, safe_config_path
 from nailong.core.task_requirements import append_requirement, requirement_records
 from nailong.core.file_locks import file_lock
 from nailong.core.safe_files import _path, is_link_or_reparse
+from nailong.core.work_items import WorkItemRelationships
 
 PHASES = frozenset({'investigate', 'implement', 'verify', 'deliver'})
 LIFECYCLES = frozenset({'active', 'paused', 'blocked', 'completed'})
@@ -23,7 +24,7 @@ MAX_TASK_BYTES = 900_000
 
 
 class TaskStore:
-    """One durable task per session; all mutations come from runtime or user facts.
+    """One canonical work item per identity, explicitly bound to sessions.
 
     Evidence is never inferred from assistant prose. Conversation rewind does
     not rewind this store because file and command effects are not undone.
@@ -37,26 +38,91 @@ class TaskStore:
         self.api_key = api_key
         self._lock = threading.RLock()
         self._held_locks = {}
+        self.relationships = WorkItemRelationships(session_store)
+        self._relationship_index = None
+
+    @contextmanager
+    def _relationships_locked(self):
+        # Always acquire relationship -> canonical locks in that order. Keeping
+        # the short relationship lock through a mutation closes detach/link races.
+        with self._lock:
+            if self._relationship_index is not None:
+                yield self._relationship_index
+                return
+            with file_lock(self.relationships.lock_path):
+                self._relationship_index = self.relationships.read()
+                try:
+                    yield self._relationship_index
+                finally:
+                    self._relationship_index = None
+
+    def _legacy_path(self, thread_id):
+        self.sessions.session_path(thread_id)
+        return safe_config_path(self.directory / f'{thread_id}.json', self.boundary)
+
+    def _legacy_items(self, index):
+        """Read unindexed v1 authorities without changing them or their binding."""
+        indexed = {item['authority'] for item in index['items'].values()}
+        result = []
+        for path in sorted(self.directory.glob('*.json')):
+            if path.name in indexed:
+                continue
+            owner = path.stem
+            self.sessions.session_path(owner)
+            task = self._read_authority(path, owner)
+            if task['task_id'] in index['items'] or any(row[0]['task_id'] == task['task_id'] for row in result):
+                raise ValueError('工作项身份存在多个权威文件，未自动选择来源。')
+            if owner in index['bindings']:
+                raise ValueError('旧任务与当前会话关联冲突，未自动替换。')
+            result.append((task, path.name))
+        return result
+
+    def _register_legacy(self, index, task, relative):
+        task_id, owner = task['task_id'], task['thread_id']
+        if task_id in index['items']:
+            raise ValueError('工作项身份已存在，未覆盖权威来源。')
+        staged = copy.deepcopy(index)
+        staged['items'][task_id] = {'owner_thread_id': owner, 'authority': relative}
+        self.relationships.bind(staged, owner, task_id, task['revision'])
+        self.relationships.write(staged)
+        index.clear()
+        index.update(staged)
+
+    def _ensure_thread(self, index, thread_id):
+        self.sessions.session_path(thread_id)
+        if thread_id in index['bindings']:
+            return
+        path = self._legacy_path(thread_id)
+        if path.exists():
+            task = self._read_authority(path, thread_id)
+            self._register_legacy(index, task, path.name)
 
     @contextmanager
     def _locked(self, thread_id):
         """Serialize the same task across factories and separate CLI processes."""
-        with self._lock:
-            if thread_id in self._held_locks:
+        with self._relationships_locked() as index:
+            self._ensure_thread(index, thread_id)
+            binding = index['bindings'].get(thread_id)
+            identity = ('task', binding['task_id']) if binding else ('session', thread_id)
+            if identity in self._held_locks:
                 yield
                 return
-            self.sessions.session_path(thread_id)
-            path = safe_config_path(self.directory / f'{thread_id}.lock', self.boundary)
+            digest = observation_digest(identity)
+            path = safe_config_path(self.directory / 'work-items' / f'{digest}.lock', self.boundary)
             with file_lock(path) as descriptor:
                 try:
-                    self._held_locks[thread_id] = descriptor
+                    self._held_locks[identity] = descriptor
                     yield
                 finally:
-                    self._held_locks.pop(thread_id, None)
+                    self._held_locks.pop(identity, None)
 
     def _path(self, thread_id):
         self.sessions.session_path(thread_id)  # Reuse the session ID validator.
-        return safe_config_path(self.directory / f'{thread_id}.json', self.boundary)
+        index = self._relationship_index if self._relationship_index is not None else self.relationships.read()
+        binding = index['bindings'].get(thread_id)
+        if binding:
+            return self.relationships.authority_path(index['items'][binding['task_id']]['authority'])
+        return self._legacy_path(thread_id)
 
     def _safe(self, value):
         if isinstance(value, str):
@@ -68,9 +134,30 @@ class TaskStore:
         return value
 
     def _read(self, thread_id):
-        value = read_config(self._path(thread_id), self.boundary)
+        index = self._relationship_index if self._relationship_index is not None else self.relationships.read()
+        binding = index['bindings'].get(thread_id)
+        if binding is None:
+            return None
+        item = index['items'][binding['task_id']]
+        value = self._read_authority(self.relationships.authority_path(item['authority']), item['owner_thread_id'])
+        if value is None or value['task_id'] != binding['task_id']:
+            raise ValueError('工作项权威身份变化或文件缺失，未读取替代任务。')
+        return self._project(value, thread_id, binding, index)
+
+    @staticmethod
+    def _project(value, thread_id, binding, index):
+        task = copy.deepcopy(value)
+        owner = value['thread_id']
+        task.update(thread_id=thread_id, owner_thread_id=owner, source_thread_id=owner,
+            association=copy.deepcopy(binding))
+        task['associated_thread_ids'] = sorted(thread for thread, row in index['bindings'].items()
+            if row['task_id'] == task['task_id'])
+        return task
+
+    def _read_authority(self, path, thread_id):
+        value = read_config(path, self.boundary)
         if not value:
-            if self._path(thread_id).exists():
+            if path.exists():
                 raise ValueError('任务状态为空或损坏，未覆盖原文件。')
             return None
         if (type(value.get('schema_version')) is not int or value.get('schema_version') != 1 or value.get('thread_id') != thread_id
@@ -137,18 +224,173 @@ class TaskStore:
                 self._validate_recorded_path(path)
         if 'requirements' in value:
             requirement_records(value)
+        if 'wait_condition' in value:
+            wait = value['wait_condition']
+            if (not isinstance(wait, dict) or set(wait) != {'reason', 'condition'}
+                    or any(not isinstance(wait[key], str) or not wait[key].strip() for key in wait)):
+                raise ValueError('任务等待条件无效。')
         return value
 
     def _write(self, thread_id, value):
-        value = self._safe(value)
+        with self._locked(thread_id):
+            index = self._relationship_index
+            binding = index['bindings'].get(thread_id)
+            if binding is None:
+                return self._create(thread_id, value)
+            if value.get('task_id') != binding['task_id']:
+                raise ValueError('任务关联已变化，拒绝旧任务写回。')
+            association = value.get('association')
+            if association is not None and association != binding:
+                raise ValueError('会话任务关联已变化，拒绝旧来源写回。')
+            owner = index['items'][binding['task_id']]['owner_thread_id']
+            current = read_config(self._path(thread_id), self.boundary)
+            if (current.get('task_id') != binding['task_id'] or current.get('thread_id') != owner
+                    or current.get('project_root') != str(self.project_root)):
+                raise ValueError('工作项权威来源已变化，拒绝旧来源写回。')
+            if (type(current.get('revision')) is not int or type(value.get('revision')) is not int
+                    or value['revision'] < current['revision']):
+                raise ValueError('工作项已有更新的要求修订，拒绝旧版本写回。')
+            stored = self._stored(value, owner)
+            self._persist(self._path(thread_id), stored)
+            return self._project(stored, thread_id, binding, index)
+
+    def _stored(self, value, owner):
+        value = self._safe(copy.deepcopy(value))
+        for key in ('owner_thread_id', 'source_thread_id', 'association', 'associated_thread_ids'):
+            value.pop(key, None)
+        value['thread_id'] = owner
+        if value.get('wait_condition') and value.get('lifecycle') == 'active':
+            value['lifecycle'] = 'blocked'
+        return value
+
+    def _persist(self, path, value):
         if len((json.dumps(value, ensure_ascii=False, allow_nan=False, indent=2)+'\n').encode()) > MAX_TASK_BYTES:
             raise ValueError('任务状态超过持久化预算；保留旧状态，不能静默丢弃要求或证据。')
-        atomic_json(self._path(thread_id), value, self.boundary)
-        return copy.deepcopy(value)
+        atomic_json(path, value, self.boundary)
+
+    def _create(self, thread_id, value):
+        index = self._relationship_index
+        task_id = value.get('task_id')
+        self.relationships.validate_task_id(task_id)
+        if task_id in index['items']:
+            raise ValueError('新任务身份已存在，未复制原工作项。')
+        legacy = self._legacy_path(thread_id)
+        relative = (legacy.name if thread_id not in index['bindings'] and not legacy.exists()
+            else self.relationships.fresh_authority(task_id))
+        path = self.relationships.authority_path(relative)
+        if path.exists():
+            raise ValueError('新任务权威路径已存在，未覆盖原文件。')
+        stored = self._stored(value, thread_id)
+        staged = copy.deepcopy(index)
+        staged['items'][task_id] = {'owner_thread_id': thread_id, 'authority': relative}
+        self.relationships.bind(staged, thread_id, task_id, stored['revision'])
+        self.relationships.validate(staged)
+        self._persist(path, stored)
+        self.relationships.write(staged)
+        index.clear()
+        index.update(staged)
+        return self._project(stored, thread_id, index['bindings'][thread_id], index)
 
     def snapshot(self, thread_id):
         with self._locked(thread_id):
             return copy.deepcopy(self._read(thread_id))
+
+    def _item_snapshot(self, task_id, index):
+        item = index['items'].get(task_id)
+        if item is None:
+            return None
+        owner = item['owner_thread_id']
+        task = self._read_authority(self.relationships.authority_path(item['authority']), owner)
+        if task is None or task['task_id'] != task_id:
+            raise ValueError('工作项权威身份变化或文件缺失。')
+        binding = index['bindings'].get(owner)
+        if binding is not None and binding['task_id'] != task_id:
+            binding = None
+        return self._project(task, owner, binding, index)
+
+    def list_work_items(self):
+        """List project authorities once; legacy enumeration is read-only."""
+        with self._relationships_locked() as index:
+            result = [self._item_snapshot(task_id, index) for task_id in sorted(index['items'])]
+            for task, _relative in self._legacy_items(index):
+                projected = self._project(task, task['thread_id'], None, index)
+                projected['associated_thread_ids'] = [task['thread_id']]
+                result.append(projected)
+            return sorted(result, key=lambda row: row['task_id'])
+
+    def work_item(self, task_id):
+        """Return a work item by stable identity, even after its owner moved on."""
+        self.relationships.validate_task_id(task_id)
+        with self._relationships_locked() as index:
+            task = self._item_snapshot(task_id, index)
+            if task is not None:
+                return task
+            for legacy, _relative in self._legacy_items(index):
+                if legacy['task_id'] == task_id:
+                    projected = self._project(legacy, legacy['thread_id'], None, index)
+                    projected['associated_thread_ids'] = [legacy['thread_id']]
+                    return projected
+            return None
+
+    @staticmethod
+    def _expected_revision(value):
+        if type(value) is not int or value < 1:
+            raise ValueError('需要有效的当前任务修订。')
+
+    def link_work_item(self, thread_id, task_id, *, expected_revision):
+        """Explicitly associate an empty session; never copy task authority."""
+        self.relationships.validate_task_id(task_id)
+        self._expected_revision(expected_revision)
+        with self._locked(thread_id):
+            index = self._relationship_index
+            source = self._item_snapshot(task_id, index)
+            if source is None:
+                legacy = next((row for row in self._legacy_items(index) if row[0]['task_id'] == task_id), None)
+                if legacy is None:
+                    raise ValueError('当前项目没有该工作项。')
+                source = legacy[0]
+            if source['revision'] != expected_revision:
+                raise ValueError('工作项修订已变化，请读取当前要求后交接。')
+            binding = index['bindings'].get(thread_id)
+            if binding:
+                if binding['task_id'] != task_id:
+                    raise ValueError('目标会话已有独立任务；请使用空会话接续。')
+                return self._read(thread_id)
+            if task_id not in index['items']:
+                self._register_legacy(index, *legacy)
+            staged = copy.deepcopy(index)
+            self.relationships.bind(staged, thread_id, task_id, expected_revision)
+            self.relationships.write(staged)
+            index.clear()
+            index.update(staged)
+            return self._read(thread_id)
+
+    def set_wait(self, thread_id, *, reason, condition, expected_revision):
+        """An explicit local wait records a resume condition, never evidence."""
+        self._expected_revision(expected_revision)
+        if any(not isinstance(value, str) or not value.strip() or len(value) > 2000 for value in (reason, condition)):
+            raise ValueError('等待需要明确且有界的原因和恢复条件。')
+        with self._locked(thread_id):
+            task = self._read(thread_id)
+            if task is None or task['revision'] != expected_revision:
+                raise ValueError('任务不存在或修订已变化，未写入等待。')
+            if task['lifecycle'] == 'completed':
+                raise ValueError('已完成任务不能进入等待。')
+            task['wait_condition'] = {'reason': reason.strip(), 'condition': condition.strip()}
+            task['lifecycle'] = 'blocked'
+            return self._write(thread_id, task)
+
+    def clear_wait(self, thread_id, *, expected_revision):
+        """Only an explicit local decision clears an unresolved wait."""
+        self._expected_revision(expected_revision)
+        with self._locked(thread_id):
+            task = self._read(thread_id)
+            if task is None or task['revision'] != expected_revision:
+                raise ValueError('任务不存在或修订已变化，未清除等待。')
+            had_wait = task.pop('wait_condition', None) is not None
+            if had_wait and task['lifecycle'] == 'blocked':
+                task['lifecycle'] = 'active'
+            return self._write(thread_id, task)
 
     @contextmanager
     def bound_task(self, thread_id, task_id, revision=None):
@@ -226,7 +468,7 @@ class TaskStore:
             task['requirements']=requirement_records(task)
             for row in task['requirements']:
                 row['introduced_revision']=1
-            return self._write(thread_id, task)
+            return self._create(thread_id, task)
 
     def replace_requirement(self, thread_id, requirement_id, text):
         """Only the explicit local user command calls this; no model tool."""
@@ -596,7 +838,7 @@ class TaskStore:
                 return None
             task['progress_observations'] = []
             task['progress_repeats'] = 0
-            if task['lifecycle'] in {'paused', 'blocked'}:
+            if task['lifecycle'] in {'paused', 'blocked'} and not task.get('wait_condition'):
                 task['lifecycle'] = 'active'
                 task['blockers'] = []
             return self._write(thread_id, task)
@@ -619,6 +861,8 @@ class TaskStore:
                 if lifecycle not in LIFECYCLES:
                     raise ValueError('任务生命周期无效。')
                 if lifecycle == 'completed':
+                    if task.get('wait_condition'):
+                        raise ValueError('任务仍有明确等待条件；请先明确恢复后再完成。')
                     from nailong.core.delivery import build_delivery_report
                     candidate = dict(task, lifecycle='active')
                     report = build_delivery_report(candidate, current_input_fingerprint=current_input_fingerprint)

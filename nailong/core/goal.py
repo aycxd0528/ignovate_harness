@@ -50,6 +50,9 @@ class Goal:
     verification_task_revision: int = 0
     thread_id: str | None = None
     settled_round_ids: list[str] = field(default_factory=list)
+    last_progress: dict = field(default_factory=dict)
+    recent_progress: list[dict] = field(default_factory=list)
+    no_change_rounds: int = 0
 
 
 class GoalStore:
@@ -219,6 +222,7 @@ class GoalStore:
             goal.blocked_rounds = 0
             goal.last_blocker = None
             goal.blocker_observed_round = -1
+            goal.no_change_rounds = 0
             self._clear_verification(goal)
             if thread_id:
                 goal.thread_id = str(thread_id)
@@ -471,6 +475,7 @@ class GoalStore:
         unattended_approval: bool = False,
         round_id: str | None = None,
         stop_reason: str = "",
+        progress: dict | None = None,
     ) -> Goal | None:
         with self._locked():
             goals = self._load()
@@ -486,6 +491,34 @@ class GoalStore:
             goal.spent_usd += max(0.0, float(cost_usd))
             if round_id:
                 goal.settled_round_ids.append(round_id)
+            if progress is not None:
+                from nailong.core.goal_control import PROGRESS_WINDOW
+                from nailong.core.delivery import _known
+                # Retain the compact assessment, never raw task/tool output.
+                progress = progress if isinstance(progress, dict) else {}
+                keys = ('status', 'reason', 'task_id', 'task_revision', 'project_root',
+                    'current_input_fingerprint', 'evidence_ids', 'acceptance_ids')
+                record = {key: progress.get(key) for key in keys}
+                for key in ('evidence_ids', 'acceptance_ids'):
+                    values = record[key]
+                    record[key] = [value[:200] for value in values[:64] if isinstance(value, str)] if isinstance(values, list) else []
+                for key in ('status', 'reason', 'task_id', 'project_root', 'current_input_fingerprint'):
+                    value = record[key]
+                    record[key] = (value.replace(self.api_key, '[密钥已隐藏]') if self.api_key else value)[:2048] if isinstance(value, str) else None
+                if type(record['task_revision']) is not int or record['task_revision'] < 1:
+                    record['task_revision'] = None
+                valid_binding = (record['task_revision'] is not None and all(_known(record[key])
+                    for key in ('task_id', 'project_root', 'current_input_fingerprint')))
+                if (record['status'] not in {'progress', 'no_change', 'unknown'}
+                        or record['status'] in {'progress', 'no_change'} and not valid_binding
+                        or record['status'] == 'progress' and not (record['evidence_ids'] or record['acceptance_ids'])):
+                    record['status'] = 'unknown'
+                    record['reason'] = 'invalid_progress_assessment'
+                binding = ('task_id', 'task_revision', 'project_root', 'current_input_fingerprint')
+                same = all(record[key] == goal.last_progress.get(key) for key in binding)
+                goal.no_change_rounds = (min(PROGRESS_WINDOW, goal.no_change_rounds + 1) if same else 1) if record['status'] == 'no_change' else 0
+                goal.last_progress = record
+                goal.recent_progress = (goal.recent_progress + [{**record, 'round_id': round_id}])[-PROGRESS_WINDOW:]
             goal.last_summary = summary.replace(self.api_key, "[密钥已隐藏]") if self.api_key else summary
             if goal.spent_usd >= goal.max_cost_usd:
                 goal.state = "paused"

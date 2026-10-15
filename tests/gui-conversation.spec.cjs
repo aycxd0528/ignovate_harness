@@ -6,7 +6,7 @@ const assert=require('node:assert/strict');
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   const snapshot=()=>page.evaluate(async()=>await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json());
   try{
-    await page.goto('http://127.0.0.1:8767/#token=browser-test-only');await page.locator('#project-name').filter({hasText:'GUI 验证项目'}).waitFor();
+    await page.goto((process.env.GUI_TEST_ORIGIN||'http://127.0.0.1:8767')+'/#token=browser-test-only');await page.locator('#project-name').filter({hasText:'GUI 验证项目'}).waitFor();
     await page.getByRole('button',{name:'新会话',exact:true}).click();
     await page.getByRole('button',{name:'权限管理',exact:true}).click();await page.getByRole('menuitemradio',{name:'帮我批准',exact:true}).click();
     await page.locator('#composer').fill('工具状态与产物测试');await page.getByRole('button',{name:'发送',exact:true}).click();
@@ -18,7 +18,7 @@ const assert=require('node:assert/strict');
     await page.waitForFunction(()=>document.querySelectorAll('.turn:not(.live)').length===1);
     const user=await page.locator('.user-message .prompt').boundingBox(),answer=await page.locator('.assistant-message .answer').boundingBox();
     assert.ok(user.x>answer.x,'user bubble aligns right; assistant body aligns left');
-    assert.match(await page.locator('.task-elapsed').textContent(),/用时/);
+    assert.match(await page.locator('.task-elapsed').textContent(),/\d+(?:\.\d+)?[sm]/);
     await page.locator('.turn').getByRole('button',{name:'详情',exact:true}).click();
     await page.locator('.artifact-card[data-kind=file]').filter({hasText:'report.md'}).waitFor();
     assert.equal(await page.locator('#inspector .answer').count(),0,'inspector must not repeat the model answer');

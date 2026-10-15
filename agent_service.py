@@ -464,8 +464,19 @@ class AgentService:
         before = self.task_store.snapshot(thread_id)
         if before is None or before['task_id'] != turn_task['task_id']:
             return None
+        versioned_read = (name == 'read_file' and ok is True and
+            isinstance(body.get('version'), str) and body.get('coverage') in {'partial', 'complete'})
         current_input = (await self._task_input_fingerprint(before)
-            if name == 'run_command' and before.get('input_fingerprint') else None)
+            if versioned_read or name == 'run_command' and before.get('input_fingerprint') else None)
+        read_current = False
+        if versioned_read and current_input:
+            from nailong.tools.files import FileSession
+            try:
+                path = self.task_store._relative(body.get('path') or args.get('path'))
+                version = await asyncio.to_thread(FileSession(self.permission_engine.project_root).read_file, path, max_chars=1)
+                read_current = version.get('ok') is True and version.get('version') == body['version'] and current_input == await self._task_input_fingerprint(before)
+            except (OSError, ValueError):
+                pass
         with self._bound_turn_task(thread_id, require_revision=False) as task:
             if task is None:
                 return None
@@ -504,7 +515,10 @@ class AgentService:
                     'id': evidence_id,
                     'kind': 'edit' if name in {'edit_file', 'write_file'} else 'run' if name == 'run_command' else 'read',
                     'source': 'runtime', 'status': status, 'task_revision': turn_task['revision'],
-                    'paths': paths, 'input_fingerprint': '', 'coverage': 'unknown',
+                    'paths': paths, 'input_fingerprint': current_input if read_current else '',
+                    'coverage': body['coverage'] if read_current else 'unknown',
+                    **({'result_digest': observation_digest({key: body.get(key) for key in
+                        ('path', 'version', 'content_offset', 'content', 'next_offset', 'next_char_offset')})} if read_current else {}),
                     **({'outside_project_scope': True} if changed and isinstance(path, str) and not paths else {}),
                     'summary': f"{name}: {'成功' if ok is True else '失败' if ok is False else '结果未知'}"
                         + (f'；项目验证范围外路径：{path}' if isinstance(path, str) and not paths else ''),
@@ -1165,7 +1179,7 @@ class AgentService:
                 history_display = original_message
         thread_id = config.get("configurable", {}).get("thread_id")
         participating_task = await self._begin_task(thread_id, history_display or original_message, profile,
-            target_path, goal_round=bool(pin_message and history_display is None), review_paths=review_paths)
+            target_path, goal_round=bool(pin_message == 'goal' or pin_message and history_display is None), review_paths=review_paths)
         self.last_turn_task_id = participating_task['task_id'] if participating_task is not None else None
         visible_message = history_display if history_display is not None else original_message
         simple_project_question = profile == 'chat' and not pin_message and is_simple_project_question(visible_message)

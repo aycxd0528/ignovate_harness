@@ -28,6 +28,21 @@ class OfflineModel(FakeMessagesListChatModel):
         if '延迟地图追问' in prompt:
             __import__('time').sleep(1.5)
         text = '先明确内核接口，再实现会话地图。\n\n当前方案保留共享起点，同时允许独立探索。\n\n引用这一段可以进一步展开。'
+        if '并行工具展示测试' in prompt:
+            finished = set()
+            for message in reversed(messages):
+                if message.type == 'human' and not message.name:
+                    break
+                if message.type == 'tool':
+                    finished.add(message.tool_call_id)
+            if not {'parallel-one', 'parallel-two'} <= finished:
+                calls = []
+                for identity, delay, result in [('parallel-one', 1.8, '结果一'), ('parallel-two', 2.6, '结果二')]:
+                    command = f'{sys.executable} -c ' + __import__('shlex').quote(f'import time; time.sleep({delay}); print("{result}")')
+                    calls.append({'name': 'run_command', 'args': {'command': command}, 'id': identity})
+                return ChatResult(generations=[ChatGeneration(message=AIMessage('', tool_calls=calls))])
+            __import__('time').sleep(1)
+            return ChatResult(generations=[ChatGeneration(message=AIMessage('并行工具已完成。'))])
         if '修改产物测试' in prompt:
             current = []
             for message in reversed(messages):
@@ -71,7 +86,26 @@ def main():
     def build(project):
         sessions = ProjectSessionStore(project, base_dir=Path(temp.name) / 'data')
         factory = AgentRuntimeFactory(Settings('offline-test-key', 'https://example.test', 'deepseek-flash', Path(project)), session_store=sessions)
-        return GUIController(project, sessions=sessions, service=AgentService(factory, api_key='offline-test-key'))
+        controller = GUIController(project, sessions=sessions, service=AgentService(factory, api_key='offline-test-key'))
+        if __import__('os').environ.get('IGNOVATE_GUI_CONTROL_HISTORY') == '1':
+            branch = controller.branches.create('控制流程验证')
+            thread = branch['thread_id']
+            task = factory.task_store.begin(thread, '修复 README 启动流程')
+            task = factory.task_store.add_acceptance(thread, 'manual-output', '检查实际输出', kind='manual')
+            factory.task_store.set_step(thread, 'inspect', title='核对输入', state='done')
+            factory.task_store.set_step(thread, 'fix', title='修复故障路径', dependencies=['inspect'])
+            task = factory.task_store.snapshot(thread)
+            sessions.append_event(thread, 'user', {'text': '控制流程的隔离历史来源'})
+            sessions.append_event(thread, 'final', {'text': '保留原生任务身份与验收条件。'})
+            controller.branches.commit_turn(branch['id'], 0, None, task_snapshot=task)
+        if __import__('os').environ.get('IGNOVATE_GUI_TRACE_HISTORY') == '1':
+            branch = controller.branches.create('轨迹历史测试')
+            for number in range(81):
+                start = len(sessions.read_events(branch['thread_id']))
+                sessions.append_event(branch['thread_id'], 'user', {'text': f'历史问题 {number + 1}'})
+                sessions.append_event(branch['thread_id'], 'final', {'text': f'历史回答 {number + 1}'})
+                controller.branches.commit_turn(branch['id'], start, None)
+        return controller
     def offline_settings():
         from nailong.core.bootstrap import BootstrapStore
         provider = BootstrapStore().read().get('provider', {})
@@ -80,9 +114,9 @@ def main():
                         model, root, environment_model=model)
     # Keep model construction offline when the native reasoning setting changes.
     with patch('agent.ChatDeepSeek', side_effect=lambda **kwargs: OfflineModel(responses=[])), patch('pathlib.Path.home', return_value=home), patch('config.load_settings', side_effect=offline_settings), patch.dict('os.environ', {'IGNOVATE_CONFIG_DIR':str(home/'config'),'NAILONG_DATA_DIR':str(Path(temp.name).resolve()/'data')}):
-        server = GUIServer(root, port=8767, token='browser-test-only', controller_factory=build)
+        server = GUIServer(root, port=int(__import__('os').environ.get('IGNOVATE_GUI_TEST_PORT', '8767')), token='browser-test-only', controller_factory=build)
         try:
-            print('Browser fixture ready on 8767', flush=True)
+            print('Browser fixture ready on '+server.origin, flush=True)
             server.serve_forever()
         finally:
             server.server_close()

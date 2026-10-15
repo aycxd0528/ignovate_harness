@@ -289,6 +289,9 @@ class MemoryStore:
             path = self.document_path(document)
             full, version = self._read_path(path, lambda: self.document_path(document))
             knowledge=self.knowledge(full,document.split('/')[0])
+            if knowledge.get('knowledge_state') == 'revoked':
+                return {**knowledge, 'ok': False, 'document': safe_document, 'status': 'revoked',
+                        'version': version, 'error': '该经验已撤销。'}
             if knowledge['metadata_status']=='invalid':
                 return {**knowledge,'ok':False,'document':safe_document,'status':'error','version':version,
                         'error':'memory_metadata_invalid'}
@@ -398,6 +401,30 @@ class MemoryStore:
             if (hashlib.sha256(current).hexdigest() if current is not None else None)!=edit.before_digest:
                 raise ValueError('记忆文件保存前发生冲突。')
             atomic_write_bytes(path, content.encode('utf-8'))
+
+    def stage_document(self, document, content):
+        """Stage one topic through the same bounded, versioned memory boundary."""
+        if not isinstance(content, str) or len(content.encode('utf-8')) > MAX_MEMORY_BYTES:
+            raise ValueError('记忆正文无效或超过限制。')
+        path = self.document_path(document)
+        raw = self._read_bytes_path(path, lambda: self.document_path(document), MAX_MEMORY_BYTES) if path.exists() else None
+        return MemoryEdit(document, path, hashlib.sha256(raw).hexdigest() if raw is not None else None,
+                          raw.decode('utf-8') if raw is not None else '', content)
+
+    def commit_document(self, edit):
+        from nailong.core.file_locks import file_lock
+        path = self.document_path(edit.scope)
+        if path != edit.path:
+            raise ValueError('记忆主题路径发生冲突。')
+        content = edit.content.replace(self.api_key, '[密钥已隐藏]') if self.api_key else edit.content
+        with pinned_directory(path.parent, create=True):
+            self.document_path(edit.scope)
+            with file_lock(path.with_suffix('.lock')):
+                raw = self._read_bytes_path(path, lambda: self.document_path(edit.scope), MAX_MEMORY_BYTES) if path.exists() else None
+                if (hashlib.sha256(raw).hexdigest() if raw is not None else None) != edit.before_digest:
+                    raise ValueError('记忆主题版本冲突。')
+                self.document_path(edit.scope)
+                atomic_write_bytes(path, content.encode('utf-8'))
 
 
 def load_project_memory(

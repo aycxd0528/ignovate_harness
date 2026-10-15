@@ -271,6 +271,9 @@ class MemoryReadContext:
                 cache[document]=self.snapshot.store._document_info(document,validator)
         current=cache[document]
         fields={key:current[key] for key in (*EPISTEMIC_KEYS,*KNOWLEDGE_DETAIL_KEYS) if key in current}
+        if current.get('knowledge_state') == 'revoked':
+            return {**fields, 'ok': False, 'document': document, 'status': 'revoked',
+                    'version': current.get('version'), 'error': '该经验已撤销。'}
         if record.get('version')!=current.get('version'):
             # Retain the old body's own declaration. New document sources must
             # never be attached to a historical body from a different version.

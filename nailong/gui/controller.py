@@ -51,7 +51,7 @@ class GUIController:
             run['message'] = run['payload'].get('message', '')
             run['plan_id'] = run['payload'].get('_gui_plan_id')
             run['error'] = run['payload'].get('_gui_error')
-            for key in ('queued_at','started_at','finished_at','elapsed_ms','tools','activity','goal'):
+            for key in ('queued_at','started_at','finished_at','elapsed_ms','tools','activity','goal','progress','continuation'):
                 run[key]=run['payload'].get('_gui_'+key)
             run['tools']=run.get('tools') or []
             if run['status'] in {'queued', 'running', 'waiting_approval', 'stopping'}:
@@ -67,10 +67,33 @@ class GUIController:
         for run in self.runs.values():
             if run['status'] == 'interrupted' and run['node_id'] is None and run['start_index'] is not None:
                 branch = self.branches.branch(run['branch_id'])
-                if len(self.sessions.read_events(branch['thread_id'])) > run['start_index']:
-                    node = self.branches.commit_turn(branch['id'], run['start_index'], None, status='interrupted')
+                saved = self.branches.db.execute('SELECT id FROM nodes WHERE branch_id=? AND start_index=?',
+                    (branch['id'], run['start_index'])).fetchall()
+                if len(saved) == 1:
+                    run['node_id'] = saved[0]['id']
+                elif len(saved) > 1:
+                    raise ValueError('恢复运行存在多个来源回合，请核对。')
+                elif len(self.sessions.read_events(branch['thread_id'])) > run['start_index']:
+                    events = self.sessions.read_events(branch['thread_id'])
+                    start = run['start_index']; end = start
+                    if events[start].get('run_id') == run['id']:
+                        while end < len(events) and events[end].get('run_id') == run['id']:
+                            end += 1
+                    else:
+                        # Legacy ownership is uncertain. Preserve one bounded
+                        # historical turn, never certify the later session tail.
+                        end = len(events); seen_user = False
+                        for i in range(start, len(events)):
+                            kind = events[i].get('kind')
+                            if i > start and (kind == 'turn_start' or kind == 'user' and seen_user):
+                                end = i; break
+                            seen_user = seen_user or kind == 'user'
+                    node = self.branches.commit_turn(branch['id'], start, None, status='interrupted', end_index=end)
                     run['node_id'] = node['id']
                 self._save_run(run)
+            if run['status'] in {'completed', 'failed', 'stopped', 'interrupted'}:
+                from nailong.gui.work_control import closeout
+                closeout(self, run, self.branches.branch(run['branch_id']))
 
     def safe(self, value):
         secret = self.sessions.api_key
@@ -83,6 +106,9 @@ class GUIController:
         return value
 
     def emit(self, kind, data, run=None):
+        if run and kind in {'goal_control', 'goal_progress'}:
+            run['continuation' if kind == 'goal_control' else 'progress'] = self.safe(data)
+            self._save_run(run)
         if run and kind in {'status','tool_start','tool_end'}:
             if kind=='status':run['activity']=data.get('status')
             else:
@@ -212,6 +238,15 @@ class GUIController:
             branch['summary'] = path[-1]['answer'][:140] if path else ''
             branch['permission_mode'] = self.branch_modes.get(branch['id'], 'default')
             branch['weather'] = self._weather(path, window)
+        from nailong.gui.work_control import projection, task_summary
+        for node in nodes.values():
+            saved = self.branches.node(node['id']).get('task_snapshot')
+            node['task_summary'] = task_summary(json.loads(saved)) if saved else None
+            source_run = next((run for run in self.runs.values() if run.get('node_id') == node['id']), None)
+            if source_run:
+                node['progress'] = source_run.get('progress')
+                node['continuation'] = source_run.get('continuation')
+        control = projection(self, branches)
         return self.safe({'schema_version': 1, 'sequence': self.sequence,
                          'project': {'id': self.sessions.root.name, 'path': str(self.project), 'name': self.project.name},
                          'configuration': configuration, 'gui_settings': gui_settings,
@@ -219,7 +254,7 @@ class GUIController:
                          'runs': [self._public_run(run) for run in self.runs.values()], 'paused': self.paused,
                          'approvals': [a['public'] for a in self.approvals.values()], 'layout': self.branches.layout(),
                          'layouts': {b['conversation_id']: self.branches.layout(b['conversation_id']) for b in branches},
-                         'error': self.error, 'kernel_version': '1.1.0'})
+                         'control': control, 'error': self.error, 'kernel_version': '1.1.0'})
 
     def _weather(self, path, window):
         from ui.presentation import SessionMetrics
@@ -245,7 +280,7 @@ class GUIController:
 
     def _public_run(self, run):
         result={key: run.get(key) for key in ('id', 'branch_id', 'status', 'node_id', 'message', 'error', 'plan_id',
-                                             'queued_at','started_at','finished_at','elapsed_ms','activity','tools','goal')}
+                                             'queued_at','started_at','finished_at','elapsed_ms','activity','tools','goal','progress','continuation')}
         if run.get('_started_monotonic') is not None and run['status'] in {'running','waiting_approval','stopping'}:
             result['elapsed_ms']=int((time.monotonic()-run['_started_monotonic'])*1000)
         result['map_origin'] = run['payload'].get('_gui_map_origin')
@@ -253,7 +288,7 @@ class GUIController:
         return result
 
     def _save_run(self, run):
-        for key in ('plan_id', 'error','queued_at','started_at','finished_at','elapsed_ms','tools','activity','goal'):
+        for key in ('plan_id', 'error','queued_at','started_at','finished_at','elapsed_ms','tools','activity','goal','progress','continuation'):
             if run.get(key) is not None:
                 run['payload']['_gui_'+key] = run[key]
             else:
@@ -277,6 +312,9 @@ class GUIController:
             raise ValueError('命令参数必须是对象。')
         if payload.get('project_id', self.sessions.root.name) != self.sessions.root.name:
             raise ValueError('项目已切换，请重新加载后再操作。')
+        if name == 'work_control':
+            from nailong.gui.work_control import execute
+            return await execute(self, payload)
         if name in {'settings', 'settings_update', 'provider'}:
             from nailong.gui.settings import GUISettings
             settings = GUISettings(self)
@@ -320,6 +358,9 @@ class GUIController:
             return self._enqueue(payload, verify=name == 'verify')
         if name == 'map_send':
             return await self._map_send(payload)
+        if name == 'trace':
+            from nailong.gui.trace import branch_trace
+            return branch_trace(self, payload['branch_id'], payload.get('limit', 80))
         if name == 'draft':
             return {'text': self.branches.draft(payload['branch_id'], payload['text'])}
         if name == 'layout':
@@ -673,7 +714,8 @@ class GUIController:
                 branch = self.branches.branch(run['branch_id'])
                 if branch['legacy'] or branch['history_conflict']:
                     raise ValueError('CLI 已更新该会话；请查看同步的历史并基于摘要新建。')
-                await self._execute_owned(run)
+                with self.sessions.run_scope(run['id'], branch['thread_id']):
+                    await self._execute_owned(run)
         except (BlockingIOError, ValueError) as error:
             run.update(status='failed', error='当前项目被另一 CLI / GUI 运行占用。请等待后显式恢复。' if isinstance(error, BlockingIOError) else str(error))
             self.paused = True
@@ -696,6 +738,8 @@ class GUIController:
         run['started_at']=datetime.now(timezone.utc).isoformat(timespec='milliseconds')
         run['_started_monotonic']=time.monotonic()
         run['start_index'] = len(self.sessions.read_events(branch['thread_id']))
+        from nailong.core.control_ledger import ControlLedger
+        ControlLedger(self.sessions).begin(run['id'], thread_id=branch['thread_id'], request_id=run['payload']['request_id'])
         self._save_run(run)
         self.emit('run', self._public_run(run), run)
         checkpoint = None
@@ -768,6 +812,8 @@ class GUIController:
                 run['node_id'] = node['id']
                 if run['status'] == 'completed' and run['payload'].get('profile') == 'plan' and hasattr(self.factory, 'plan_store'):
                     run['plan_id'] = self.factory.plan_store.stage(node['answer'])
+            from nailong.gui.work_control import closeout
+            closeout(self, run, branch)
             self._save_run(run)
             self.emit('run', self._public_run(run), run)
 

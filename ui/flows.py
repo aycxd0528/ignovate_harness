@@ -11,6 +11,7 @@ from pathlib import Path
 
 from agent_service import TurnEvent
 from nailong.core.budgets import CostBudgetExceeded, GoalCostBudget
+from nailong.core.goal_control import assess_goal_progress, decide_goal_turn
 
 
 def parse_goal_request(argument: str) -> tuple[str, int, float]:
@@ -53,6 +54,31 @@ async def _call(callback, *args):
 
 async def _emit(emit, event: TurnEvent) -> None:
     await _call(emit, event)
+
+
+async def _goal_task_snapshot(service, factory, thread_id):
+    """Pair the task owner's snapshot with independently observed input facts."""
+    tasks = getattr(service, 'task_store', None) or getattr(factory, 'task_store', None)
+    if tasks is None or not callable(getattr(tasks, 'snapshot', None)):
+        return None
+    before = tasks.snapshot(thread_id)
+    if before is None:
+        return None
+    from nailong.core.verification import input_fingerprint, _owned_worker
+    root = getattr(tasks, 'project_root', None)
+    current = None
+    if root is not None:
+        try:
+            current = await _owned_worker(input_fingerprint, root,
+                before.get('verification_generated_paths', []))
+        except (OSError, ValueError):
+            pass  # Unknown coverage is not a claim of no effective progress.
+    after = tasks.snapshot(thread_id)
+    if after is None:
+        return None
+    if (before['task_id'], before['revision']) != (after['task_id'], after['revision']):
+        current = None
+    return {**after, 'current_input_fingerprint': current}
 
 
 async def run_plan_flow(
@@ -145,7 +171,34 @@ async def _drive_goal(
         goal = goal_store.prepare_round(goal.id)
         if goal is None:
             raise ValueError("目标已不存在。")
-        if goal.state != "active":
+        before = await _goal_task_snapshot(service, factory, thread_id) if goal.state == 'active' else None
+        goal = goal_store.get(goal.id) or goal
+        control = decide_goal_turn(goal, before)
+        try:
+            for attempt in range(8):
+                await _emit(emit, TurnEvent('goal_control', {'goal_id': goal.id, **control}))
+                # Every publication yields. Admit only after a stable reread,
+                # including a pause during publication of a changed decision.
+                goal = goal_store.get(goal.id) or goal
+                before = await _goal_task_snapshot(service, factory, thread_id) if goal.state == 'active' else before
+                goal = goal_store.get(goal.id) or goal
+                fresh_control = decide_goal_turn(goal, before)
+                if fresh_control == control:
+                    break
+                control = fresh_control
+            else:
+                control = {**control, 'action': 'wait', 'reason': '执行前状态持续变化，已暂停。',
+                           'resume_condition': '核对任务和目标状态后显式恢复。'}
+        except asyncio.CancelledError:
+            goal_store.update(goal.id, state='paused', summary='目标运行已取消。', thread_id=thread_id)
+            raise
+        if control['action'] in {'wait', 'stop'}:
+            if goal.state == 'active':
+                _, _, saved = goal_store.update(goal.id, state='paused',
+                    summary=control['reason']+' '+control['resume_condition'], thread_id=thread_id)
+                goal = saved or goal
+            await _emit(emit, TurnEvent('goal_status', {'goal': goal, 'text': control['reason']}))
+            await _emit(emit, TurnEvent('notice', {'text': goal.pause_reason or control['reason']}))
             break
         round_id = uuid.uuid4().hex
         round_usage = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
@@ -163,10 +216,16 @@ async def _drive_goal(
             "未配置验证或缺少目标覆盖时保持未验证并暂停，请提示用户用 /task accept、/task bind 配置验收；单个命令成功不能替代目标验收。"
             "如果受阻，用相同原因调用 update_goal(state='blocked')，至少连续三轮。"
         )
+        if control['action'] == 'replan':
+            goal_prompt += ('\n本轮先重新核对当前任务版本、验收条件及已有证据引用，'
+                '说明哪些假设已排除，再选择能产生新证据的下一步。'
+                '重新运行相同检查、工具计数或文件改名不代表有效进展。'
+                f"\n任务：{control.get('task_id')}；要求版本：{control.get('task_revision')}。")
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 40}
         budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd)
         round_error = None
         stop_reason = ""
+        progress = assess_goal_progress(before, None)
         try:
             stream = service.stream_turn(
                 goal_prompt,
@@ -232,11 +291,29 @@ async def _drive_goal(
                 round_cost = goal.max_cost_usd
             if not budget.usage_complete and not stop_reason:
                 stop_reason = "模型未提供完整用量；已保守计费并暂停目标。"
+            try:
+                after = await _goal_task_snapshot(service, factory, thread_id)
+                progress = assess_goal_progress(before, after)
+            except asyncio.CancelledError as error:
+                round_error = round_error or error
+                stop_reason = '目标运行已取消。'
+            except Exception:
+                # Progress observation failure must never prevent cost settlement.
+                progress['reason'] = 'task_observation_failed'
             goal = goal_store.record_round(
                 goal.id, cost_usd=round_cost, files_changed=files_changed,
                 tool_calls=tool_calls, summary=summary, unattended_approval=unattended_approval,
                 round_id=round_id, stop_reason=stop_reason,
+                progress=progress,
             ) or goal
+        try:
+            await _emit(emit, TurnEvent('goal_progress', {'goal_id': goal.id,
+                'round_id': round_id, **progress}))
+        except BaseException as error:
+            goal_store.update(goal.id, state='paused',
+                summary='目标运行已取消。' if isinstance(error, asyncio.CancelledError) else str(error),
+                thread_id=thread_id)
+            raise
         first_round = False
         if round_error is not None and not isinstance(round_error, CostBudgetExceeded):
             raise round_error

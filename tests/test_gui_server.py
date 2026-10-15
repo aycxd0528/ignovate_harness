@@ -48,6 +48,37 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn('test-token', body.decode())
         self.assertEqual(self.request('/../../config.py')[0], 404)
 
+    def test_react_bits_modules_are_served_by_the_real_gui(self):
+        for path, content_type in [('/react-bits.js', 'text/javascript'), ('/react-bits.css', 'text/css'),
+                                   ('/react-bits-islands.js', 'text/javascript'), ('/react-bits-islands.css', 'text/css')]:
+            with self.subTest(path=path):
+                status, body, headers = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertTrue(body)
+                self.assertIn(content_type, headers['Content-Type'])
+
+    def test_reload_asset_burst_can_queue_before_the_server_accepts(self):
+        # A refresh opens CSS/script connections together, alongside API polling.
+        # Pause acceptance so this tests the TCP backlog without timing a race.
+        self.server.shutdown()
+        self.thread.join()
+        connections = []
+        try:
+            for _ in range(12):
+                connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=0.5)
+                connections.append(connection)
+                connection.connect()
+        finally:
+            self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+            self.thread.start()
+            for connection in connections:
+                self.addCleanup(connection.close)
+        for connection in connections:
+            connection.request('GET', '/react-bits-islands.js')
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.read())
+
     def test_mcp_connect_http_wait_covers_native_120_second_handshake(self):
         import json
         from unittest.mock import Mock

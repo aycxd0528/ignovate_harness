@@ -15,6 +15,8 @@ from nailong.gui.controller import GUIController
 
 class GUIServer(ThreadingHTTPServer):
     daemon_threads = True
+    # A browser refresh opens styles, scripts and API connections in one burst.
+    request_queue_size = 64
 
     def __init__(self, project, *, port=0, token=None, controller_factory=GUIController):
         self.token = token or secrets.token_urlsafe(32)
@@ -106,8 +108,11 @@ class GUIHandler(BaseHTTPRequestHandler):
                 self.respond(200, self.server.call(self.server.controller.events, after))
             elif not api:
                 name = 'index.html' if url.path == '/' else url.path.removeprefix('/')
-                types = {'index.html': 'text/html', 'app.js': 'text/javascript', 'map.js': 'text/javascript',
+                types = {'index.html': 'text/html', 'app.js': 'text/javascript', 'map.js': 'text/javascript', 'map-control.js': 'text/javascript',
                          'style.css': 'text/css', 'settings.css': 'text/css', 'settings.js': 'text/javascript',
+                         'trace.css': 'text/css', 'trace.js': 'text/javascript',
+                         'react-bits.css': 'text/css', 'react-bits.js': 'text/javascript',
+                         'react-bits-islands.css': 'text/css', 'react-bits-islands.js': 'text/javascript',
                          'preferences.js': 'text/javascript', 'rendering.js': 'text/javascript', 'startup.js': 'text/javascript', 'motion.css': 'text/css', 'ui.js': 'text/javascript', 'icons.js': 'text/javascript',
                          'markdown-engine.js': 'text/javascript','conversation.js':'text/javascript','plugins.js':'text/javascript','reasoning.js':'text/javascript','sidebar.js':'text/javascript','effort-fire.js':'text/javascript','effort-shaders.js':'text/javascript','model-picker.js':'text/javascript','diff.js':'text/javascript'}
                 if name not in types:

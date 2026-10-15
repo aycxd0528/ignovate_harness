@@ -18,9 +18,10 @@ const fs=require('node:fs'),path=require('node:path');
   });
   await page.goto('http://lifecycle.invalid/#token=test');await page.getByRole('button',{name:'会话地图',exact:true}).click();await page.getByPlaceholder('从一个新问题开始…').fill('保留未发送的地图草稿');
   await page.reload();await page.getByPlaceholder('从一个新问题开始…').waitFor();assert.equal(await page.getByPlaceholder('从一个新问题开始…').inputValue(),'保留未发送的地图草稿');
-  await page.getByRole('button',{name:'聊天',exact:true}).click();await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();const slider=page.getByRole('slider',{name:'推理等级',exact:true});await slider.press('End');await page.locator('.effort-feedback').filter({hasText:'已保存'}).waitFor();assert.deepEqual(writes,['max'],'a keyboard gesture must perform one native write');
-  await page.emulateMedia({reducedMotion:'reduce'});await page.screenshot({path:'/tmp/ignovate-gui-effort-reduced-motion.png'});await slider.press('Escape');assert.equal(await page.locator('.effort-fire').count(),0,'closing a panel removes its GPU canvas');
-  for(let index=0;index<4;index++){await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();await slider.press('Escape');}
+  await page.getByRole('button',{name:'聊天',exact:true}).click();await page.getByRole('button',{name:'推理等级',exact:true}).click();const slider=page.getByRole('slider',{name:'推理等级',exact:true});await slider.press('End');await page.waitForFunction(()=>document.querySelector('#reasoning-control').textContent.includes('最高')&&!document.querySelector('#reasoning-control').disabled);assert.deepEqual(writes,['max'],'a keyboard gesture must perform one native write');
+  await page.emulateMedia({reducedMotion:'reduce'});await page.screenshot({path:'/tmp/ignovate-gui-effort-reduced-motion.png'});await slider.press('Escape');assert.equal(await page.getByRole('dialog',{name:'推理等级',exact:true}).count(),0,'closing the panel removes its dialog');
+  for(let index=0;index<4;index++){await page.getByRole('button',{name:'推理等级',exact:true}).click();await slider.press('Escape');}
+  assert.equal(await page.locator('.prompt-bar__sparks').count(),1,'reopening the panel must not accumulate particle canvases');
   assert.deepEqual(errors,[]);console.log('Map draft reload, serialized effort gesture and closed/reduced-motion renderer lifecycle passed.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

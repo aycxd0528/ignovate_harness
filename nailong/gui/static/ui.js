@@ -9,6 +9,13 @@ export function toast(message) {
   const node = $('#toast'); node.textContent = String(message); node.classList.add('visible');
   clearTimeout(toast.timer); toast.timer = setTimeout(() => node.classList.remove('visible'), 5000);
 }
+export async function copyText(text) {
+  const value=String(text??'');
+  if(typeof window.ignovateDesktop?.writeClipboardText==='function')await window.ignovateDesktop.writeClipboardText(value);
+  else if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(value);
+  else throw new Error('此环境无法写入剪贴板，请选择文字后复制。');
+  toast('已复制');
+}
 export function button(text, handler, className = '', title = '') {
   const node = el('button', className, text); node.type = 'button';
   if (title) { node.title = title; node.setAttribute('aria-label', title); }
@@ -59,16 +66,16 @@ export function choicePopover(anchor,label,choices,selected,onSelect){
 }
 export function installTooltips(){
   const tip=el('div','control-tooltip');tip.id='control-tooltip';tip.setAttribute('role','tooltip');tip.setAttribute('popover','manual');document.body.append(tip);
-  let origin,timer;
+  let origin,timer,warmUntil=0;
   const hide=()=>{
-    clearTimeout(timer);if(tip.matches(':popover-open'))tip.hidePopover();
+    clearTimeout(timer);if(tip.matches(':popover-open')){warmUntil=performance.now()+300;tip.hidePopover();}
     if(origin){const ids=(origin.getAttribute('aria-describedby')||'').split(' ').filter(id=>id&&id!==tip.id);if(ids.length)origin.setAttribute('aria-describedby',ids.join(' '));else origin.removeAttribute('aria-describedby');}
     origin=null;
   };
   const show=(target,delay)=>{
     const control=target?.closest?.('button');if(!control?.querySelector('svg'))return;
     if(origin===control&&tip.matches(':popover-open'))return;
-    hide();origin=control;
+    hide();origin=control;const warm=performance.now()<warmUntil;tip.dataset.warm=String(warm);
     timer=setTimeout(()=>{
       if(!control.isConnected)return hide();
       tip.textContent=control.dataset.tooltip||control.getAttribute('aria-label')||control.title||control.textContent;
@@ -76,7 +83,7 @@ export function installTooltips(){
       control.setAttribute('aria-describedby',[(control.getAttribute('aria-describedby')||''),tip.id].filter(Boolean).join(' '));
       const rect=control.getBoundingClientRect();tip.style.left=Math.max(8,Math.min(rect.left+(rect.width-tip.offsetWidth)/2,innerWidth-tip.offsetWidth-8))+'px';
       tip.style.top=(rect.top-tip.offsetHeight-7>=8?rect.top-tip.offsetHeight-7:Math.min(rect.bottom+7,innerHeight-tip.offsetHeight-8))+'px';
-    },delay);
+    },warm?0:delay);
   };
   document.addEventListener('pointerover',event=>show(event.target,180));
   document.addEventListener('pointerout',event=>{if(origin&&!origin.contains(event.relatedTarget))hide();});
@@ -131,7 +138,7 @@ export function prose(text, className = '') {
   for(const pre of root.querySelectorAll('pre')){
     pre.classList.add('code-block');const code=pre.querySelector('code');
     const wrapper=el('div','code-frame'),header=el('div','code-header');
-    const copy=iconButton('copy','复制代码',()=>navigator.clipboard.writeText(copy.closest('.code-frame')?.querySelector('pre')?.textContent||''));
+    const copy=iconButton('copy','复制代码',()=>copyText(copy.closest('.code-frame')?.querySelector('pre')?.textContent||''));
     header.append(el('span','',code?.dataset.language||'代码'),copy);
     pre.replaceWith(wrapper);wrapper.append(header,pre);
   }

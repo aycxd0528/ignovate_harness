@@ -7,6 +7,7 @@ export function synchronize(parent,nodes){
   for(let index=0;index<nodes.length;index++)if(parent.childNodes[index]!==nodes[index])parent.insertBefore(nodes[index],parent.childNodes[index]||null);
 }
 export function patchElement(current,next){
+  if(current._reactIsland&&next._reactIsland){current._reactIsland.update(next._reactIsland.props);next._reactIsland.destroy();return current;}
   if(current.nodeType!==next.nodeType||current.nodeName!==next.nodeName){current.replaceWith(next);return next;}
   if(current.nodeType===3){if(current.data!==next.data)current.data=next.data;return current;}
   if(current.nodeType!==1)return current;

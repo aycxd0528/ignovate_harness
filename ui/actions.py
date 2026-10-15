@@ -91,6 +91,49 @@ class CommandActions:
             if tasks is None:
                 raise ValueError('当前运行时没有任务存储。')
             operation=args[0] if args else 'status'
+            if operation == 'list' and len(args) == 1:
+                items = tasks.list_work_items()
+                return CommandResult('\n'.join(f"{t['task_id']} [{t['lifecycle']}] r{t['revision']} {t['objective']}" for t in items) or '当前项目没有任务。', data={'items': items})
+            if operation == 'control' and len(args) == 1:
+                from dataclasses import asdict, is_dataclass
+                from nailong.core.control_ledger import ControlLedger
+                from nailong.core.feedback import FeedbackStore
+                from nailong.core.goal_control import decide_goal_turn
+                task = tasks.snapshot(thread_id)
+                goals = getattr(factory, 'goal_store', None)
+                goal = goals.latest() if goals else None
+                if goal and goal.thread_id != thread_id:
+                    goal = None
+                if task:
+                    from nailong.core.verification import input_fingerprint
+                    try:
+                        task = {**task, 'current_input_fingerprint': input_fingerprint(root, task.get('verification_generated_paths', []))}
+                    except (ValueError, OSError):
+                        task = {**task, 'current_input_fingerprint': None}
+                decision = decide_goal_turn(goal, task) if goal else {'action': 'wait' if (task or {}).get('wait_condition') else 'unknown',
+                    'reason': (task or {}).get('wait_condition', {}).get('reason', '当前会话没有持续目标。')}
+                data = {'task': task, 'goal': asdict(goal) if is_dataclass(goal) else goal,
+                    'continuation': decision, 'receipts': ControlLedger(store).list(), 'feedback': FeedbackStore(store).list()}
+                return CommandResult(f"续跑：{decision['action']} · {decision['reason']}", data=data)
+            if operation == 'feedback':
+                from nailong.core.feedback import FeedbackStore
+                feedback = FeedbackStore(store)
+                if len(args) == 2 and args[1] == 'list':
+                    rows = feedback.list()
+                    return CommandResult('\n'.join(f"{r['id']} [{r['state']}] r{r['revision']} {r['behavior']}" for r in rows) or '暂无反馈经验。', data={'feedback': rows})
+                if len(args) == 4 and args[1] in {'confirm', 'revoke'}:
+                    if args[1] == 'confirm':
+                        current = tasks.snapshot(thread_id)
+                        if current is None:
+                            raise ValueError('当前会话没有反馈来源任务。')
+                        with tasks.bound_task(thread_id, current['task_id'], current['revision']) as bound:
+                            if bound is None: raise ValueError('反馈来源任务已变化。')
+                            row = feedback.confirm(args[2], task=bound, expected_revision=int(args[3]))
+                    else:
+                        row = feedback.revoke(args[2], expected_revision=int(args[3]))
+                    store.append_event(thread_id, 'feedback_user_decision', {'id': row['id'], 'state': row['state'], 'revision': row['revision']})
+                    return CommandResult('反馈经验：'+row['state'], data={'feedback': row}, refresh=True)
+                raise ValueError('用法：/task feedback list|confirm ID 修订|revoke ID 修订')
             if operation=='requirements' and len(args)==1:
                 from nailong.core.task_requirements import requirement_records
                 task=tasks.snapshot(thread_id)
@@ -115,7 +158,13 @@ class CommandActions:
                 lines.extend(f"验收 {row['id']} [{row['status']}] {row['description']}" for row in task['acceptance'])
                 if report: lines.append(render_delivery_report(report))
                 return CommandResult('\n'.join(lines),data={'task':task,'delivery':report})
-            if operation in {'new','amend'} and len(args)>1:
+            if operation == 'link' and len(args) == 3:
+                task = tasks.link_work_item(thread_id, args[1], expected_revision=int(args[2]))
+            elif operation == 'wait' and len(args) == 4:
+                task = tasks.set_wait(thread_id, reason=args[2], condition=args[3], expected_revision=int(args[1]))
+            elif operation == 'ready' and len(args) == 2:
+                task = tasks.clear_wait(thread_id, expected_revision=int(args[1]))
+            elif operation in {'new','amend'} and len(args)>1:
                 objective=' '.join(args[1:])
                 task=tasks.begin(thread_id,objective,new=True) if operation=='new' else tasks.amend(thread_id,objective=objective)
             elif operation=='replace' and len(args)>2:

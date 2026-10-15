@@ -1,0 +1,9 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": false,
+  "tsx": false,
+  "tailwind": { "config": "", "css": "nailong/gui/static/react-bits.css", "baseColor": "neutral", "cssVariables": true },
+  "aliases": { "components": "@/nailong/gui/static", "utils": "@/nailong/gui/static/ui" },
+  "registries": { "@react-bits": "https://reactbits.dev/r/{name}.json" }
+}

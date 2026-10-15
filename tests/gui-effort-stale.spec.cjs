@@ -6,9 +6,12 @@ const {chromium}=require('playwright');const assert=require('node:assert/strict'
  try{await page.route('http://effort.invalid/**',async route=>{const url=new URL(route.request().url()),reply=value=>route.fulfill({contentType:'application/json',body:JSON.stringify(value)});if(url.pathname==='/api/snapshot')return reply(snapshot());if(url.pathname==='/api/events')return reply({sequence:0,events:[]});
  if(url.pathname==='/api/command'){const body=route.request().postDataJSON();if(body.name==='reasoning'){effort=body.payload.effort;writes.push(effort);if(writes.length===1){started();await gate;}return reply({reasoning_effort:effort});}return reply({});}
  const file=url.pathname==='/'?'index.html':url.pathname.slice(1);return route.fulfill({contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html',body:fs.readFileSync(path.join(root,file))});});
- await page.goto('http://effort.invalid/#token=test');await page.locator('#project-name').filter({hasText:'Effort'}).waitFor();await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();const slider=page.getByRole('slider',{name:'推理等级',exact:true});await slider.press('End');await begun;
- let rect=await slider.boundingBox();await page.mouse.click(rect.x+rect.width*.5,rect.y+15);await page.getByRole('button',{name:'关闭推理面板',exact:true}).click();
- await page.getByRole('button',{name:'模型与推理强度',exact:true}).click();rect=await slider.boundingBox();await page.mouse.click(rect.x+rect.width*.75,rect.y+15);await page.waitForFunction(async()=>{const s=await(await fetch('/api/snapshot')).json();return s.configuration.reasoning_effort==='high'});
- release();await page.waitForTimeout(350);assert.equal(effort,'high','dismissed panel must not overwrite the reopened panel selection');assert.deepEqual(writes,['max','high']);console.log('Dismissed effort panel cannot overwrite newer native choice.');
+ await page.goto('http://effort.invalid/#token=test');await page.locator('#project-name').filter({hasText:'Effort'}).waitFor();await page.getByRole('button',{name:'推理等级',exact:true}).click();const slider=page.getByRole('slider',{name:'推理等级',exact:true});await slider.press('End');await begun;
+ assert.equal(await slider.getAttribute('aria-disabled'),'true','an in-flight save serializes configuration changes');
+ await slider.press('Home');assert.deepEqual(writes,['max'],'a pending save cannot be overwritten by another gesture');
+ await page.locator('#composer').click();assert.equal(await page.getByRole('dialog',{name:'推理等级',exact:true}).count(),0);
+ release();await page.waitForFunction(()=>!document.querySelector('#reasoning-control').disabled);
+ await page.getByRole('button',{name:'推理等级',exact:true}).click();await slider.press('ArrowLeft');await page.waitForFunction(async()=>{const s=await(await fetch('/api/snapshot')).json();return s.configuration.reasoning_effort==='high'});
+ assert.equal(effort,'high','reopening the panel must use the latest saved choice');assert.deepEqual(writes,['max','high']);console.log('PromptBar serializes saves and reopens with the authoritative reasoning choice.');
  }finally{release();await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});

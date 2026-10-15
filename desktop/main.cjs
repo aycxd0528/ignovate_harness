@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, session } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -35,6 +35,11 @@ async function launch() {
   origin = new URL(url).origin;
   if (new URL(url).hostname !== '127.0.0.1') throw new Error('Adapter must bind loopback');
   session.defaultSession.setPermissionRequestHandler((_contents,_permission,callback) => callback(false));
+  ipcMain.handle('write-clipboard-text', async (event, text) => {
+    trusted(event);
+    if(typeof text!=='string')throw new Error('Invalid clipboard text');
+    await clipboard.writeText(text);
+  });
   ipcMain.handle('choose-project', async event => {
     trusted(event);
     const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: '打开本地项目' });

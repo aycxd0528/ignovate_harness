@@ -7,6 +7,8 @@ import json
 import os
 import re
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ _NEVER_LOG_KEYS = {
     "DEEPSEEK_API_KEY",
 }
 _MAX_EVENT_TEXT = 12_000
+_active_run = ContextVar('native_session_run', default=None)
 
 
 class StreamingRedactor:
@@ -90,6 +93,16 @@ class ProjectSessionStore:
             raise ValueError("会话 ID 格式无效。")
         return self.sessions_dir / f"{thread_id}.jsonl"
 
+    @contextmanager
+    def run_scope(self, run_id: str, thread_id: str):
+        """Bind native events to an admitted run, including worker callbacks."""
+        self.session_path(run_id); self.session_path(thread_id)
+        token = _active_run.set((str(self.root), thread_id, run_id))
+        try:
+            yield
+        finally:
+            _active_run.reset(token)
+
     def ensure_directories(self) -> None:
         if os.name == 'nt':
             from nailong.core.safe_files import pinned_directory, private_directory_permissions
@@ -124,6 +137,9 @@ class ProjectSessionStore:
             "kind": str(kind),
             "data": self._sanitize(data),
         }
+        binding = _active_run.get()
+        if binding and binding[:2] == (str(self.root), thread_id):
+            record['run_id'] = binding[2]
         encoded = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
         with self._lock:
             descriptor = os.open(path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)

@@ -51,6 +51,6 @@ COMMANDS: tuple[CommandSpec, ...] = (
     CommandSpec('/config','查看有效偏好及来源','/config [set model|theme|output_style 值] [--global]'),
     CommandSpec('/memory','记忆状态、主题目录、分页读取与编辑','/memory [show [scope]|list [scope] [offset]|read <ID> [offset]|reload|edit <scope>]'),
     CommandSpec('/tools','展开已保存工具记录','/tools [序号]'),
-    CommandSpec('/task','任务目标、范围、步骤与验收证据','/task [status|new 目标|amend 目标|scope 路径...|constraint 文本|accept ID 类型 说明|bind ID 验证步骤 覆盖路径...|step ID 状态 说明|phase 阶段|confirm ID 说明|waive ID 说明|complete|resume]'),
+    CommandSpec('/task','任务目标、交接、续跑、等待与验收证据','/task [status|new 目标|list|control|link ID 修订|wait 修订 原因 恢复条件|ready 修订|feedback list|feedback confirm/revoke ID 修订|amend 目标|scope 路径...|constraint 文本|accept ID 类型 说明|bind ID 验证步骤 覆盖路径...|step ID 状态 说明|phase 阶段|confirm ID 说明|waive ID 说明|complete|resume]'),
 )
 COMMAND_BY_NAME = {command.name: command for command in COMMANDS}

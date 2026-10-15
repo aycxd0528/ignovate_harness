@@ -9,7 +9,7 @@ const assert=require('node:assert/strict');
  const close=async()=>{await page.getByRole('button',{name:'关闭设置',exact:true}).click();await page.locator('#settings-dialog').waitFor({state:'detached'});};
  const settled=async key=>page.waitForFunction(key=>document.querySelector('#settings-'+key)?.closest('.settings-row')?.dataset.state==='saved',key);
  try{
-  await page.goto('http://127.0.0.1:8767/#token=browser-test-only');await page.locator('#project-name').waitFor();
+  await page.goto((process.env.GUI_TEST_ORIGIN||'http://127.0.0.1:8767')+'/#token=browser-test-only');await page.locator('#project-name').waitFor();
   await page.getByRole('button',{name:'新会话',exact:true}).click();const old=(await snapshot()).branches.at(-1)?.id;
   await open();assert.equal(await page.getByRole('tab').count(),3);assert.equal(await page.getByRole('tab',{name:'Agent 预设'}).count(),0);
   assert.equal(await page.locator('#settings-font_size').inputValue(),'15');
@@ -28,7 +28,8 @@ const assert=require('node:assert/strict');
   await page.locator('#composer').fill('工具状态与产物测试');await page.locator('#send').click();await page.locator('.live .active-tool').waitFor();
   await page.locator('#composer').fill('保留的消息');assert.equal(await page.locator('#send').isDisabled(),true);await page.locator('#composer').press('Enter');assert.equal(await page.locator('#composer').inputValue(),'保留的消息');
   await page.waitForFunction(()=>document.querySelectorAll('.turn:not(.live)').length===1);assert.equal((await snapshot()).runs.length,1);
-  assert.equal(await page.locator('.tool-group').evaluate(node=>node.open),true);assert.equal(await page.locator('.tool-activity').first().evaluate(node=>node.open),true);
+  assert.equal(await page.locator('.tool-group').evaluate(node=>node.open),false,'a finished live task folds even with detailed records enabled');
+  await page.locator('.tool-group>summary').click();assert.equal(await page.locator('.tool-activity').first().evaluate(node=>node.open),true);
   assert.equal(await page.locator('.answer').evaluate(node=>getComputedStyle(node).fontSize),'18px');
   await open();await page.getByRole('switch',{name:'显示文件变更入口',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('.file-changes-button'));
   await page.getByRole('tab',{name:'模型',exact:true}).click();await page.getByRole('button',{name:'编辑 当前连接',exact:true}).waitFor();

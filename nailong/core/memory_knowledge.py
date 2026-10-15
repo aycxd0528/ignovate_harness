@@ -21,7 +21,7 @@ EPISTEMIC_KEYS = ('metadata_status','knowledge_type','knowledge_state','validity
 KNOWLEDGE_DETAIL_KEYS = ('origin','confirmed_by','confirmation_is_declaration','applicability',
                          'sources','knowledge_issues','evidence_basis')
 _PROTECTED = {'.git', '.venv', '__pycache__', '.ssh'}
-_REFERENCE = re.compile(r'(?:session:[A-Za-z0-9_-]{1,80}#event:[A-Za-z0-9_-]{1,80}|user:[A-Za-z0-9_-]{1,80})\Z')
+_REFERENCE = re.compile(r'(?:session:[A-Za-z0-9_-]{1,80}#(?:event|node):[A-Za-z0-9_-]{1,80}|user:[A-Za-z0-9_-]{1,80})\Z')
 _DIGEST = re.compile(r'[a-fA-F0-9]{64}\Z')
 
 
@@ -116,7 +116,7 @@ def declaration(metadata: dict, scope: str, *, api_key='') -> dict:
     # Avoid hashing or set-membership of malformed YAML list/dict values.
     if not isinstance(kind, str) or kind not in KNOWLEDGE_TYPES:
         raise KnowledgeMetadataError('invalid_knowledge_type')
-    if not isinstance(state, str) or state not in {'candidate', 'confirmed'}:
+    if not isinstance(state, str) or state not in {'candidate', 'confirmed', 'revoked'}:
         raise KnowledgeMetadataError('invalid_knowledge_state')
     if not isinstance(origin, str) or origin not in {'user', 'runtime', 'model', 'unknown'}:
         raise KnowledgeMetadataError('invalid_knowledge_origin')

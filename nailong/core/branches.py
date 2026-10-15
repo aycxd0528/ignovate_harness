@@ -247,18 +247,21 @@ class BranchStore:
             raise ValueError('来源回合缺失。')
         return dict(row)
 
-    def commit_turn(self, branch_id, start_index, checkpoint_id, *, task_snapshot=None, status='completed'):
+    def commit_turn(self, branch_id, start_index, checkpoint_id, *, task_snapshot=None, status='completed', end_index=None):
         branch = self.branch(branch_id)
         events = self.sessions.read_events(branch['thread_id'])
+        end_index = len(events) if end_index is None else end_index
+        if type(end_index) is not int or not start_index <= end_index <= len(events):
+            raise ValueError('来源回合的结束边界无效。')
         node_id = uuid.uuid4().hex
         with self.db:
             self.db.execute('INSERT INTO nodes VALUES (?,?,?,?,?,?,?,?,?,?)',
-                            (node_id, branch_id, branch['head'], branch['thread_id'], start_index, len(events),
+                            (node_id, branch_id, branch['head'], branch['thread_id'], start_index, end_index,
                              checkpoint_id, json.dumps(task_snapshot, ensure_ascii=False), status,
                              datetime.now(timezone.utc).isoformat()))
             self.db.execute('UPDATE branches SET head=?, legacy=0 WHERE id=?', (node_id, branch_id))
-            self.db.execute('INSERT INTO node_history VALUES (?,?)', (node_id, json.dumps(events[start_index:], ensure_ascii=False)))
-        return project_turn(self.node(node_id), events[start_index:])
+            self.db.execute('INSERT INTO node_history VALUES (?,?)', (node_id, json.dumps(events[start_index:end_index], ensure_ascii=False)))
+        return project_turn(self.node(node_id), events[start_index:end_index])
 
     def node_events(self, node):
         saved = self.db.execute('SELECT events FROM node_history WHERE id=?', (node['id'],)).fetchone()
