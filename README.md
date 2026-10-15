@@ -12,7 +12,15 @@
 | macOS / Linux | [ignovate-1.2.1-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
 | Windows 11 x64 | [ignovate-1.2.1-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
 
-### macOS / Linux
+### macOS 桌面版
+
+1. 下载上方的 DMG，打开后将 `Ignovate.app` 拖入 `Applications`。
+2. 从应用程序打开 Ignovate，选择工作区，在设置中配置模型提供商、API 地址和 API Key。
+3. 在聊天中发送任务，或切换到会话地图创建问题卡片；执行过程可在轨迹页查看。
+
+从旧版升级时，先退出应用，再拖入新版替换；已有模型配置、项目与会话数据继续保留。桌面包内置 Python 3.11、应用依赖和 ripgrep，无需运行下面的 CLI 安装命令。支持 macOS 13+ 的 Apple Silicon Mac，采用 ad hoc 本地签名，尚未经过 Apple 公证，首次打开可能受到系统拦截。平台限制、校验和源码构建见 [安装说明](docs/INSTALL.md)。
+
+### macOS / Linux CLI
 
 下载后，在安装包所在目录执行：
 
@@ -61,14 +69,26 @@ ignovate doctor --output-format json
 
 ## 本地 GUI
 
-源码版本已提供聊天、非线性会话地图与分支比较，执行由 Ignovate Harness 驱动：
+桌面工作台提供聊天、会话地图和执行轨迹，执行由 Ignovate Harness 内核驱动。macOS 用户可直接安装上方的 DMG。
+
+![Ignovate 桌面工作台浅色预览](docs/previews/gui-react-bits-light-2026-10-15.png)
+
+- **聊天与工具过程**：支持流式 Markdown、代码块、文件引用、计划与目标模式；运行中显示当前工具状态，结束后折叠记录，保留输出和文件变更。
+- **会话地图**：从当前会话的问题卡片开始，继续追问或创建分支；显示当前会话及其分叉路径。追问运行期间仍可拖动卡片，位置与连线实时更新。
+- **执行轨迹**：按真实轮次查看输入、模型与工具事件；紧凑概览支持横向滚动、搜索和点击定位，运行更新保留查看位置。
+- **模型、设置与插件**：选择模型和推理强度，管理提供商、通用设置、权限、项目 Skills 与 MCP 服务。
+- **React Bits 交互**：输入栏、思考过程和侧栏分支使用动画反馈，支持浅色、深色及减少动态效果。预览与组件说明见 [React Bits 接入文档](docs/REACT_BITS.md)。
+
+**v1.2.1** 同时修复桌面端复制回答、用户输入和代码块时的剪贴板权限问题，以及取消任务后后台 checkpoint 写入与数据库关闭的竞态。完整更新见 [发布说明](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.1)。
+
+从源码或已安装的 Python 环境启动：
 
 ```sh
 python -m nailong.gui --project /path/to/project
-# 或安装包后：ignovate gui --project /path/to/project
+# 或安装 Python 包后：ignovate gui --project /path/to/project
 ```
 
-有 Electron 依赖时打开桌面窗口，也可加 `--browser` 使用本机浏览器。启动、分叉与共享工作区说明见 [GUI 使用说明](docs/GUI.md)。macOS 桌面安装包支持 macOS 13+ Apple Silicon；Windows/Linux 桌面安装包与 Intel Mac 桌面包尚未提供。
+有 Electron 依赖时打开桌面窗口，也可加 `--browser` 使用本机浏览器。启动、分叉、轨迹与共享工作区说明见 [GUI 使用说明](docs/GUI.md)。切换会话或分支不会恢复工作区文件。Windows/Linux 与 Intel Mac 可使用 CLI，暂未提供对应桌面安装包。
 
 ## 欢迎与模型配置
 
@@ -585,6 +605,8 @@ check_config.py  环境变量读取示例
 
 
 ## 发布验证
+
+[v1.2.1 发布工作流](https://github.com/aycxd0528/ignovate_harness/actions/runs/38721837570) 的 9 项作业已全部通过，包括 Python 回归、跨平台安装与运行、macOS 桌面构建及启动检查，安装包已上传至 [正式发布页](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.1)。
 
 运行时使用 macOS/Linux 文件描述符与进程组，Windows 11 使用 Win32 文件句柄、ACL、文件锁和 Job Object。Unix 新建文件遵循 umask；Windows 项目文件继承父目录 ACL，替换时保留原权限，只读文件保持原状并返回错误。完整验证的输入指纹包含文件权限。目标存储使用跨进程事务锁，并对驱动执行加独占锁，防止并发结算丢失及重复消费同一目标预算。
 
