@@ -134,13 +134,44 @@ class ApprovalCancellationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.approvals, [])
 
     async def test_real_user_cancellation_of_read_still_pauses_and_propagates(self):
+        await self.assert_user_cancellation_of_read()
+
+    async def test_user_cancellation_waits_for_slow_read_startup(self):
+        await self.assert_user_cancellation_of_read(startup_delay=2.2)
+
+    async def assert_user_cancellation_of_read(self, *, startup_delay=0):
         await self.make_service([request('read_file', {'path': 'document.txt'}, 'read-1')])
+
+        async def drive_after_startup():
+            await asyncio.sleep(startup_delay)
+            return await self.drive()
+
+        async def read_started():
+            while not self.entered.is_set():
+                await asyncio.sleep(.01)
+
         with patch.object(FileSession, 'read_file', self.slow_reader()):
-            driver = asyncio.create_task(self.drive())
-            self.assertTrue(await asyncio.to_thread(self.entered.wait, 2))
-            driver.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await driver
+            driver = asyncio.create_task(drive_after_startup())
+            entered = asyncio.create_task(read_started())
+            try:
+                # Real graph/checkpoint startup on a busy Windows runner is
+                # outside the cancellation assertion; wait for the read itself.
+                done, _ = await asyncio.wait({entered, driver}, timeout=30,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if driver in done:
+                    await driver  # Preserve any early graph failure.
+                    self.fail('Turn finished before the read could be cancelled')
+                self.assertIn(entered, done, 'Read did not start within 30 seconds')
+                driver.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await driver
+            finally:
+                # A failed startup assertion must also release the project lock
+                # before TemporaryDirectory cleanup runs on Windows.
+                for pending in (driver, entered):
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(driver, entered, return_exceptions=True)
         task = self.factory.task_store.snapshot('owner')
         self.assertEqual(task['lifecycle'], 'paused')
         self.assertTrue(any(row['status'] == 'interrupted' for row in task['evidence']))
