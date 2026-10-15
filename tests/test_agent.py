@@ -497,6 +497,44 @@ asyncio.run(main())
 
 
 class AgentRuntimeAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_aclose_waits_for_checkpoint_cursor_before_closing_connection(self):
+        # Closing SQLite during a checkpoint cursor's cleanup leaks handles on Windows.
+        async with AsyncExitStack() as resources:
+            directory = resources.enter_context(tempfile.TemporaryDirectory())
+            root = Path(directory)
+            store = ProjectSessionStore(root, base_dir=root / 'state')
+            with patch('agent.ChatDeepSeek', return_value=object()):
+                factory = AgentRuntimeFactory(make_settings(root), session_store=store)
+            resources.push_async_callback(factory.aclose)
+            await factory.async_runtime(thread_id='close-during-write')
+            saver = factory.async_checkpointer
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            async def writing():
+                async with saver.lock, saver.conn.cursor() as cursor:
+                    await cursor.execute('SELECT 1')
+                    entered.set()
+                    await release.wait()
+                    self.assertEqual((await cursor.fetchone())[0], 1)
+
+            operation = asyncio.create_task(writing())
+            await asyncio.wait_for(entered.wait(), 2)
+            closing = asyncio.create_task(factory.aclose())
+            try:
+                await asyncio.sleep(0.02)
+                self.assertFalse(closing.done(), 'shutdown must wait for the active checkpoint cursor')
+                self.assertIs(factory.async_checkpointer, saver, 'keep ownership until cursor cleanup finishes')
+            finally:
+                release.set()
+                results = await asyncio.gather(operation, closing, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            self.assertIsNone(factory.async_checkpointer)
+            with self.assertRaises(ValueError):
+                await saver.conn.execute('SELECT 1')
+            store.database_path.unlink()
+
     async def test_cancellation_during_async_sqlite_open_joins_and_closes_connection(self):
         # Break caught: cancelling aiosqlite startup discards an already opened SQLite handle.
         async with AsyncExitStack() as resources:

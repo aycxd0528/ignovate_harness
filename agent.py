@@ -762,9 +762,13 @@ class AgentRuntimeFactory:
             try:
                 context = getattr(self, "_async_checkpointer_context", None)
                 if context is not None:
-                    self._async_checkpointer_context = None
-                    self.async_checkpointer = None
-                    await context.__aexit__(None, None, None)
+                    # Cancellation may leave a checkpoint write cleaning up its
+                    # cursor. Join that critical section before closing SQLite.
+                    async with self.async_checkpointer.lock:
+                        if self._async_checkpointer_context is context:
+                            self._async_checkpointer_context = None
+                            self.async_checkpointer = None
+                            await context.__aexit__(None, None, None)
             finally:
                 self.close()
 

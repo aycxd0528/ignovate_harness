@@ -1,24 +1,24 @@
-# ignovate harness v1.2.0：本地桌面与 CLI 编码助手
+# ignovate harness v1.2.1：本地桌面与 CLI 编码助手
 
 [项目说明](docs/PROJECT.md) · [2026-10-08 审查与修复记录](docs/reviews/2026-10-08-project-audit.md) · [飞书项目说明](https://qcnvafay57br.feishu.cn/wiki/Sj4NwUflgiALgnkrRCMc6FxRn8b)
 
 ## 下载与快速安装
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.2.0](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.0)，无需预装 Python 或克隆源码。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包。当前版本为 [v1.2.1](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.1)，无需预装 Python 或克隆源码。
 
 | 平台 | 安装包 | 运行环境 |
 | --- | --- | --- |
-| macOS 桌面版（13+，Apple Silicon） | [Ignovate-1.2.0-macos-arm64.dmg](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.0/Ignovate-1.2.0-macos-arm64.dmg) | 拖入 Applications；内置 Python 和 ripgrep；本地签名，尚未公证 |
-| macOS / Linux | [ignovate-1.2.0-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.0/ignovate-1.2.0-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
-| Windows 11 x64 | [ignovate-1.2.0-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.0/ignovate-1.2.0-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
+| macOS 桌面版（13+，Apple Silicon） | [Ignovate-1.2.1-macos-arm64.dmg](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/Ignovate-1.2.1-macos-arm64.dmg) | 拖入 Applications；内置 Python 和 ripgrep；本地签名，尚未公证 |
+| macOS / Linux | [ignovate-1.2.1-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-unix.tar.gz) | 原生运行；支持 Intel / Apple Silicon macOS、x86_64 / ARM64 Linux |
+| Windows 11 x64 | [ignovate-1.2.1-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-windows.zip) | 原生运行；无需 WSL 或 Linux 环境 |
 
 ### macOS / Linux
 
 下载后，在安装包所在目录执行：
 
 ```sh
-tar -xzf ignovate-1.2.0-unix.tar.gz
-cd ignovate-1.2.0
+tar -xzf ignovate-1.2.1-unix.tar.gz
+cd ignovate-1.2.1
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -31,8 +31,8 @@ ignovate set up
 下载后，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.2.0-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.2.0
+Expand-Archive .\ignovate-1.2.1-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.2.1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -590,7 +590,7 @@ check_config.py  环境变量读取示例
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.2.0-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.2.1-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](.github/workflows/tests.yml)。
