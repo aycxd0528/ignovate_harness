@@ -14,9 +14,12 @@ const {execFileSync}=require('node:child_process');
   try{
     const relocated=path.join(temp,'应用程序 空格','Ignovate');
     const project=path.join(temp,'项目 空格'),home=path.join(temp,'home');
-    fs.cpSync(source,relocated,{recursive:true});fs.mkdirSync(project);fs.mkdirSync(home);
+    // Node 22's synchronous copy can corrupt non-ASCII destination paths on
+    // Windows. Keep the Unicode relocation check using the asynchronous API.
+    await fs.promises.cp(source,relocated,{recursive:true});fs.mkdirSync(project);fs.mkdirSync(home);
     fs.writeFileSync(path.join(project,'README.md'),'# 安装版验证\n');
     const resources=path.join(relocated,'resources'),python=path.join(resources,'runtime','python.exe');
+    assert.ok(fs.existsSync(python),'Relocated archive must contain the embedded Python executable');
     const env={...process.env,
       PATH:path.join(process.env.SystemRoot,'System32'),PYTHONPATH:path.join(temp,'invalid-python-path'),
       IGNOVATE_CONFIG_DIR:path.join(temp,'config'),NAILONG_DATA_DIR:path.join(temp,'data')};
