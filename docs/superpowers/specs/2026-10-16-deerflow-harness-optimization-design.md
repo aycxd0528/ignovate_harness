@@ -1,6 +1,6 @@
 # Ignovate 六项 Harness 优化设计
 
-日期：2026-10-16（Asia/Shanghai）。状态：待用户审阅，尚未实施。
+日期：2026-10-16（Asia/Shanghai）。状态：用户已确认设计，进入实施计划编写；运行时代码尚未实施。
 
 本地基线：`097be863f757b104d38962826d4e0d728f4798b7`，Ignovate 1.2.1。
 参考基线：DeerFlow `ec07de9618b4194533fea3d8bf8a2e4fbcca5385`。
