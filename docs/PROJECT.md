@@ -2,7 +2,7 @@
 
 本文面向希望使用或维护编码代理的开发者，从实际开发痛点说明项目定位，再介绍结构、上下文压缩、工作流、工具调用、记忆与轨迹统计。安装与操作指引放在核心机制之后。适用版本为 1.1.0，维护日期为 2026-10-08。支持 macOS、Linux 和 Windows 11 x64（原生运行，无需 WSL）；Release 安装器会自动准备缺少的 Python 和应用依赖。
 
-仓库：[aycxd0528/ignovate_harness](https://github.com/aycxd0528/ignovate_harness)。完整命令与界面细节见 [README](../README.md)，本次问题与验证记录见 [项目审查报告](reviews/2026-10-08-project-audit.md)。
+仓库：[aycxd0528/ignovate_harness](https://github.com/aycxd0528/ignovate_harness)。快速开始见 [README](../README.md)，完整命令与运行时细节见 [CLI 与运行时参考](CLI_REFERENCE.md)，本次问题与验证记录见 [项目审查报告](reviews/2026-10-08-project-audit.md)。
 
 ## 项目定位：解决哪些开发痛点
 
