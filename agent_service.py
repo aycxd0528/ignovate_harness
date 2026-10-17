@@ -320,6 +320,12 @@ class AgentService:
             except ValueError:
                 return None
         task = self.task_store.snapshot(thread_id)
+        from nailong.core.session_coordination import active_dispatch
+        dispatched=active_dispatch.get()
+        if dispatched is not None:
+            coordinator,row=dispatched
+            if row['target']!=thread_id:raise ValueError('派发任务会话身份不符。')
+            return coordinator.guard(row)
         intent = task_request_kind(message)
         if profile == 'chat' and not goal_round:
             if intent == 'status':
@@ -1113,6 +1119,30 @@ class AgentService:
         return messages
 
     async def stream_turn(self, message, config, **kwargs):
+        """Settle an explicit coordinator turn and all its workers once."""
+        thread=config.get('configurable',{}).get('thread_id')
+        goals=getattr(self.runtime_factory,'goal_store',None)
+        goal=goals.active() if goals and not kwargs.get('pin_message') and kwargs.get('cost_budget') is None else None
+        owned=goal is not None and goal.thread_id==thread and (task_request_kind(message) in {'work','resume'} or bool(re.search(r'接管|协调|coordinate',message,re.I)))
+        budget=None
+        if owned:
+            from nailong.core.costs import CostEstimator
+            budget=GoalCostBudget(CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),goal.max_cost_usd-goal.spent_usd)
+            kwargs={**kwargs,'cost_budget':budget}
+        run_id=uuid.uuid4().hex
+        stream=self._stream_task_turn(message,config,**kwargs)
+        finished=False
+        try:
+            async for event in stream:yield event
+            finished=True
+        finally:
+            await stream.aclose()
+            if budget is not None:
+                goals.record_round(goal.id,cost_usd=budget.spent,files_changed=False,tool_calls=0,
+                    summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
+                    stop_reason='本轮已取消或用量未知。' if not finished or not budget.usage_complete else None)
+
+    async def _stream_task_turn(self, message, config, **kwargs):
         """One outer adapter for GUI, CLI and headless natural task continuation."""
         from nailong.core.project_execution import project_execution
         from nailong.core.task_intake import TaskIntake, user_request
@@ -1162,6 +1192,13 @@ class AgentService:
                     intent=intake.consume()
         finally:
             if token is not None:user_request.reset(token)
+        from nailong.core.session_coordination import SessionCoordination, active_dispatch
+        if self.session_store is not None and thread_id and active_dispatch.get() is None and (self.session_store.root/'coordination.json').exists():
+            coordinator=SessionCoordination(self.runtime_factory,thread_id)
+            events=coordinator.drain(self,approval=kwargs.get('approval_handler'),cost_budget=kwargs.get('cost_budget'))
+            try:
+                async for event in events:yield event
+            finally:await events.aclose()
         if intent:
             from nailong.core.costs import CostEstimator
             from ui.flows import stream_goal

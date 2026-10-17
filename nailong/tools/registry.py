@@ -140,6 +140,7 @@ def build_tool_specs(
     task_history=None,
     capability_catalog=None,
     task_intake=None,
+    session_coordination=None,
 ) -> list[ToolSpec]:
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
         raise ValueError(f"未知工具配置：{profile}")
@@ -432,6 +433,16 @@ def build_tool_specs(
             ('prepare_task', '澄清需求并保存草案（objective/scope/constraints/acceptance/open_questions/verification）；不启动实施。expected_revision 为当前草案版本。', task_intake.prepare, False, False, frozenset({'chat'})),
             ('start_task', '当前用户明确要求实施时，提交已展示草案的持续执行意图；本轮结束后启动，不重复实施。', task_intake.start, False, False, frozenset({'chat'})),
         ])
+    if session_coordination is not None:
+        for name,handler,read_only in [
+            ('list_task_sessions',session_coordination.summaries,True),
+            ('read_session_history',session_coordination.history,True),
+            ('take_session',session_coordination.acquire,False),
+            ('dispatch_session',session_coordination.dispatch,False),
+            ('coordination_status',session_coordination.status,True),
+            ('pause_coordination',session_coordination.pause,False),
+        ]:
+            all_specs.append((name,handler.__doc__,handler,read_only,False,frozenset({'chat'})))
     specs = []
     for name, description, handler, read_only, concurrency_safe, profiles in all_specs:
         if name in {'discover_tools', 'search_skills'} and capability_catalog is None:

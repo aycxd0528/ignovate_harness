@@ -658,6 +658,7 @@ class AgentRuntimeFactory:
         from nailong.core.task_history import TaskContextHistory
         task_history=TaskContextHistory(self.history_archive,thread_id,self.settings.project_root) if thread_id and profile!='subagent' else None
         from nailong.core.task_intake import TaskIntake
+        from nailong.core.session_coordination import SessionCoordination
         tools = build_tools(
             api_key=self.settings.api_key,
             profile=profile,
@@ -678,6 +679,7 @@ class AgentRuntimeFactory:
             task_history=task_history,
             capability_catalog=capability_catalog,
             task_intake=TaskIntake(self.task_store,thread_id) if thread_id and profile=='chat' and adaptive_context else None,
+            session_coordination=SessionCoordination(self,thread_id) if thread_id and profile=='chat' and adaptive_context else None,
         )
         if capability_catalog is not None:
             capability_catalog.register(tools)

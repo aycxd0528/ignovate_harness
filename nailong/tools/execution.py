@@ -238,6 +238,9 @@ class ToolExecutionContext:
             return self.permission_engine.decide_action(spec.name, arguments, **options)
 
     def _stage_restriction(self, spec, arguments, config):
+        from nailong.core.session_coordination import execution_guard
+        guarded=execution_guard(spec,arguments,str(((config or {}).get('configurable') or {}).get('thread_id') or ''))
+        if guarded is not None:return guarded
         if self.task_snapshot_provider is None:
             return None
         thread = str(((config or {}).get('configurable') or {}).get('thread_id') or '')

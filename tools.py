@@ -135,6 +135,7 @@ def build_tools(
     task_history=None,
     capability_catalog=None,
     task_intake=None,
+    session_coordination=None,
 ) -> list[BaseTool]:
     """Build an ordered, profile-scoped set of registered tools."""
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
@@ -162,6 +163,7 @@ def build_tools(
             task_history=task_history,
             capability_catalog=capability_catalog,
             task_intake=task_intake,
+            session_coordination=session_coordination,
         )
 
     def validation_error(error):
