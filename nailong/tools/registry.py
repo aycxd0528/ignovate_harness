@@ -319,9 +319,12 @@ def build_tool_specs(
             return {"ok": False, "error": str(error)}
         return {"ok": True, "plan_id": plan_id, "message": "计划已提交给用户审批。"}
 
-    async def task(description: str) -> dict:
+    async def task(description: str, resume_reference: str = '') -> dict:
         if task_runner is None:
             return {"ok": False, "error": "只读子代理当前不可用。", "error_code": "subagent_unavailable"}
+        if getattr(task_runner,'continuations',None) is not None:
+            return await task_runner.continuations.run(task_runner,thread_id or 'ephemeral',description,resume_reference)
+        if resume_reference:return {'ok':False,'error':'当前调用没有续作存储。'}
         answer = await task_runner.run(thread_id or "ephemeral", description)
         if not isinstance(answer, str):
             return {"ok": False, "error": "子代理返回类型无效。", "error_code": "subagent_failed"}

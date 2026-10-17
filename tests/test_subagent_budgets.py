@@ -166,11 +166,11 @@ class ChildRuntimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         answer = await self.factory.task_runner.run("t", "answer this question")
         self.assertEqual(answer, "child answer")
         self.assertGreater(model._calls[0]["max_tokens"], 64)
-        self.assertLessEqual(model._calls[0]["max_tokens"], 1500)
+        self.assertLessEqual(model._calls[0]["max_tokens"], 4096)
         events = self.store.read_events("t")
         reservations = [r["data"] for r in events if r["kind"] == "subagent_budget"]
         self.assertTrue(any(r["event"] == "reserved" and r["input_tokens_upper_bound"] > 1000
-                            and r["output_tokens_reserved"] <= 1500 for r in reservations))
+                            and r["output_tokens_reserved"] <= 4096 for r in reservations))
 
     async def test_runtime_budget_refusal_does_not_repeat_child_build_or_provider_call(self):
         model = RecordingModel(responses=[paid_response("unreachable")])
@@ -233,7 +233,7 @@ class ChildRuntimeBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(model._calls), 2)
         self.assertIn("visible evidence", result)
         final = model._calls[-1]
-        self.assertLessEqual(final["max_tokens"], 512)
+        self.assertLessEqual(final["max_tokens"], 1024)
         self.assertIn("最终回答证据", str(final["messages"][-1].content))
         self.assertIn("裁剪", str(final["messages"][-1].content))
         self.assertFalse(any(m.type == "tool" or getattr(m, "tool_calls", None) for m in final["messages"]))

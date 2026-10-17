@@ -158,3 +158,10 @@ class NaturalIntakeTests(GoalStreamTests):
         self.assertTrue(any(row['status']=='failed' for row in task['evidence']))
         self.assertTrue(any(row['status']=='passed' for row in task['evidence']))
         self.assertEqual(task['intake']['stage'],'executing')
+
+    async def test_native_child_receipt_contains_actual_file_evidence(self):
+        self.factory.task_store.begin('parent','研究 probe.txt')
+        self.factory.model.responses=[answer('',[{'name':'read_file','args':{'path':'probe.txt'},'id':'child-read'}]),answer('已读取文件。')]
+        result=await self.factory.task_runner.continuations.run(self.factory.task_runner,'parent','读取 probe.txt 后返回')
+        self.assertEqual(result['status'],'completed',result)
+        self.assertTrue(any(row.get('path')=='probe.txt' and row.get('ok') for row in result['evidence']))

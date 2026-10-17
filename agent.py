@@ -350,8 +350,16 @@ class AgentRuntimeFactory:
         from nailong.core.task_state import TaskStore
         self.task_store = TaskStore(self.session_store, api_key=settings.api_key)
         self.goal_store.task_store = self.task_store
+        from nailong.core.runtime_options import child_options
+        from nailong.core.context import configured_context_window
+        from nailong.core.child_continuations import ChildContinuations
+        self.child_options=child_options(settings.project_root,model_output=generation_policy(settings).max_output_tokens,
+            context_window=configured_context_window(settings.model,settings.project_root))
         self.task_runner = ReadOnlyTaskRunner(self._run_readonly_subagent,
+            max_concurrency=self.child_options['max_concurrency'],token_budget=self.child_options['stage_tokens'],
+            child_output_tokens=self.child_options['output_tokens'],
             record=lambda thread_id, row: self.session_store.append_event(thread_id, 'subagent_budget', row))
+        self.task_runner.continuations=ChildContinuations(self.session_store,self.task_store)
         self.skill_registry = SkillRegistry(settings.project_root, api_key=settings.api_key)
         from nailong.core.permissions import PermissionEngine, Decision
         self._memory_permissions = PermissionEngine(settings.project_root)
@@ -490,7 +498,7 @@ class AgentRuntimeFactory:
             base_url=self.settings.api_base,timeout=30,max_retries=0,max_tokens=output_cap,
             **self._reasoning_kwargs(self.settings.model,self.settings.reasoning_effort))
             if isinstance(self.model,_DeepSeekBase) else self.model)
-        finish_budget=ChildResearchBudgetMiddleware()
+        finish_budget=ChildResearchBudgetMiddleware(self.child_options['final_output_tokens'])
         child = create_agent(
             model=child_model,
             tools=child_tools,
@@ -504,6 +512,7 @@ class AgentRuntimeFactory:
         )
         with collect_model_usage(reuse=True) as collector:
             budget_failure=None
+            messages=[]
             try:
                 # The parent's once-only permit authorizes its task handler,
                 # not nested child tools. Children use their own subagent gate.
@@ -527,7 +536,19 @@ class AgentRuntimeFactory:
             finally:
                 await finish_budget.close()
             answer = answer.replace(self.settings.api_key, "[密钥已隐藏]") if self.settings.api_key else answer
-            return ChildTaskResult(answer, dict(collector.totals), collector.complete,list(collector.records),budget_failure)
+            if finish_budget.used_final and budget_failure is None:
+                budget_failure={'reason':'final_answer_reserved'}
+            from nailong.core.child_continuations import NATIVE_CHILD_RESULT
+            evidence=[]
+            for message in messages:
+                if getattr(message,'type',None)!='tool':continue
+                try:body=json.loads(message.content)
+                except (ValueError,TypeError):continue
+                if not isinstance(body,dict):continue
+                evidence.append({'tool':message.name,'call_id':message.tool_call_id,
+                    **{key:body[key] for key in ('ok','path','offset','truncated','read_complete','reference','result_id') if key in body}})
+            return ChildTaskResult(answer, dict(collector.totals), collector.complete,list(collector.records),budget_failure,
+                evidence,NATIVE_CHILD_RESULT)
 
     def _tool_session(self, thread_id: str | None) -> FileSession:
         root = str(self.settings.project_root.resolve())
