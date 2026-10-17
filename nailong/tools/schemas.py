@@ -23,6 +23,8 @@ def parameter_model(name: str, handler) -> type[BaseModel]:
             )
         if key in {"pattern", "query", "name", "description", "command", "old_string"}:
             options["min_length"] = 1
+        if key == 'query' and name in {'discover_tools', 'search_skills'}:
+            options.pop('min_length', None)
         if key in {"content", "old_string", "new_string"}:
             options["max_length"] = 120_000
         if key == "plan_markdown":
@@ -37,7 +39,7 @@ def parameter_model(name: str, handler) -> type[BaseModel]:
         if key == "limit":
             maximum = {"read_file": 1000, "glob": 200, "grep": 100,
                        "search_text": 50, "list_files": 100, "memory_list": 100,
-                       "memory_read": 16_000}.get(name, 1000)
+                       "memory_read": 16_000, 'discover_tools': 10, 'search_skills': 10}.get(name, 1000)
             options.update(ge=1, le=maximum)
         if key == "max_chars":
             options.update(ge=1, le=12_000 if name == "read_file" else 6000)

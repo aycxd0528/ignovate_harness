@@ -653,6 +653,7 @@ class AgentService:
             thread_id=thread_id,
             allowed_tools=allowed_tools,
             **({"review_paths": review_paths} if review_paths is not None else {}),
+            **({'adaptive_context': True} if 'adaptive_context' in inspect.signature(factory).parameters else {}),
         )
         return await result if inspect.isawaitable(result) else result
 

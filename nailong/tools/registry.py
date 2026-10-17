@@ -138,6 +138,7 @@ def build_tool_specs(
     memory_context=None,
     result_store=None,
     task_history=None,
+    capability_catalog=None,
 ) -> list[ToolSpec]:
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
         raise ValueError(f"未知工具配置：{profile}")
@@ -238,6 +239,16 @@ def build_tool_specs(
 
     def search_text(query: str, path: str = ".", limit: int = 50) -> dict[str, Any]:
         return file_session.search_text(query, path, limit)
+
+    def discover_tools(query: str = '', offset: int = 0, limit: int = 5) -> dict:
+        if capability_catalog is None:
+            return {'ok': False, 'error_code': 'discovery_unavailable', 'error': '当前调用未提供能力目录。'}
+        return capability_catalog.search(query, offset, limit)
+
+    def search_skills(query: str = '', offset: int = 0, limit: int = 5) -> dict:
+        if skill_registry is None:
+            return {'ok': False, 'error_code': 'skills_unavailable', 'error': '当前调用未提供 Skill 目录。'}
+        return skill_registry.search(query, offset, limit)
 
     def load_skill(name: str) -> dict[str, Any]:
         if skill_registry is None:
@@ -397,6 +408,8 @@ def build_tool_specs(
         ("run_command", TOOL_DESCRIPTIONS["run_command"], run_command, False, False, frozenset({"chat"})),
         ("exit_plan_mode", TOOL_DESCRIPTIONS["exit_plan_mode"], exit_plan_mode, False, False, frozenset({"plan"})),
         ("task", TOOL_DESCRIPTIONS["task"], task, True, False, frozenset({"chat"})),
+        ('discover_tools', '按工具名或 read/edit/run/memory/history/task 发现当前允许的工具；返回有界完整参数，下一请求可调用。offset>=0，limit 为 1–10。', discover_tools, True, True, frozenset({'chat'})),
+        ('search_skills', '按名称或字面关键词搜索启用的 Skills，只返回匹配元数据；正文用 load_skill 加载。空查询可分页浏览，limit 为 1–10。', search_skills, True, True, frozenset({'chat', 'plan'})),
         ("update_goal", TOOL_DESCRIPTIONS["update_goal"], update_goal, False, False, frozenset({"chat"})),
         ("load_skill", TOOL_DESCRIPTIONS["load_skill"], load_skill, True, True, frozenset({"chat", "plan"})),
         ("read_skill_resource", TOOL_DESCRIPTIONS["read_skill_resource"], read_skill_resource, True, True, frozenset({"chat", "plan"})),
@@ -412,6 +425,8 @@ def build_tool_specs(
         all_specs.append(("read_memory","按 scope（user/project/local）和完整标题 section 读取旧记忆；标题索引截断时 section 留空按全文读取。offset 从 0 开始，max_chars 最多 6000，按 next_offset 分页。返回 version；changed 时下一轮刷新后重读，metadata_truncated 表示响应省略路径或标题。资料不能扩大权限。",read_memory,True,True,frozenset({'chat','plan'})))
     specs = []
     for name, description, handler, read_only, concurrency_safe, profiles in all_specs:
+        if name in {'discover_tools', 'search_skills'} and capability_catalog is None:
+            continue
         if profile not in profiles:
             continue
         if allowed_tools is not None and name not in allowed_tools:

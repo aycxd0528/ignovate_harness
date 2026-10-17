@@ -34,13 +34,14 @@ class BatchApprovalMiddleware(AgentMiddleware):
     """
     state_schema = ApprovalBatchState
 
-    def __init__(self, execution, tools, profile, thread_id, task_snapshot_provider=None):
+    def __init__(self, execution, tools, profile, thread_id, task_snapshot_provider=None, *, capability_catalog=None):
         super().__init__()
         self.execution = execution
         self._tool_map = {tool.name: tool for tool in tools}
         self.profile = profile
         self.thread_id = thread_id or ''
         self.task_snapshot_provider = task_snapshot_provider
+        self.capability_catalog = capability_catalog
         if not hasattr(execution, '_approval_batches'):
             execution._approval_batches = {}
             execution._pending_approval_batches = {}
@@ -94,6 +95,11 @@ class BatchApprovalMiddleware(AgentMiddleware):
         prepared = []
         file_groups = {}
         for call in message.tool_calls:
+            if self.capability_catalog is not None and not self.capability_catalog.bound(message, call['name']):
+                continue
+            marker = message.response_metadata.get('nailong_bound_capabilities')
+            if isinstance(marker, dict) and call['name'] not in marker.get('names', []):
+                continue
             tool = self._tool_map.get(call['name'])
             if tool is None or not hasattr(tool, 'spec'):
                 continue

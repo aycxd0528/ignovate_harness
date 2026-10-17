@@ -17,7 +17,8 @@ _STATUS = re.compile(
 )
 _WORK = re.compile(
     r'^(?:(?:请|帮我|请帮我|现在|开始|麻烦|麻烦你|然后|接下来)\s*)*'
-    r'(?:修复|修改|实现|审查|重构|优化|排查|测试|验证|创建|新增|增加|编辑|删除|重命名|构建|运行|执行)'
+    r'(?:(?:反复|依次|逐个|分别)\s*)*'
+    r'(?:修复|修改|实现|审查|重构|优化|排查|测试|验证|创建|新增|增加|编辑|删除|重命名|构建|运行|执行|写入|写文件|做)'
     r'|^(?:please\s+)?(?:review|debug|implement|refactor|fix|create|edit|rename|build|test|run)\b',
     re.IGNORECASE,
 )

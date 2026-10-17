@@ -133,6 +133,7 @@ def build_tools(
     execution_context: ToolExecutionContext | None = None,
     mcp_manager=None,
     task_history=None,
+    capability_catalog=None,
 ) -> list[BaseTool]:
     """Build an ordered, profile-scoped set of registered tools."""
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
@@ -158,6 +159,7 @@ def build_tools(
             memory_context=memory_context,
             result_store=execution.artifacts,
             task_history=task_history,
+            capability_catalog=capability_catalog,
         )
 
     def validation_error(error):

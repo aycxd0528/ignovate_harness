@@ -43,12 +43,14 @@ class ContextLimitExceeded(RuntimeError):
 
 
 class ContextManagerMiddleware(AgentMiddleware):
-    def __init__(self,settings,tools,system_prompt,profile,thread_id,store,archive,reports,calibration,parts=None,goal_store=None,request_filter=None,requested_output=4096,memory_budget=None,task_snapshot_provider=None,task_context_max_chars=12000,memory_request_context=None,task_history=None,runtime_environment=None):
+    def __init__(self,settings,tools,system_prompt,profile,thread_id,store,archive,reports,calibration,parts=None,goal_store=None,request_filter=None,requested_output=4096,memory_budget=None,task_snapshot_provider=None,task_context_max_chars=12000,memory_request_context=None,task_history=None,runtime_environment=None,capability_view=None):
         super().__init__()
         self.settings=settings; self.tools=tools; self.system_prompt=system_prompt
         self.profile=profile; self.thread_id=thread_id; self.store=store; self.archive=archive
         self.reports=reports; self.calibration=calibration; self.parts=parts or {}; self.goal_store=goal_store
         self.request_filter=request_filter
+        self.capability_view=capability_view
+        self._selected_capability_view=None
         self.requested_output=requested_output or 4096
         self.memory_budget=memory_budget
         self.memory_request_context=memory_request_context
@@ -209,6 +211,8 @@ class ContextManagerMiddleware(AgentMiddleware):
         return self.request_filter(messages) if self.request_filter else messages
 
     def _task_projection(self,tools=None,messages=()):
+        if self._selected_capability_view is not None and not self._selected_capability_view['include_task']:
+            return None, {'projected':False,'reason':'not_requested'}
         if self.task_snapshot_provider is None:
             return None,None
         if not self.thread_id:
@@ -406,9 +410,20 @@ class ContextManagerMiddleware(AgentMiddleware):
             if failed:
                 self._record('context_performance',{'stage':'preflight','failed':True,**self._metrics})
 
+    def _select_capability_view(self,state,memory_view):
+        if self.capability_view is None:
+            return
+        memory=memory_view['context'] if memory_view is not None else self._compiled_parts.get('fixed_memory','')
+        view=self.capability_view(state,memory)
+        self._selected_capability_view=view
+        self.tools=view['tools']
+        self.parts=view['parts']
+        self.system_prompt=''.join(self.parts.get(key,'') for key in ('base_system','fixed_memory','skill_catalog'))
+
     def _before_model(self,state,runtime):
         with self._measure('memory_refresh'):
             memory_view=self._refresh_memory_view()
+        self._select_capability_view(state,memory_view)
         original=list(state.get('messages',[])); messages,removed=normalize_pins(original)
         changed=bool(removed)
         goal=self.goal_store.active() if self.goal_store is not None else None
@@ -576,12 +591,15 @@ class ContextManagerMiddleware(AgentMiddleware):
         if memory_view is not None:
             request=self._rewrite_memory_system(request,memory_view)
             request=request.override(messages=self._filter_request_messages(request.messages))
+        self._select_capability_view(request.state,memory_view)
+        if self.capability_view is not None:
+            request=request.override(tools=self.tools,system_message=SystemMessage(content=self.system_prompt))
         with self._measure('task_projection'):
             task_projection,task_info=self._task_projection(request.tools,messages=request.messages)
         if self.task_snapshot_provider is not None:
             request=request.override(messages=self._task_request_view(request.messages,task_projection))
         environment=None
-        if self.runtime_environment is not None:
+        if self.runtime_environment is not None and (self._selected_capability_view is None or self._selected_capability_view['include_environment']):
             goal=self.goal_store.active() if self.goal_store is not None else None
             environment={**self.runtime_environment,'active_goal_bound':bool(goal and goal.thread_id==self.thread_id)}
             if self.task_snapshot_provider is None:
@@ -670,7 +688,10 @@ class ContextManagerMiddleware(AgentMiddleware):
     def _settle(self,response,snapshot):
         usage=None
         for message in response.result:
-            if getattr(message,'type',None)=='ai': usage=message_usage(message)
+            if getattr(message,'type',None)=='ai':
+                usage=message_usage(message)
+                if self.capability_view is not None:
+                    message.response_metadata['nailong_actual_bound_tools']=list(snapshot['tools'])
         actual=usage['input_tokens'] if usage else None
         snapshot['actual_main_input_tokens']=actual
         if actual is not None:

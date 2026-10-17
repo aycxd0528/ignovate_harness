@@ -613,6 +613,7 @@ class AgentRuntimeFactory:
         checkpointer=None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         review_paths: frozenset[str] | None = None,
+        adaptive_context: bool = False,
     ) -> CompiledStateGraph:
         if profile != 'subagent':
             task = self._task_for_profile(thread_id, profile, target_path)
@@ -627,6 +628,12 @@ class AgentRuntimeFactory:
             return task['scope'] if task else None
         memory_context = MemoryReadContext(snapshot,
             task_scope_provider=current_memory_scope if thread_id else None)
+        from nailong.core.capabilities import CapabilityCatalog, CapabilityMiddleware
+        capability_catalog = (CapabilityCatalog(explicit_tools=allowed_tools,
+            prompt_builder=lambda names: self._prompt_parts(profile,target_path,names,thread_id,snapshot),
+            permission_mode=self.tool_execution_context.permission_mode,
+            task_provider=lambda: current_task(thread_id) if thread_id else None)
+            if profile == 'chat' and adaptive_context else None)
         from nailong.core.task_history import TaskContextHistory
         task_history=TaskContextHistory(self.history_archive,thread_id,self.settings.project_root) if thread_id and profile!='subagent' else None
         tools = build_tools(
@@ -647,7 +654,10 @@ class AgentRuntimeFactory:
             execution_context=self.tool_execution_context,
             mcp_manager=self.mcp_manager,
             task_history=task_history,
+            capability_catalog=capability_catalog,
         )
+        if capability_catalog is not None:
+            capability_catalog.register(tools)
         tool_names = {tool.name for tool in tools}
         from nailong.core.costs import CostEstimator
         self.active_price_snapshot = CostEstimator(self.settings.model,self.settings.project_root).snapshot()
@@ -661,7 +671,8 @@ class AgentRuntimeFactory:
             request_filter=memory_context.filter_messages,requested_output=getattr(self.model,'max_tokens',None),
             memory_budget=snapshot.report(), task_snapshot_provider=current_task if thread_id else None,
             memory_request_context=memory_context,task_history=task_history,
-            runtime_environment=self._runtime_environment())
+            runtime_environment=self._runtime_environment(),
+            capability_view=capability_catalog.view if capability_catalog is not None else None)
         # Budget accounting sees the complete request, including the task tail.
         # The execution gate still checks permissions and versions. Native graph
         # approvals are collected before any sibling tool starts a side effect.
@@ -673,10 +684,12 @@ class AgentRuntimeFactory:
                 if thread_id else None),
             context, ReviewInputMiddleware(),
             BatchApprovalMiddleware(self.tool_execution_context, tools, profile, thread_id,
-                                    current_task if thread_id else None),
+                                    current_task if thread_id else None, capability_catalog=capability_catalog),
             ModelAccountingMiddleware(self.settings, main_agent=True, record=lambda kind, data:
                 self.session_store.append_event(thread_id, kind, data) if thread_id else None),
             SecretRedactionMiddleware(self.settings.api_key)]
+        if capability_catalog is not None:
+            middleware.insert(0, CapabilityMiddleware(capability_catalog))
 
         runtime = create_agent(
             model=self.model,
@@ -701,9 +714,11 @@ class AgentRuntimeFactory:
         thread_id: str | None = None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         review_paths: frozenset[str] | None = None,
+        adaptive_context: bool = False,
     ) -> CompiledStateGraph:
         """Build a runtime for synchronous compatibility callers."""
-        return self._build_runtime(profile, target_path, thread_id, allowed_tools=allowed_tools,review_paths=review_paths)
+        return self._build_runtime(profile, target_path, thread_id, allowed_tools=allowed_tools,
+                                   review_paths=review_paths,adaptive_context=adaptive_context)
 
     async def async_runtime(
         self,
@@ -712,6 +727,7 @@ class AgentRuntimeFactory:
         thread_id: str | None = None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         review_paths: frozenset[str] | None = None,
+        adaptive_context: bool = False,
     ) -> CompiledStateGraph:
         """Build a runtime backed by the async SQLite checkpointer."""
         if self.async_checkpointer is None:
@@ -745,6 +761,7 @@ class AgentRuntimeFactory:
             checkpointer=self.async_checkpointer,
             allowed_tools=allowed_tools,
             review_paths=review_paths,
+            adaptive_context=adaptive_context,
         )
 
     def close(self) -> None:
