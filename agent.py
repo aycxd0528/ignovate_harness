@@ -350,6 +350,7 @@ class AgentRuntimeFactory:
         from nailong.core.task_state import TaskStore
         self.task_store = TaskStore(self.session_store, api_key=settings.api_key)
         self.goal_store.task_store = self.task_store
+        self.goal_store.coordination_path=self.session_store.root/'coordination.json'
         from nailong.core.runtime_options import child_options
         from nailong.core.context import configured_context_window
         from nailong.core.child_continuations import ChildContinuations

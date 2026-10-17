@@ -165,3 +165,60 @@ class NaturalIntakeTests(GoalStreamTests):
         result=await self.factory.task_runner.continuations.run(self.factory.task_runner,'parent','读取 probe.txt 后返回')
         self.assertEqual(result['status'],'completed',result)
         self.assertTrue(any(row.get('path')=='probe.txt' and row.get('ok') for row in result['evidence']))
+
+    async def test_closing_natural_pause_stream_clears_live_user_authority(self):
+        from nailong.core.task_intake import user_request
+        task=self.factory.task_store.begin('stream','研究项目')
+        task['intake']={'objective':'研究项目','scope':['.'],'constraints':[],'acceptance':[],
+            'open_questions':[],'verification':[],'draft_revision':1,'stage':'executing','presented_turn':'before','pending_start':None}
+        self.factory.task_store._write('stream',task)
+        stream=self.service.stream_turn('暂停',{'configurable':{'thread_id':'stream'}})
+        await anext(stream);await stream.aclose()
+        self.assertIsNone(user_request.get(),'closing a UI stream must revoke live authorization')
+
+    async def test_changed_user_requirements_invalidate_previously_presented_brief(self):
+        from nailong.core.task_intake import TaskIntake,user_request
+        intake=TaskIntake(self.factory.task_store,'natural')
+        token=user_request.set({'thread_id':'natural','text':'我想研究项目','turn_id':'draft'})
+        try:
+            self.assertTrue(intake.prepare({'objective':'研究项目'},0)['ok']);intake.present()
+            self.factory.task_store.amend('natural',constraints=['不得读取私有目录'])
+        finally:user_request.reset(token)
+        token=user_request.set({'thread_id':'natural','text':'开始实施','turn_id':'start'})
+        try:self.assertFalse(intake.start(1)['ok'],'old draft must not override a newer user constraint')
+        finally:user_request.reset(token)
+
+    def natural_file_responses(self):
+        return [answer('',[{'name':'prepare_task','args':{'brief':{'objective':'创建 output.txt','acceptance':['用户检查文件']}},'id':'brief'}]),
+            answer('',[{'name':'start_task','args':{'draft_revision':1,'max_rounds':2},'id':'start'}]),answer('开始执行。'),
+            answer('',[{'name':'write_file','args':{'path':'output.txt','content':'native surface'},'id':'write'}]),answer('请检查文件。')]
+
+    async def test_native_gui_runs_natural_goal_through_shared_outer_adapter(self):
+        import asyncio
+        from nailong.gui.controller import GUIController
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        self.factory.model.responses=self.natural_file_responses()
+        controller=GUIController(self.root,sessions=self.factory.session_store,service=self.service)
+        try:
+            branch=await controller.command('create',{'name':'自然持续任务'})
+            await controller.command('permission',{'branch_id':branch['id'],'mode':'bypassPermissions'})
+            queued=await controller.command('send',{'branch_id':branch['id'],'message':'请创建 output.txt 并持续推进','request_id':'natural','permission_mode':'bypassPermissions'})
+            async with asyncio.timeout(10):
+                while controller.runs[queued['run_id']]['status'] in {'queued','running','waiting_approval'}:await asyncio.sleep(.01)
+            run=controller.runs[queued['run_id']]
+            self.assertEqual(run['status'],'completed',run.get('error'))
+            self.assertEqual((self.root/'output.txt').read_text(),'native surface')
+            self.assertEqual(self.goals.latest().thread_id,branch['thread_id'])
+            self.assertEqual(self.goals.latest().round,1)
+        finally:await controller.close()
+
+    async def test_native_headless_runs_natural_goal_without_goal_flag(self):
+        import headless,io,json
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        self.factory.model.responses=self.natural_file_responses()
+        out,err=io.StringIO(),io.StringIO()
+        with patch.object(headless,'create_agent_runtime',return_value=self.factory()):
+            code=await headless.run_print(self.factory.settings,'请创建 output.txt 并持续推进',output_format='json',permission_mode='bypassPermissions',stdout=out,stderr=err)
+        self.assertEqual(code,0,err.getvalue());self.assertEqual((self.root/'output.txt').read_text(),'native surface')
+        result=json.loads(out.getvalue());self.assertGreater(result['usage']['total_tokens'],110)
+        self.assertEqual(self.goals.latest().round,1)

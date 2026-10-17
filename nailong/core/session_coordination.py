@@ -6,6 +6,7 @@ from pathlib import Path
 from nailong.core.preferences import atomic_json,read_config
 from nailong.core.file_locks import file_lock
 from nailong.core.task_requests import task_request_kind
+from nailong.core.session_policy import session_mode,restricted_mode
 
 active_dispatch=ContextVar('nailong_dispatch',default=None)
 TERMINAL={'completed','failed','cancelled','needs_reconciliation'}
@@ -41,7 +42,9 @@ class SessionCoordination:
                 raise ValueError('派发记录无效，拒绝恢复执行。')
         return data
 
-    def _write(self,data):atomic_json(self.path,data,self.sessions.root)
+    def _write(self,data):
+        if len(json.dumps(data,ensure_ascii=False).encode())>900000:raise ValueError('协调状态超过安全存储上限。')
+        atomic_json(self.path,data,self.sessions.root)
 
     def summaries(self,query: str = '',offset: int = 0,limit: int = 5) -> dict:
         """有界列出当前项目会话与任务摘要，不加载全部历史。"""
@@ -83,6 +86,7 @@ class SessionCoordination:
         """为已授权协调目标接管一个现有会话；不改变其任务身份，不解除用户暂停。"""
         try:
             self.sessions.session_path(thread_id);goal=self._goal()
+            if type(expected_revision) is not int or expected_revision<1:raise ValueError('任务修订必须是正整数。')
             if thread_id==self.owner:raise ValueError('当前会话无需派发给自己。')
             task=self.tasks.snapshot(thread_id)
             if task is None or task['revision']!=expected_revision or task['lifecycle']!='active':raise ValueError('目标任务版本变化、不存在或已暂停。')
@@ -97,7 +101,7 @@ class SessionCoordination:
                 if any(row['target']==thread_id and row['state'] in {'admitted','running'} for row in data['dispatches'].values()):raise ValueError('目标仍在执行，不能替换控制来源。')
                 generation=previous['generation']+1 if previous else 1
                 data['leases'][thread_id]={'owner':self.owner,'goal_id':goal.id,'generation':generation,'state':'owned','scope':scope,
-                    'task_id':task['task_id'],'revision':task['revision'],'checkpoint':version}
+                    'task_id':task['task_id'],'revision':task['revision'],'checkpoint':version,'permission_mode':session_mode(self.sessions,thread_id)}
                 self._write(data)
             return {'ok':True,'generation':generation,'task_id':task['task_id'],'revision':task['revision']}
         except (ValueError,OSError,RuntimeError,TypeError) as error:return {'ok':False,'error':str(error)}
@@ -113,7 +117,8 @@ class SessionCoordination:
                 data=self._read();lease=data['leases'].get(thread_id)
                 if not lease or lease['owner']!=self.owner or lease['goal_id']!=goal.id or lease['generation']!=generation or lease['state']!='owned':raise ValueError('没有当前有效的接管控制权。')
                 candidate={'request_id':request_id,'owner':self.owner,'goal_id':goal.id,'target':thread_id,'stage':stage,'generation':generation,
-                    'task_id':lease['task_id'],'revision':lease['revision'],'scope':lease['scope'],'checkpoint':lease['checkpoint'],'dependencies':dependencies}
+                    'task_id':lease['task_id'],'revision':lease['revision'],'scope':lease['scope'],'checkpoint':lease['checkpoint'],
+                    'permission_mode':lease['permission_mode'],'dependencies':dependencies}
                 previous=data['dispatches'].get(request_id)
                 if previous:
                     if any(previous.get(key)!=value for key,value in candidate.items()):raise ValueError('同一 request_id 对应不同派发参数。')
@@ -149,11 +154,50 @@ class SessionCoordination:
             return {'ok':True}
         except (ValueError,OSError,RuntimeError) as error:return {'ok':False,'error':str(error)}
 
+    def intervene(self,thread_id,*,source_changed=False):
+        """Only the outer real-user adapter calls this; no model tool."""
+        with file_lock(self.lock):
+            data=self._read()
+            for thread,lease in data['leases'].items():
+                if thread!=thread_id and not (source_changed and lease['owner']==thread_id):continue
+                lease['generation']+=1;lease['state']='paused'
+                for row in data['dispatches'].values():
+                    if row['target']==thread and row['state'] not in TERMINAL:
+                        row['state']='cancelled' if row['state']=='queued' else 'needs_reconciliation'
+            self._write(data)
+
+    def reconcile(self):
+        """Recover proven receipts only; uncertain effects remain non-runnable."""
+        with file_lock(self.lock):
+            data=self._read()
+            uncertain=[copy.deepcopy(row) for row in data['dispatches'].values()
+                if row['owner']==self.owner and row['state'] in {'admitted','running'}]
+        for row in uncertain:
+            receipts=[event.get('data',{}) for event in self.sessions.read_events(row['target'])
+                if event.get('kind')=='coordination_receipt' and event.get('data',{}).get('request_id')==row['request_id']
+                and event.get('data',{}).get('run_id')==row['run_id']]
+            receipt=receipts[-1] if receipts else None
+            proven=False
+            if receipt and all(receipt.get(key)==row[key] for key in ('task_id','revision','generation')) and receipt.get('state')=='completed' and receipt.get('usage_complete'):
+                task=self.tasks.snapshot(row['target']);goal=self.goals.get(row['goal_id'])
+                proven=bool(task and (task['task_id'],task['revision'])==(row['task_id'],row['revision']) and goal
+                    and checkpoint(self.factory,row['target'])==receipt.get('checkpoint'))
+                if proven and receipt['budget_round_id'] not in goal.settled_round_ids:
+                    if receipt.get('standalone'):
+                        self.goals.record_round(goal.id,cost_usd=receipt['cost_usd'],files_changed=False,tool_calls=0,
+                            summary='恢复已确认派发回执',round_id=receipt['budget_round_id'])
+                    else:proven=False  # Parent-round usage may also have been billed.
+            self._transition(row,'completed' if proven else 'needs_reconciliation',
+                receipt.get('result') if proven else {'reason':'原生执行结果或父轮费用结算未知；未重放。'})
+            if not proven:
+                self.goals.update(row['goal_id'],state='paused',summary='派发结果待核对，未重放未知操作。',thread_id=row['owner'])
+
     def guard(self,row,*,check_checkpoint=False):
         with file_lock(self.lock):
             data=self._read();current=data['dispatches'].get(row['request_id']);lease=data['leases'].get(row['target'])
             if not current or current['state'] not in {'queued','admitted','running'} or not lease or lease['generation']!=row['generation'] or lease['state']!='owned' or lease['owner']!=row['owner']:
                 raise ValueError('派发控制版本失效，停止后续操作。')
+        if session_mode(self.sessions,row['target'])!=row['permission_mode']:raise ValueError('目标会话权限模式已变化，请重新核对控制权。')
         task=self.tasks.snapshot(row['target']);goal=self.goals.get(row['goal_id'])
         if task is None or (task['task_id'],task['revision'])!=(row['task_id'],row['revision']) or task['lifecycle']!='active':raise ValueError('派发任务版本变化或已暂停。')
         if not goal or goal.state!='active' or goal.thread_id!=row['owner']:raise ValueError('协调目标已暂停或控制来源变化。')
@@ -179,6 +223,7 @@ class SessionCoordination:
         from nailong.core.project_execution import project_execution
         # Same-task reentrancy supports GUI's outer execution lease. No tool waits here.
         with project_execution(self.sessions):
+            self.reconcile()
             for _ in range(20):
                 with file_lock(self.lock):
                     data=self._read()
@@ -193,9 +238,17 @@ class SessionCoordination:
                 goal=self.goals.get(row['goal_id']);estimator=CostEstimator(self.factory.settings.model,self.factory.settings.project_root)
                 budget=cost_budget or GoalCostBudget(estimator,goal.max_cost_usd-goal.spent_usd)
                 row['run_id']=uuid.uuid4().hex
+                if cost_budget is None:budget.goal_round_id='dispatch:'+row['run_id']
                 with file_lock(self.lock):
                     data=self._read();data['dispatches'][row['request_id']].update(state='admitted',run_id=row['run_id']);self._write(data)
                 self.guard(row);self._transition(row,'running')
+                from nailong.core.permissions import PermissionEngine
+                prior_mode,prior_engine=service.permission_mode,service.permission_engine
+                prior_task=getattr(service,'last_turn_task_id',None)
+                service.set_permission_mode(restricted_mode(prior_mode,row['permission_mode']))
+                service.permission_engine=PermissionEngine(self.factory.settings.project_root)
+                execution=getattr(self.factory,'tool_execution_context',None)
+                if execution is not None:execution.permission_engine=service.permission_engine
                 token=active_dispatch.set((self,row));error=None;delivery=None;complete=False;tool_failed=False
                 before_spent=budget.spent
                 try:
@@ -215,25 +268,50 @@ class SessionCoordination:
                             else:yield event
                     finally:await stream.aclose()
                     self.guard(row)
-                    if row['scope']==['.']:
+                    target_task=self.tasks.snapshot(row['target'])
+                    target_intake=(target_task or {}).get('intake',{})
+                    if row['scope']==['.'] and (target_task or {}).get('profile','chat')=='chat':
                         verification=VerificationService(self.factory.settings.project_root,self.sessions,self.goals,
-                            task_store=self.tasks,api_key=self.factory.settings.api_key)
+                            task_store=self.tasks,api_key=self.factory.settings.api_key,
+                            steps_override=target_intake.get('verification') if target_intake.get('stage')=='executing' and target_intake.get('verification') else None)
                         if verification.list_steps():await verification.run(row['target'],approval=approval,permission_engine=service.permission_engine,permission_mode=service.permission_mode)
                     delivery=await service.delivery_report(row['target'])
+                    self.guard(row)
                 except BaseException as caught:error=caught
                 finally:
                     active_dispatch.reset(token)
+                    service.set_permission_mode(prior_mode);service.permission_engine=prior_engine
+                    service.last_turn_task_id=prior_task
+                    if execution is not None:execution.permission_engine=prior_engine
                     outcome='needs_reconciliation' if error else 'completed' if complete and budget.usage_complete and not tool_failed else 'failed'
                     result={'run_id':row['run_id'],'delivery':delivery,'turn_completed':complete,'usage_complete':budget.usage_complete,
                         'event_reference':'events:'+row['target'],'error':type(error).__name__ if error else None}
-                    self._transition(row,outcome,result)
+                    receipt={'request_id':row['request_id'],'run_id':row['run_id'],'task_id':row['task_id'],
+                        'revision':row['revision'],'generation':row['generation'],'state':outcome,'result':result,
+                        'usage_complete':budget.usage_complete,'budget_round_id':getattr(budget,'goal_round_id','unknown'),
+                        'standalone':cost_budget is None,'cost_usd':max(0,budget.spent-before_spent),
+                        'checkpoint':checkpoint(self.factory,row['target']) if error is None else None}
+                    self.sessions.append_event(row['target'],'coordination_receipt',receipt)
                     if cost_budget is None:
-                        self.goals.record_round(goal.id,cost_usd=max(0,budget.spent-before_spent),files_changed=False,tool_calls=0,
-                            summary='协调派发 '+row['request_id'],round_id='dispatch:'+row['run_id'],
-                            stop_reason='协调执行中断或用量未知。' if error or not budget.usage_complete else None)
+                        self.goals.record_round(goal.id,cost_usd=receipt['cost_usd'],files_changed=False,tool_calls=0,
+                            summary='协调派发 '+row['request_id'],round_id=receipt['budget_round_id'],
+                            stop_reason='协调执行中断或用量未知。' if error and not isinstance(error,ValueError) or not budget.usage_complete else None)
+                    self._transition(row,outcome,result)
+                    if outcome=='completed':
+                        with file_lock(self.lock):
+                            data=self._read();lease=data['leases'][row['target']]
+                            if lease['generation']==row['generation'] and lease['state']=='owned':
+                                lease['checkpoint']=receipt['checkpoint']
+                                for waiting in data['dispatches'].values():
+                                    if waiting['target']==row['target'] and waiting['generation']==row['generation'] and waiting['state']=='queued' and waiting['checkpoint']==row['checkpoint']:
+                                        waiting['checkpoint']=receipt['checkpoint']
+                            self._write(data)
                 yield service._event(self.owner,'notice',{'text':'会话 '+row['target']+' 派发状态：'+outcome+'；目标验收：'+str((delivery or {}).get('status','unverified'))})
                 yield service._event(self.owner,'coordination_result',{'request_id':row['request_id'],'state':outcome,**result})
-                if error:raise error
+                if error:
+                    if isinstance(error,ValueError):
+                        yield service._event(self.owner,'notice',{'text':str(error)})
+                    else:raise error
 
 
 def _inside(path,scope):
@@ -252,7 +330,8 @@ def execution_guard(spec,args,thread_id):
     coordinator,row=active
     try:
         if thread_id!=row['target']:raise ValueError('派发工具属于其他会话。')
-        coordinator.guard(row)
+        task=coordinator.guard(row)
+        if task.get('profile','chat')!='chat' and not spec.read_only:raise ValueError('目标原有模式仅允许调研，派发不能扩大执行模式。')
         if spec.name=='run_command' and row['scope']!=['.']:raise ValueError('命令无法保证只影响局部文件范围，当前接管不允许运行。')
         if not spec.read_only and spec.name not in {'write_file','edit_file','run_command'}:raise ValueError('派发不能修改控制权或创建嵌套任务。')
         path=args.get('path')

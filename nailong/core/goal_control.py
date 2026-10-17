@@ -157,7 +157,10 @@ def decide_goal_turn(goal, task, *, progress=None) -> dict:
         current_input_fingerprint=task.get('current_input_fingerprint'))
     manual = [row for name in ('pending', 'failed', 'stale') for row in report[name]
         if row['required'] and row['kind'] == 'manual']
-    if manual:
+    # A newly accepted natural brief may require a human check of the result.
+    # That check gates delivery after implementation, not its first execution.
+    initial_natural=task.get('intake',{}).get('stage')=='executing' and _value(goal,'round',0)==0
+    if manual and not initial_natural:
         return decision('wait', '目标等待用户人工验收：'+', '.join(row['id'] for row in manual),
             '用户核对当前输入并确认或明确免除相应验收，再显式恢复目标。')
     assessed = progress if progress is not None else _value(goal, 'last_progress', {})

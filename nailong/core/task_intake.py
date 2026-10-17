@@ -66,7 +66,8 @@ class TaskIntake:
                 if previous.get('stage')=='executing':
                     raise ValueError('实施中请先暂停，再修订草案。')
                 task['intake']={**brief,'draft_revision':expected_revision+1,'source_turn':request['turn_id'],
-                    'stage':'clarifying' if brief['open_questions'] else 'ready','presented_turn':None,'pending_start':None}
+                    'stage':'clarifying' if brief['open_questions'] else 'ready','presented_turn':None,'pending_start':None,
+                    'task_revision':task['revision']}
                 self.store._write(self.thread_id,task)
             return {'ok':True,'brief':task['intake']}
         except (ValueError,OSError,RuntimeError) as error:return {'ok':False,'error':str(error)}
@@ -82,7 +83,7 @@ class TaskIntake:
                 raise ValueError('执行轮数 1–100，成本上限须为 0–100 美元。')
             with self.store._locked(self.thread_id):
                 task=self.store._read(self.thread_id); draft=(task or {}).get('intake',{})
-                if draft.get('draft_revision')!=draft_revision or draft.get('stage')!='ready' or draft.get('open_questions'):
+                if type(draft_revision) is not int or draft.get('task_revision')!=task.get('revision') or draft.get('draft_revision')!=draft_revision or draft.get('stage')!='ready' or draft.get('open_questions'):
                     raise ValueError('草案过期或仍有未解决的问题。')
                 direct=task_request_kind(text)=='work' and not re.fullmatch(r'(?:请)?(?:开始|按这个|按计划|照这个)(?:做|实施|执行|推进)',text.strip('。！! '))
                 if not direct and (not draft.get('presented_turn') or draft['presented_turn']==request['turn_id']):
@@ -111,7 +112,7 @@ class TaskIntake:
             task=self.store._read(self.thread_id); draft=(task or {}).get('intake',{})
             pending=draft.get('pending_start')
             if not pending or pending['turn_id']!=request['turn_id']:return None
-            if pending['draft_revision']!=draft['draft_revision']:raise ValueError('启动前草案版本变化。')
+            if pending['draft_revision']!=draft['draft_revision'] or draft.get('task_revision')!=task['revision']:raise ValueError('启动前草案或用户要求版本变化。')
             draft.update(pending_start=None,stage='executing',accepted_turn=request['turn_id'])
             task['revision']+=1
             task.update(objective=draft['objective'],scope=draft['scope'] or task['scope'],constraints=draft['constraints'])

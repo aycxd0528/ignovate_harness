@@ -306,6 +306,12 @@ class GUIController:
         with self.branches.db:
             self.branches.db.execute('INSERT OR REPLACE INTO gui_branch_modes VALUES (?,?)', (identity, mode))
         self.branch_modes[identity] = mode
+        from nailong.core.session_policy import session_mode
+        thread=self.branches.branch(identity)['thread_id']
+        session_mode(self.sessions,thread,mode)
+        if self.factory is not None and (self.sessions.root/'coordination.json').exists():
+            from nailong.core.session_coordination import SessionCoordination
+            SessionCoordination(self.factory,thread).intervene(thread)
 
     async def _command_unlocked(self, name, payload):
         if not isinstance(payload, dict):

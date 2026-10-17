@@ -264,6 +264,7 @@ async def _goal_events(
                 f"\n任务：{control.get('task_id')}；要求版本：{control.get('task_revision')}。")
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 40}
         budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd)
+        budget.goal_round_id=round_id
         round_error = None
         stop_reason = ""
         progress = assess_goal_progress(before, None)

@@ -390,6 +390,17 @@ class GoalStore:
             if self.api_key:
                 summary = summary.replace(self.api_key, "[密钥已隐藏]")
                 blocker = blocker.replace(self.api_key, "[密钥已隐藏]") if blocker else blocker
+            if state=='complete' and getattr(self,'coordination_path',None) is not None:
+                from nailong.core.preferences import read_config
+                try:
+                    coordination=read_config(self.coordination_path,self.coordination_path.parent)
+                    if self.coordination_path.exists() and (coordination.get('version')!=1 or coordination.get('project')!=str(self.project_root) or not isinstance(coordination.get('leases'),dict)):
+                        raise ValueError('协调状态身份无效。')
+                    rows=coordination.get('dispatches',{})
+                    if not isinstance(rows,dict) or any(row.get('goal_id')==goal.id and row.get('state') in {'queued','admitted','running','needs_reconciliation'} for row in rows.values()):
+                        return False,'仍有未完成或待核对的派发，不能完成整体目标。',goal
+                except (ValueError,OSError,TypeError,AttributeError):
+                    return False,'无法核对派发控制状态，未完成整体目标。',goal
             task_identity = None
             current = None
             if state == 'complete' and self.task_store is not None:

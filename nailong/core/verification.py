@@ -243,6 +243,9 @@ class VerificationService:
                             current_permission=engine.decide_action('run_command',action['args'],mode=permission_mode)
                             still_allowed=(current_permission.decision == Decision.ALLOW or
                                 decision.decision == Decision.ASK and current_permission == decision)
+                            from nailong.core.session_coordination import active_dispatch
+                            dispatch=active_dispatch.get()
+                            if dispatch:dispatch[0].guard(dispatch[1])
                             if not (task_matches and same_configuration and unchanged and still_allowed):
                                 result={'ok':False,'started':False,'exit_code':None,'timed_out':False,'observed':None,
                                     'error_code':'approval_invalidated','output':'审批绑定的输入、任务、配置或权限已变化；未启动。'}

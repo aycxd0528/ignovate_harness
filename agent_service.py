@@ -949,6 +949,10 @@ class AgentService:
                 data = {**data, "model": model,
                         "provider_host": urlsplit(settings.api_base).hostname,
                         "price_snapshot": data.get("price_snapshot") or getattr(self.runtime_factory,"active_price_snapshot",None) or CostEstimator(model, settings.project_root).snapshot()}
+        from nailong.core.session_coordination import active_dispatch
+        dispatched=active_dispatch.get()
+        if dispatched and thread_id==dispatched[1]['target']:
+            data={**data,'dispatch_id':dispatched[1]['request_id'],'run_id':dispatched[1]['run_id']}
         safe_data = self._redact_tree(data)
         if thread_id and self.session_store is not None:
             if kind == "token":
@@ -1121,6 +1125,9 @@ class AgentService:
     async def stream_turn(self, message, config, **kwargs):
         """Settle an explicit coordinator turn and all its workers once."""
         thread=config.get('configurable',{}).get('thread_id')
+        if self.session_store and thread and kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message'):
+            from nailong.core.session_policy import session_mode
+            session_mode(self.session_store,thread,self.permission_mode)
         goals=getattr(self.runtime_factory,'goal_store',None)
         goal=goals.active() if goals and not kwargs.get('pin_message') and kwargs.get('cost_budget') is None else None
         owned=goal is not None and goal.thread_id==thread and (task_request_kind(message) in {'work','resume'} or bool(re.search(r'接管|协调|coordinate',message,re.I)))
@@ -1130,13 +1137,23 @@ class AgentService:
             budget=GoalCostBudget(CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),goal.max_cost_usd-goal.spent_usd)
             kwargs={**kwargs,'cost_budget':budget}
         run_id=uuid.uuid4().hex
+        if budget is not None:budget.goal_round_id='outer:'+run_id
+        from nailong.core.task_intake import user_request
+        live_request={'thread_id':thread,'text':kwargs.get('history_display') or message,'turn_id':run_id} if kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message') else None
         stream=self._stream_task_turn(message,config,**kwargs)
         finished=False
         try:
-            async for event in stream:yield event
+            while True:
+                token=user_request.set(live_request)
+                try:event=await anext(stream)
+                except StopAsyncIteration:break
+                finally:user_request.reset(token)
+                yield event
             finished=True
         finally:
-            await stream.aclose()
+            token=user_request.set(live_request)
+            try:await stream.aclose()
+            finally:user_request.reset(token)
             if budget is not None:
                 goals.record_round(goal.id,cost_usd=budget.spent,files_changed=False,tool_calls=0,
                     summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
@@ -1149,8 +1166,13 @@ class AgentService:
         thread_id=config.get('configurable',{}).get('thread_id')
         ordinary=kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message')
         intake=TaskIntake(self.task_store,thread_id) if ordinary and self.task_store and thread_id else None
-        token=user_request.set({'thread_id':thread_id,'text':kwargs.get('history_display') or message,'turn_id':uuid.uuid4().hex}) if intake else None
         intent=None
+        if intake and (self.session_store.root/'coordination.json').exists():
+            from nailong.core.session_coordination import SessionCoordination
+            from nailong.core.capabilities import is_greeting
+            text=kwargs.get('history_display') or message
+            if not is_greeting(text) and task_request_kind(text)!='status':
+                SessionCoordination(self.runtime_factory,thread_id).intervene(thread_id,source_changed=task_request_kind(text)=='work')
         if intake:
             task=self.task_store.snapshot(thread_id)
             latest=self.runtime_factory.goal_store.latest() if hasattr(self.runtime_factory,'goal_store') else None
@@ -1161,11 +1183,9 @@ class AgentService:
                         self.runtime_factory.goal_store.update(latest.id,state='paused',summary='用户要求暂停。',thread_id=thread_id)
                         self.task_store.set_state(thread_id,lifecycle='paused',progress='用户要求暂停。')
                         yield self._event(thread_id,'notice',{'text':'任务已暂停，进度与费用已保留。'})
-                    user_request.reset(token)
                     return
                 if task_request_kind(text)=='resume' and latest.state=='paused':
                     ok,reason,latest=self.runtime_factory.goal_store.resume(latest.id,thread_id=thread_id)
-                    user_request.reset(token)
                     if not ok:
                         yield self._event(thread_id,'notice',{'text':reason})
                         return
@@ -1179,21 +1199,20 @@ class AgentService:
                         async for event in events:yield event
                     finally:await events.aclose()
                     return
-        try:
-            with project_execution(self.session_store):
-                stream=self._stream_turn_unlocked(message,config,**kwargs)
-                try:
-                    async for event in stream:yield event
-                finally:await stream.aclose()
-                if intake:
-                    brief=intake.present()
-                    if brief:
-                        yield self._event(thread_id,'notice',{'text':brief})
-                    intent=intake.consume()
-        finally:
-            if token is not None:user_request.reset(token)
+        with project_execution(self.session_store):
+            stream=self._stream_turn_unlocked(message,config,**kwargs)
+            try:
+                async for event in stream:yield event
+            finally:await stream.aclose()
+            if intake:
+                brief=intake.present()
+                if brief:
+                    yield self._event(thread_id,'notice',{'text':brief})
+                intent=intake.consume()
         from nailong.core.session_coordination import SessionCoordination, active_dispatch
-        if self.session_store is not None and thread_id and active_dispatch.get() is None and (self.session_store.root/'coordination.json').exists():
+        from nailong.core.capabilities import is_greeting
+        dispatch_turn=kwargs.get('pin_message')=='goal' or not kwargs.get('pin_message') and not is_greeting(message) and task_request_kind(message)!='status'
+        if dispatch_turn and self.session_store is not None and thread_id and active_dispatch.get() is None and (self.session_store.root/'coordination.json').exists():
             coordinator=SessionCoordination(self.runtime_factory,thread_id)
             events=coordinator.drain(self,approval=kwargs.get('approval_handler'),cost_budget=kwargs.get('cost_budget'))
             try:
@@ -1315,7 +1334,9 @@ class AgentService:
         initial_step = await self._graph_step_async(agent, config)
         boundary_messages = await self._messages_at_boundary_async(agent, config)
         boundary_ids = [str(m.id) for m in boundary_messages if getattr(m, 'id', None)]
-        turn_id = uuid.uuid4().hex
+        from nailong.core.task_intake import user_request
+        live=user_request.get()
+        turn_id = live['turn_id'] if live and live.get('thread_id')==thread_id else uuid.uuid4().hex
         tool_ledger = TurnToolLedger(boundary_messages, turn_id)
         review_collector = (await self._prepare_review(agent, config, participating_task)
             if profile == 'review' and participating_task is not None else None)

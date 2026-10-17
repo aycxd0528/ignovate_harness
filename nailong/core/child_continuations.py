@@ -23,7 +23,13 @@ class ChildContinuations:
             raise ValueError('子任务记录损坏或属于其他项目。')
         return data
 
-    def _write(self,data):atomic_json(self.path,data,self.sessions.root)
+    def _write(self,data):
+        import json
+        wire=json.dumps(data,ensure_ascii=False,allow_nan=False)
+        secret=getattr(self.sessions,'api_key','')
+        if secret:wire=wire.replace(secret,'[密钥已隐藏]')
+        if len(wire.encode())>900000:raise ValueError('子任务记录超过安全存储上限，请归档。')
+        atomic_json(self.path,json.loads(wire),self.sessions.root)
 
     async def run(self,runner,thread_id,prompt,resume_reference=''):
         self.sessions.session_path(thread_id)
