@@ -29,9 +29,10 @@ def terminal_capabilities():
 
 
 def usage_snapshot(store,thread_id):
+    from nailong.core.usage_projection import canonical_usage_events
     totals={key:0 for key in ('input_tokens','cache_hit_tokens','output_tokens')}
     cost=0.; complete=True; usage_complete=True; calls=0; models=set()
-    for event in store.read_events(thread_id) if store else []:
+    for event in canonical_usage_events(store.read_events(thread_id) if store else []):
         if event.get('kind')=='usage_missing': usage_complete=False; complete=False
         if event.get('kind')!='usage': continue
         data=event.get('data',{})
@@ -54,6 +55,7 @@ def usage_snapshot(store,thread_id):
                 if value is None or isinstance(value,bool) or int(value)<0 or (isinstance(value,float) and not value.is_integer()):
                     raise ValueError('无效用量')
                 values[key]=int(value)
+            values['cache_hit_tokens']=min(values['input_tokens'],values['cache_hit_tokens'])
             for key in totals: totals[key]+=values[key]
         except (ValueError,TypeError,OverflowError): usage_complete=False; complete=False; continue
         if data.get('model'): models.add(data['model'])

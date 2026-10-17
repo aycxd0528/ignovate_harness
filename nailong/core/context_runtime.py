@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from collections import OrderedDict
 from contextlib import contextmanager
 from copy import deepcopy
@@ -507,6 +508,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         self._metrics['total_ms']=(perf_counter()-started)*1000
         snapshot['performance']={'preflight':deepcopy(self._preflight_performance),
                                  'request':deepcopy(self._metrics),'cache':self._estimate_cache.snapshot()}
+        snapshot['request_id']=uuid.uuid4().hex
         if self.thread_id and self.profile!='subagent': self.reports[self.thread_id]=snapshot
         self._record('context_request',snapshot)
         return request,snapshot
@@ -687,9 +689,11 @@ class ContextManagerMiddleware(AgentMiddleware):
 
     def _settle(self,response,snapshot):
         usage=None
+        model_call_id=None
         for message in response.result:
             if getattr(message,'type',None)=='ai':
                 usage=message_usage(message)
+                model_call_id=message.response_metadata.get('nailong_model_call_id')
                 if self.capability_view is not None:
                     message.response_metadata['nailong_actual_bound_tools']=list(snapshot['tools'])
         actual=usage['input_tokens'] if usage else None
@@ -697,6 +701,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         if actual is not None:
             self.calibration.observe(self.settings.model,self.provider,snapshot['raw_estimated_tokens'],actual)
         self._record('context_result',{'actual_main_input_tokens':actual,'profile':self.profile,'model':self.settings.model,
+            'request_id':snapshot.get('request_id'),'model_call_id':model_call_id,
             'provider_host':self.provider,'raw_estimated_tokens':snapshot['raw_estimated_tokens'],
             'calibration_factor':self.calibration.factor_for(self.settings.model,self.provider)})
 

@@ -103,32 +103,40 @@ class CommandController:
             return "\n".join(f"${skill.name}  [{skill.source}] {skill.description}" for skill in skills) + "\n输入 $名称 <任务> 使用 Skill；新增 Skill 后重新启动程序。"
         if command == "/context":
             context = service.get_context_summary(thread_id)
-            return (
+            text = (
                 f"当前上下文约 {context['estimated_tokens']} tokens，"
                 f"{context['message_count']} 条消息、{context['user_turns']} 个用户回合，"
                 f"{context['pinned_messages']} 条固定消息。自动压缩阈值为 "
                 f"{service.compact_threshold_tokens} tokens。"
             )
+            from nailong.core.usage_projection import usage_projection
+            store = getattr(service, 'session_store', None)
+            latest = usage_projection(store.read_events(thread_id) if store else [])['last_turn']
+            if latest is not None:
+                actual = latest['actual']
+                text += (f"\n本轮实际已知用量：输入 {actual['input_tokens']}（其中缓存 {actual['cache_hit_tokens']}）/ "
+                         f"输出 {actual['output_tokens']} / 合计 {actual['total_tokens']} tokens。")
+                if not actual['usage_complete']:
+                    text += ' 部分调用用量未知。'
+            labels = {'base_system':'系统','fixed_memory':'固定记忆','skill_catalog':'Skill 目录',
+                      'tool_definitions':'工具定义','loaded_skills':'已加载 Skills','tool_results':'工具结果',
+                      'history':'历史','task_context':'任务投影','reasoning':'推理','framing':'消息封装'}
+            if context.get('categories'):
+                text += '\n分类估算（不是实际分项计费）：' + ' / '.join(
+                    f"{labels.get(name,name)} {row.get('tokens',0)}" for name,row in context['categories'].items())
+            return text
         if command == "/cost":
-            usage = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
-            estimated = False
             store = getattr(service, "session_store", None)
-            for record in store.read_events(thread_id) if store is not None else []:
-                if record.get("kind") == "usage_missing":
-                    estimated = True
-                if record.get("kind") != "usage":
-                    continue
-                data = record.get("data") or {}
-                estimated |= bool(data.get("estimated"))
-                for key in usage:
-                    usage[key] += max(0, int(data.get(key, 0) or 0))
+            from nailong.core.diagnostics import usage_snapshot
+            usage = usage_snapshot(store,thread_id)
+            estimated = not usage['usage_complete']
             total = usage["input_tokens"] + usage["output_tokens"]
             text = (f"会话用量（含子代理）：输入 {usage['input_tokens']}（缓存命中 {usage['cache_hit_tokens']}）/ "
                     f"输出 {usage['output_tokens']} / 合计 {total} tokens")
-            if self.cost_estimator.available:
-                text += f"；按配置单价估算约 ${self.cost_estimator.estimate(usage):.6f}。"
+            if usage['cost_usd'] is not None:
+                text += f"；按各次调用记录的单价估算约 ${usage['cost_usd']:.6f}。"
             else:
-                text += f"；模型 {self.settings.model} 未配置价格，费用未估算。"
+                text += '；部分调用缺少调用时价格或完整用量，费用未估算。'
             if estimated:
                 text += " 部分调用缺少完整用量，统计可能不完整。"
             return text

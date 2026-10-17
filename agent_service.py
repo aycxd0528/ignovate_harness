@@ -862,6 +862,10 @@ class AgentService:
             history.append((role, content))
         return history
 
+    def get_usage_summary(self, thread_id: str) -> dict:
+        from nailong.core.usage_projection import usage_projection
+        return usage_projection(self.session_store.read_events(thread_id) if self.session_store else [])
+
     def get_context_summary(self, thread_id: str) -> dict:
         """Return a non-secret estimate of the saved conversation context."""
         reports=getattr(self.runtime_factory,'context_reports',{})
@@ -1307,7 +1311,10 @@ class AgentService:
                     continue
                 emitted_model_call_ids.add(identity)
                 if info['usage'] is not None:
-                    events.append(self._event(thread_id, 'usage', {**info['usage'], 'model_call_id': identity}))
+                    events.append(self._event(thread_id, 'usage', {**info['usage'], 'model_call_id': identity,
+                        'scope':'main','turn_id':turn_id,
+                        **({'task_id':participating_task['task_id'],'task_revision':participating_task['revision']}
+                           if participating_task is not None else {})}))
                 else:
                     events.append(self._event(thread_id, 'usage_missing', {'scope': 'main', 'model_call_id': identity}))
             return events

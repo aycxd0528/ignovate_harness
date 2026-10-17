@@ -400,12 +400,18 @@ async def run_print(
         "budget_limit": 2,
         "configuration_error": 3,
     }[status]
+    usage_details = None
+    if service is not None and callable(getattr(service,'get_usage_summary',None)):
+        usage_details = service.get_usage_summary(thread_id)
+        if usage_details.get('last_turn') is not None:
+            totals = {key:usage_details['cumulative'][key] for key in totals}
     payload = _safe_tree(
         {
             "session_id": thread_id,
             "status": status,
             "result": result_text,
             "usage": totals,
+            'usage_details': usage_details,
             "tools": tools,
             "approvals": approvals,
             "goal": (

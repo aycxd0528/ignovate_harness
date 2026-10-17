@@ -850,7 +850,9 @@ class GUIController:
             except (ValueError, OSError):
                 result['delivery']['status'] = 'unknown'
         from nailong.gui.presentation import artifact_cards
-        return self.safe({**result,'artifacts':artifact_cards(result), 'events': events})
+        from nailong.core.diagnostics import usage_snapshot
+        return self.safe({**result,'artifacts':artifact_cards(result), 'events': events,
+                          'session_usage':usage_snapshot(self.sessions,node['thread_id'])})
 
     async def _fork(self, payload, *, target_branch_id=None, target_thread_id=None):
         branch = self.branches.branch(payload['branch_id'])

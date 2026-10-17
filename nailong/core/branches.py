@@ -124,6 +124,8 @@ def project_turn(node, events):
     from nailong.core.diagnostics import usage_snapshot
     prompt, answer, tokens, tools = '', '', [], {}
     native_usage = usage_snapshot(SimpleNamespace(read_events=lambda _: events), node['thread_id'])
+    from nailong.core.usage_projection import usage_projection
+    usage_details = usage_projection(events)
     usage = {**native_usage, 'complete': bool(native_usage['calls']) and native_usage['usage_complete']}
     if not usage['complete']:
         usage['cost_usd'] = None
@@ -152,7 +154,8 @@ def project_turn(node, events):
         if tool['status']=='running' and node.get('status') not in {'running','waiting_approval'}:
             tool['status']='unknown' if node.get('status')=='completed' else 'interrupted'
     return {**node, 'prompt': prompt, 'answer': answer or ''.join(tokens), 'tools': list(tools.values()),
-            'usage': usage, 'delivery': delivery, 'timing':turn_timing(events), 'recoverable': bool(node.get('checkpoint_id'))}
+            'usage': usage, 'usage_details': usage_details, 'delivery': delivery,
+            'timing':turn_timing(events), 'recoverable': bool(node.get('checkpoint_id'))}
 
 
 class BranchStore:

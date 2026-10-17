@@ -15,6 +15,7 @@ async function startWorkbench() {
   const { $, el, button, icon, iconButton, field, selectField, modal, prose, badge, toast, statusLabel, download, installTooltips, closePopover, openPopover, choicePopover } = await import('./ui.js');
   const { createMap,reconcileMapDraft } = await import('./map.js');
   const {createTrace}=await import('./trace.js');
+  const {renderUsageDetails}=await import('./usage-details.js');
   const { permissionGlyph,permissionIcon } = await import('./icons.js');
   const {renderTurn,renderLive,updateLive,renderArtifacts,installRuntimeClock,elapsedText,configureConversation,conversationPresentation}=await import('./conversation.js');
   const {createPlugins}=await import('./plugins.js');
@@ -517,7 +518,7 @@ async function inspectNode(node) {
     }),toolDetails(detail.tools));
   inspector.append(button('在聊天中打开',()=>{selectBranch(node.branch_id,node.id);switchView('chat');},'text-button'));
   const info=el('dl','facts');for(const [label,value] of [['处理时间',elapsedText(detail.timing?.elapsed_ms)],['验证',statusLabel(detail.delivery.status)],['用量',detail.usage.complete?`${detail.usage.input_tokens} 输入 / ${detail.usage.output_tokens} 输出`:'未知 / 不完整'],['费用',detail.usage.cost_usd!=null?'$'+detail.usage.cost_usd.toFixed(5):'未知'],['checkpoint',detail.checkpoint_id||'不可恢复']]){info.append(el('dt','',label),el('dd','',value));}
-  inspector.append(info,button('核对当前证据',()=>inspectNode(node),'text-button'),button('查看当前工作区',workspace,'secondary'),button('运行已配置验证',()=>verify(node.branch_id),'text-button'));
+  inspector.append(info,renderUsageDetails(detail),button('核对当前证据',()=>inspectNode(node),'text-button'),button('查看当前工作区',workspace,'secondary'),button('运行已配置验证',()=>verify(node.branch_id),'text-button'));
   const events=el('details','tool-details');events.append(el('summary','','原始执行事件'),el('pre','tool-output',JSON.stringify(detail.events.filter(event=>!['user','token','final'].includes(event.kind)),null,2)));inspector.append(events);
 }
 async function quote(node) {
