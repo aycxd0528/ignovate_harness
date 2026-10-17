@@ -248,6 +248,9 @@ class ToolExecutionContext:
             if task is not None and (task.get('thread_id') != thread
                     or Path(task['project_root']).resolve() != self.project_root):
                 raise ValueError('任务阶段策略不属于调用项目或会话。')
+            intake=(task or {}).get('intake',{})
+            if intake and (intake.get('stage') in {'clarifying','ready'} or intake.get('pending_start')) and not spec.read_only and spec.name not in {'prepare_task','start_task','update_goal'}:
+                return failure('task_not_started','需求澄清或启动交接中，尚不能执行文件或命令操作。',started=False)
             from nailong.core.stage_constraints import compile_stage_policy
             return compile_stage_policy(task).check(spec.name, arguments)
         except (ValueError, OSError, RuntimeError, KeyError, TypeError):

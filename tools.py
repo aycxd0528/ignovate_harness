@@ -134,6 +134,7 @@ def build_tools(
     mcp_manager=None,
     task_history=None,
     capability_catalog=None,
+    task_intake=None,
 ) -> list[BaseTool]:
     """Build an ordered, profile-scoped set of registered tools."""
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
@@ -160,6 +161,7 @@ def build_tools(
             result_store=execution.artifacts,
             task_history=task_history,
             capability_catalog=capability_catalog,
+            task_intake=task_intake,
         )
 
     def validation_error(error):

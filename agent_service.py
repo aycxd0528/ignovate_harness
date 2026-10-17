@@ -368,7 +368,9 @@ class AgentService:
             self.task_store.reset_progress(thread_id)
         if profile in {'chat', 'init'}:
             from nailong.core.verification import VerificationService
-            steps = VerificationService(self.permission_engine.project_root, self.session_store).list_steps()
+            intake=(self.task_store.snapshot(thread_id) or {}).get('intake',{})
+            steps = VerificationService(self.permission_engine.project_root, self.session_store,
+                steps_override=intake.get('verification') if intake.get('stage')=='executing' and intake.get('verification') else None).list_steps()
             self.task_store.configure_verification(thread_id, steps)
         if profile == 'review':
             current = self.task_store.snapshot(thread_id)
@@ -1111,15 +1113,72 @@ class AgentService:
         return messages
 
     async def stream_turn(self, message, config, **kwargs):
-        """Serialize execution across all clients using this project store."""
+        """One outer adapter for GUI, CLI and headless natural task continuation."""
         from nailong.core.project_execution import project_execution
-        with project_execution(self.session_store):
-            stream = self._stream_turn_unlocked(message, config, **kwargs)
+        from nailong.core.task_intake import TaskIntake, user_request
+        thread_id=config.get('configurable',{}).get('thread_id')
+        ordinary=kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message')
+        intake=TaskIntake(self.task_store,thread_id) if ordinary and self.task_store and thread_id else None
+        token=user_request.set({'thread_id':thread_id,'text':kwargs.get('history_display') or message,'turn_id':uuid.uuid4().hex}) if intake else None
+        intent=None
+        if intake:
+            task=self.task_store.snapshot(thread_id)
+            latest=self.runtime_factory.goal_store.latest() if hasattr(self.runtime_factory,'goal_store') else None
+            if latest and latest.thread_id==thread_id and (task or {}).get('intake',{}).get('stage')=='executing':
+                text=(kwargs.get('history_display') or message).strip().strip('。.!！')
+                if text in {'暂停','暂停任务','暂停执行','停止执行','先停一下'}:
+                    with project_execution(self.session_store):
+                        self.runtime_factory.goal_store.update(latest.id,state='paused',summary='用户要求暂停。',thread_id=thread_id)
+                        self.task_store.set_state(thread_id,lifecycle='paused',progress='用户要求暂停。')
+                        yield self._event(thread_id,'notice',{'text':'任务已暂停，进度与费用已保留。'})
+                    user_request.reset(token)
+                    return
+                if task_request_kind(text)=='resume' and latest.state=='paused':
+                    ok,reason,latest=self.runtime_factory.goal_store.resume(latest.id,thread_id=thread_id)
+                    user_request.reset(token)
+                    if not ok:
+                        yield self._event(thread_id,'notice',{'text':reason})
+                        return
+                    self.task_store.set_state(thread_id,lifecycle='active')
+                    from nailong.core.costs import CostEstimator
+                    from ui.flows import stream_goal
+                    events=stream_goal(self,self.runtime_factory,self.runtime_factory.goal_store,
+                        CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),latest,
+                        thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'))
+                    try:
+                        async for event in events:yield event
+                    finally:await events.aclose()
+                    return
+        try:
+            with project_execution(self.session_store):
+                stream=self._stream_turn_unlocked(message,config,**kwargs)
+                try:
+                    async for event in stream:yield event
+                finally:await stream.aclose()
+                if intake:
+                    brief=intake.present()
+                    if brief:
+                        yield self._event(thread_id,'notice',{'text':brief})
+                    intent=intake.consume()
+        finally:
+            if token is not None:user_request.reset(token)
+        if intent:
+            from nailong.core.costs import CostEstimator
+            from ui.flows import stream_goal
+            factory=self.runtime_factory
+            goals=factory.goal_store
+            existing=goals.active()
+            if existing and existing.thread_id!=thread_id:
+                self.task_store.set_state(thread_id,lifecycle='paused',progress='其他会话的目标仍在执行。')
+                yield self._event(thread_id,'notice',{'text':'其他会话的目标仍在执行，当前任务已保存，请稍后继续。'})
+                return
+            goal=existing or goals.create(intent['objective'],thread_id=thread_id,
+                max_rounds=intent['max_rounds'],max_cost_usd=intent['max_cost_usd'])
+            events=stream_goal(self,factory,goals,CostEstimator(factory.settings.model,factory.settings.project_root),goal,
+                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'))
             try:
-                async for event in stream:
-                    yield event
-            finally:
-                await stream.aclose()
+                async for event in events:yield event
+            finally:await events.aclose()
 
     async def _stream_turn_unlocked(
         self,

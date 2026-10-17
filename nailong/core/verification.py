@@ -89,17 +89,24 @@ def input_fingerprint(root, generated=()):
 
 
 class VerificationService:
-    def __init__(self, project_root, session_store, goal_store=None, *, api_key='', task_store=None):
+    def __init__(self, project_root, session_store, goal_store=None, *, api_key='', task_store=None, steps_override=None):
         self.root=Path(project_root).resolve()
         self.store=session_store; self.goals=goal_store; self.api_key=api_key
         self.tasks=task_store
+        self.steps_override=steps_override
 
     def list_steps(self):
+        if self.steps_override is not None:
+            return self.validate_steps(self.steps_override,root=self.root)
         config=read_config(self.root/'.nailong/settings.json',self.root)
         verification=config.get('verification',{})
         if not isinstance(verification,dict): raise ValueError('verification 必须是对象。')
         if set(verification)-{'steps'}: raise ValueError('verification 包含未知字段。')
         steps=verification.get('steps',[])
+        return self.validate_steps(steps,root=self.root)
+
+    @staticmethod
+    def validate_steps(steps, *, root=None):
         if not isinstance(steps,list) or len(steps)>30: raise ValueError('verification.steps 必须是至多 30 项的数组。')
         names=set(); validated=[]
         for step in steps:
@@ -134,7 +141,7 @@ class VerificationService:
                     raise ValueError('生成物必须是项目内相对路径。')
                 if not Path(raw).parts or Path(raw).parts[0] in {'.','.nailong','AGENTS.md','CLAUDE.md'} or FileSession._is_protected(Path(raw).parts[0]):
                     raise ValueError('生成物不能排除配置或记忆。')
-                safe_config_path(self.root/raw,self.root)
+                if root is not None:safe_config_path(Path(root)/raw,Path(root))
             validated.append({**step,'timeout_seconds':timeout,'generated_paths':generated})
         return validated
 
@@ -282,6 +289,10 @@ async def verify_goal_if_configured(service,factory,goal,thread_id,*,approval=No
     if settings is None or getattr(factory,'goal_store',None) is None: return None
     verification=VerificationService(settings.project_root,getattr(service,'session_store',None),factory.goal_store,
         api_key=settings.api_key,task_store=getattr(factory,'task_store',None))
+    task=verification.tasks.snapshot(thread_id) if verification.tasks else None
+    intake=(task or {}).get('intake',{})
+    if intake.get('stage')=='executing' and intake.get('verification'):
+        verification.steps_override=intake['verification']
     if not verification.list_steps(): return None
     current=factory.goal_store.get(goal.id)
     if current is None or current.state!='active': return None

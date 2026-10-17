@@ -23,7 +23,7 @@ GROUPS = {'read': READ, '读取': READ, '搜索': READ, '文件': READ,
           '记忆': frozenset({'memory_list', 'memory_read', 'read_memory'}),
           'history': frozenset({'read_history_result', 'read_task_context'}),
           '历史': frozenset({'read_history_result', 'read_task_context'}),
-          'task': frozenset({'task', 'update_goal'}), '子代理': frozenset({'task'})}
+          'task': frozenset({'task', 'update_goal', 'prepare_task', 'start_task'}), '子代理': frozenset({'task'})}
 
 
 def merge_loads(previous, updates):
@@ -75,10 +75,10 @@ class CapabilityCatalog:
         if not isinstance(query, str) or len(query) > 4096 or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 10:
             return failure('invalid_parameters', '查询需为文本，offset>=0，limit 为 1–10。')
         query = query.strip().casefold()
-        if query in self.tools:
-            candidates = [query]
-        elif query in GROUPS:
+        if query in GROUPS:
             candidates = sorted(GROUPS[query] & self.tools.keys())
+        elif query in self.tools:
+            candidates = [query]
         else:
             terms = query.split()
             candidates = sorted(name for name, tool in self.tools.items()
@@ -107,6 +107,9 @@ class CapabilityCatalog:
             task = self.task_provider() if self.task_provider is not None else None
             if task or task_request_kind(text) == 'work' or (user and user.additional_kwargs.get('nailong_pin')):
                 names.update(READ | EDIT)
+                if task and task.get('intake',{}).get('stage') in {'clarifying','ready'}:
+                    names.difference_update(EDIT)
+                names.update({'prepare_task','start_task'})
             if user and user.additional_kwargs.get('nailong_pin') == 'goal':
                 names.update({'update_goal', 'task', 'read_task_context'})
             if re.search(r'子代理|subagent|委派', text, re.IGNORECASE):
@@ -131,7 +134,8 @@ class CapabilityCatalog:
                 prompt += ('需要项目能力时用 discover_tools 按工具名或 read/edit/run/memory/history/task 搜索，'
                            '下一次请求才可调用已发现工具；执行仍受运行时权限检查。'
                            '需要 Skill 时先 search_skills，再发现 load_skill 按名称加载。'
-                           '明确实施请求需完成修改与必要验证；模糊需求先澄清。')
+                           '明确实施请求需完成修改与必要验证；模糊需求先发现 task 组，用 prepare_task 记录需求和待确认问题。'
+                           '用户确认草案并要求实施后用 start_task 启动同会话持续执行。')
             parts = {'base_system': prompt, 'fixed_memory': '', 'skill_catalog': ''}
         return {'tools': tools, 'parts': parts, 'include_task': substantive, 'include_environment': substantive}
 

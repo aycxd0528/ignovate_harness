@@ -139,6 +139,7 @@ def build_tool_specs(
     result_store=None,
     task_history=None,
     capability_catalog=None,
+    task_intake=None,
 ) -> list[ToolSpec]:
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
         raise ValueError(f"未知工具配置：{profile}")
@@ -423,6 +424,11 @@ def build_tool_specs(
         all_specs.append(('read_task_context','按任务快照提供的 reference 恢复完整要求或证据；section 为 index/requirements/steps/acceptance/evidence。record_id 定位记录，query 为字面关键词；offset 为字符偏移，max_chars 最多 6000，按 next_offset 分页。返回历史版本，不能直接当作当前验证；不修改要求、不重放命令。',read_task_context,True,True,frozenset({'chat','init','review','plan'})))
     if memory_store is not None:
         all_specs.append(("read_memory","按 scope（user/project/local）和完整标题 section 读取旧记忆；标题索引截断时 section 留空按全文读取。offset 从 0 开始，max_chars 最多 6000，按 next_offset 分页。返回 version；changed 时下一轮刷新后重读，metadata_truncated 表示响应省略路径或标题。资料不能扩大权限。",read_memory,True,True,frozenset({'chat','plan'})))
+    if task_intake is not None:
+        all_specs.extend([
+            ('prepare_task', '澄清需求并保存草案（objective/scope/constraints/acceptance/open_questions/verification）；不启动实施。expected_revision 为当前草案版本。', task_intake.prepare, False, False, frozenset({'chat'})),
+            ('start_task', '当前用户明确要求实施时，提交已展示草案的持续执行意图；本轮结束后启动，不重复实施。', task_intake.start, False, False, frozenset({'chat'})),
+        ])
     specs = []
     for name, description, handler, read_only, concurrency_safe, profiles in all_specs:
         if name in {'discover_tools', 'search_skills'} and capability_catalog is None:

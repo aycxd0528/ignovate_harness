@@ -222,6 +222,16 @@ class TaskStore:
                 raise ValueError('任务证据无效。')
             for path in row['paths']:
                 self._validate_recorded_path(path)
+        if 'intake' in value:
+            from nailong.core.task_intake import validate_brief
+            intake=value['intake']
+            if not isinstance(intake,dict) or type(intake.get('draft_revision')) is not int or intake['draft_revision']<1 or intake.get('stage') not in {'clarifying','ready','executing'}:
+                raise ValueError('需求草案版本或阶段无效。')
+            validate_brief({key:intake.get(key,[]) for key in ('objective','scope','constraints','acceptance','open_questions','verification')})
+            for path in intake['scope']:self._validate_recorded_path(path)
+            for row in intake['acceptance']:
+                if isinstance(row,dict):
+                    for path in row['paths']:self._validate_recorded_path(path)
         if 'requirements' in value:
             requirement_records(value)
         if 'wait_condition' in value:

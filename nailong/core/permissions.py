@@ -292,6 +292,11 @@ class PermissionEngine:
                 "计划模式唯一允许的非只读工具：提交计划供用户审批。",
                 suggested_rule=suggested,
             )
+        if name in {'prepare_task','start_task'}:
+            from nailong.core.task_intake import is_native_intake
+            if is_native_intake(spec,self.project_root):
+                return PermissionResult(Decision.ALLOW,'仅修改当前需求草案；启动授权由原生任务入口检查。',suggested_rule=suggested)
+            return PermissionResult(Decision.DENY,'需求工具不是本项目的原生处理器。')
         if name == "update_goal":
             return PermissionResult(
                 Decision.ALLOW,
