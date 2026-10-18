@@ -116,6 +116,16 @@ class TaskQueryServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after['latest_request'], '请修改 source.py，增加边界检查')
         self.assertEqual(after['acceptance'][0]['status'], 'stale')
 
+    async def test_explicit_implementation_authorization_resumes_paused_requirements(self):
+        self.tasks.set_state('owner', lifecycle='paused', blockers=['模型输出截断'])
+        before = self.tasks.snapshot('owner')
+        request = '现在授权按你的方案实现，并增加必要的回归测试。完成后运行测试并保留结果。'
+        after = await self.service._begin_task('owner', request, 'chat')
+        self.assertEqual(after['lifecycle'], 'active')
+        self.assertEqual(after['revision'], before['revision'] + 1)
+        self.assertEqual(after['latest_request'], request)
+        self.assertEqual(after['acceptance'][0]['status'], 'stale')
+
     async def test_simple_project_explanation_is_not_a_requirement_change(self):
         before = self.tasks.snapshot('owner')
         self.assertIsNone(await self.service._begin_task('owner', '介绍一下这个项目的上下文处理', 'chat'))

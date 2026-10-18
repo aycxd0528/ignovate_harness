@@ -10,7 +10,7 @@ from contextlib import aclosing, nullcontext
 from pathlib import Path
 
 from agent_service import TurnEvent
-from nailong.core.budgets import CostBudgetExceeded, GoalCostBudget
+from nailong.core.budgets import CostBudgetExceeded, GoalCostBudget, ScopedCostBudget
 from nailong.core.goal_control import assess_goal_progress, decide_goal_turn
 
 
@@ -184,14 +184,15 @@ async def _drive_goal(service, factory, goal_store, cost_estimator, goal, *, thr
 
 
 async def stream_goal(service, factory, goal_store, cost_estimator, goal, *, thread_id,
-                      status=None, approval=None, history_display=None, initial_visible=True):
+                      status=None, approval=None, history_display=None, initial_visible=True, cost_budget=None):
     """Incremental events in the caller's task, without a background lease."""
     lease=goal_store.driver_lease() if hasattr(goal_store,'driver_lease') else nullcontext()
     with lease:
         if hasattr(goal_store,'attach_thread'):
             goal=goal_store.attach_thread(goal.id,thread_id) or goal
         events=_goal_events(service,factory,goal_store,cost_estimator,goal,thread_id=thread_id,
-            emit=None,status=status,approval=approval,history_display=history_display,initial_visible=initial_visible)
+            emit=None,status=status,approval=approval,history_display=history_display,initial_visible=initial_visible,
+            cost_budget=cost_budget)
         try:
             async for event in events:
                 yield event
@@ -204,7 +205,7 @@ async def stream_goal(service, factory, goal_store, cost_estimator, goal, *, thr
 
 async def _goal_events(
     service, factory, goal_store, cost_estimator, goal, *, thread_id: str,
-    emit, status=None, approval=None, history_display: str | None = None, initial_visible=True,
+    emit, status=None, approval=None, history_display: str | None = None, initial_visible=True, cost_budget=None,
 ):
     """Advance a persisted goal while GoalStore enforces cost and round limits."""
     first_round = True
@@ -265,6 +266,8 @@ async def _goal_events(
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 40}
         budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd)
         budget.goal_round_id=round_id
+        if cost_budget is not None:
+            budget = ScopedCostBudget(budget, cost_budget)
         round_error = None
         stop_reason = ""
         progress = assess_goal_progress(before, None)

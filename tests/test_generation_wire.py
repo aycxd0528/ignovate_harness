@@ -38,6 +38,40 @@ def sse_completion(*, identity, text, reasoning, finish_reason, inputs, outputs,
 
 
 class GenerationWireTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cost_control_preserves_configured_reasoning_output_in_sdk_request(self):
+        from nailong.core.budgets import GoalCostBudget
+        from nailong.core.costs import CostEstimator
+
+        def replay(_request, _attempt):
+            return sse_completion(identity='cost-wire', text='完整计划', reasoning='Evidence checked.',
+                                  finish_reason='stop', inputs=100, outputs=50, cache=80, reasoning_tokens=30)
+
+        factory = self.factory(replay)
+        budget = GoalCostBudget(CostEstimator('deepseek-flash', self.root), .5)
+        events = [event async for event in AgentService(factory).stream_turn(
+            '请介绍当前项目并说明用途', self.config, allowed_tools=set(), cost_budget=budget)]
+        self.assertEqual(events[-1].data['text'], '完整计划')
+        self.assertEqual(len(self.requests), 1)
+        self.assertEqual(json.loads(self.requests[0].content)['max_tokens'], 131072)
+        self.assertEqual(budget.reserved, 0)
+
+    async def test_unfunded_full_generation_never_reaches_sdk_transport(self):
+        from nailong.core.budgets import CostBudgetExceeded, GoalCostBudget
+        from nailong.core.costs import CostEstimator
+
+        def replay(_request, _attempt):
+            return sse_completion(identity='unfunded', text='should not dispatch', reasoning='',
+                                  finish_reason='stop', inputs=100, outputs=5, cache=80, reasoning_tokens=0)
+
+        factory = self.factory(replay)
+        budget = GoalCostBudget(CostEstimator('deepseek-flash', self.root), .01)
+        with self.assertRaises(CostBudgetExceeded):
+            _events = [event async for event in AgentService(factory).stream_turn(
+                '请介绍当前项目并说明用途', self.config, allowed_tools=set(), cost_budget=budget)]
+        self.assertEqual(len(self.requests), 0)
+        self.assertEqual(budget.reserved, 0)
+        self.assertTrue(budget.stopped)
+
     async def asyncSetUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

@@ -291,6 +291,38 @@ class SharedTokenBudget:
             self._changed.notify_all()
 
 
+class ScopedCostBudget:
+    """Account each goal round locally while enforcing the caller's shared cap."""
+    def __init__(self, local, parent):
+        self.local, self.parent = local, parent
+
+    def __getattr__(self, name):
+        return getattr(self.local, name)
+
+    async def reserve(self, request):
+        parent_hold, parent_cap = await self.parent.reserve(request)
+        try:
+            local_hold, local_cap = await self.local.reserve(request)
+        except BaseException:
+            await self.parent.release(parent_hold)
+            raise
+        return (local_hold, parent_hold), min(local_cap, parent_cap)
+
+    async def release(self, reservation):
+        local_hold, parent_hold = reservation
+        try:
+            await self.local.release(local_hold)
+        finally:
+            await self.parent.release(parent_hold)
+
+    async def settle(self, reservation, messages=None):
+        local_hold, parent_hold = reservation
+        try:
+            await self.local.settle(local_hold, messages)
+        finally:
+            await self.parent.settle(parent_hold, messages)
+
+
 class GoalCostBudget:
     def __init__(self, estimator, remaining_usd: float):
         if not estimator.available:
@@ -306,16 +338,15 @@ class GoalCostBudget:
     async def reserve(self, request) -> tuple[float, int]:
         input_cost = self.estimator.estimate({"input_tokens": _input_bound(request)})
         configured = _configured_output(request)
-        output_cap = min(4_096, configured)
+        output_cap = configured
         output_price = self.estimator.price.output_per_million / 1_000_000
         async with self._lock:
             available = self.limit - self.spent - self.reserved - input_cost
-            if output_price > 0:
-                output_cap = min(output_cap, max(0, int(available / output_price)))
-            if self.stopped or available <= 0 or output_cap < min(64, int(configured)):
+            output_cost = output_cap * output_price
+            if self.stopped or available <= 0 or output_cost > available:
                 self.stopped = True
-                raise CostBudgetExceeded("剩余目标预算不足以预留下一次模型调用，目标已暂停。")
-            reservation = input_cost + output_cap * output_price
+                raise CostBudgetExceeded("剩余目标预算不足以按当前生成配置预留下一次模型调用，目标已暂停；输出额度未自动缩小。")
+            reservation = input_cost + output_cost
             self.reserved += reservation
             return reservation, output_cap
 

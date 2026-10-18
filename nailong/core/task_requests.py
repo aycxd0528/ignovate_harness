@@ -29,11 +29,36 @@ _NO_EXECUTION = re.compile(
     r'|(?:不要|禁止|暂不|先不|别)(?:再)?执行(?:任务|任何操作|任何任务)'
     r'|^(?:请)?(?:仅|只(?:需|要)?)(?:解释|说明|查询)'
 )
+_AUTHORIZED_WORK = re.compile(
+    r'^(?:我\s*)?(?:(?:请|现在|现已|正式|明确)\s*)*'
+    r'(?:授权|批准|同意)\s*(?:你|您)?\s*'
+    r'(?:(?:按|按照|依照|照)\s*(?:你|您)?的?\s*(?:方案|计划)\s*)?'
+    r'(?:(?:开始|继续)\s*)?'
+    r'(?:实现|实施|执行|修改|修复|重构|优化|测试|验证|创建|新增|编辑|构建|运行)'
+)
+
+
+def _live_request_text(message: str) -> str:
+    """Quoted prose, blockquotes and fenced examples cannot authorize work."""
+    lines, fence = [], None
+    for line in message.splitlines():
+        marker = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if marker:
+            delimiter = marker.group(1)
+            if fence is None:
+                fence = (delimiter[0], len(delimiter))
+            elif delimiter[0] == fence[0] and len(delimiter) >= fence[1]:
+                fence = None
+            continue
+        if fence is None and not line.lstrip().startswith('>'):
+            lines.append(line)
+    return re.sub(r'''“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`\n]*`''', '', '\n'.join(lines))
 
 
 def task_request_kind(message: str) -> str:
     """Match whole status questions; a mixed question/change request stays work."""
-    text = message.strip().rstrip('。.!！?？·').strip()
+    live = _live_request_text(message).strip()
+    text = live.rstrip('。.!！?？·').strip()
     if _STATUS.fullmatch(text):
         return 'status'
     if _NO_EXECUTION.search(text):
@@ -41,9 +66,14 @@ def task_request_kind(message: str) -> str:
     if explicit_new_task(text):return 'work'
     if text.casefold() in _RESUME:
         return 'resume'
+    if _AUTHORIZED_WORK.search(text) and (_QUESTION.search(live) or re.search(
+        r'吗|么|[?？]|不同意|不授权|未授权|(?:撤回|撤销|取消)授权|(?:不要|暂不|先不)(?:执行|实施)', live)):
+        return 'other'
     # A question about fixing/testing is not permission to resume that work.
-    for clause in re.split(r'[，,；;\n]', text):
-        if _WORK.search(clause.strip()) and not _QUESTION.search(clause):
+    for index, clause in enumerate(re.split(r'[，,；;\n]', text)):
+        authorization = (index == 0 and _AUTHORIZED_WORK.search(clause.strip())
+            and not re.search(r'吗|么|[?？]', re.split(r'[，,；;\n]', live)[0]))
+        if (_WORK.search(clause.strip()) or authorization) and not _QUESTION.search(clause):
             # An imperative may be politely phrased as a question ("请修改…可以吗？").
             if not clause.strip().endswith(('了吗', '了吗？', '了吗?', '了么', '了么？', '了么?')):
                 return 'work'

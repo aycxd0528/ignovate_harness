@@ -1160,7 +1160,7 @@ class AgentService:
             budget.outer_used=False
         from nailong.core.task_intake import user_request
         live_request={'thread_id':thread,'text':kwargs.get('history_display') or message,'turn_id':run_id} if kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message') else None
-        stream=self._stream_task_turn(message,config,**kwargs)
+        stream=self._stream_task_turn(message,config,goal_cost_budget=kwargs.get('cost_budget') if budget is None else None,**kwargs)
         finished=False
         try:
             while True:
@@ -1181,7 +1181,7 @@ class AgentService:
                     summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
                     stop_reason='本轮已取消或用量未知。' if not finished or not budget.usage_complete else None)
 
-    async def _stream_task_turn(self, message, config, **kwargs):
+    async def _stream_task_turn(self, message, config, *, goal_cost_budget=None, **kwargs):
         """One outer adapter for GUI, CLI and headless natural task continuation."""
         from nailong.core.project_execution import project_execution
         from nailong.core.task_intake import TaskIntake, user_request
@@ -1218,7 +1218,7 @@ class AgentService:
                     events=stream_goal(self,self.runtime_factory,self.runtime_factory.goal_store,
                         CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),latest,
                         thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),
-                        history_display=kwargs.get('history_display') or message)
+                        history_display=kwargs.get('history_display') or message,cost_budget=goal_cost_budget)
                     try:
                         async for event in events:yield event
                     finally:await events.aclose()
@@ -1281,7 +1281,8 @@ class AgentService:
                 current['intake']['goal_id']=goal.id
                 self.task_store._write(thread_id,current)
             events=stream_goal(self,factory,goals,CostEstimator(factory.settings.model,factory.settings.project_root),goal,
-                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),initial_visible=False)
+                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),initial_visible=False,
+                cost_budget=goal_cost_budget)
             try:
                 async for event in events:yield event
             finally:await events.aclose()

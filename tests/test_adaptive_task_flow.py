@@ -89,6 +89,36 @@ class GoalStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(saved.spent_usd,0)
 
 class NaturalIntakeTests(GoalStreamTests):
+    async def test_external_budget_accounts_for_natural_startup_and_goal_calls(self):
+        from nailong.core.budgets import GoalCostBudget
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        self.factory.model.responses=self.natural_file_responses()
+        budget=GoalCostBudget(self.estimator,.5)
+        events=[e async for e in self.service.stream_turn('请创建 output.txt 并持续推进',
+            {'configurable':{'thread_id':'natural'}},cost_budget=budget,
+            approval_handler=lambda *a:'approve_once')]
+        usage=[e.data for e in events if e.kind=='usage']
+        self.assertEqual(len(usage),5)
+        self.assertAlmostEqual(budget.spent,sum(self.estimator.estimate(u) for u in usage))
+        self.assertEqual(budget.reserved,0)
+
+    async def test_paused_natural_goal_cannot_bypass_zero_external_budget(self):
+        from nailong.core.budgets import GoalCostBudget
+        task=self.factory.task_store.begin('stream','研究项目')
+        task['intake']={'objective':'研究项目','scope':['.'],'constraints':[],'acceptance':[],
+            'open_questions':[],'verification':[],'draft_revision':1,'stage':'executing',
+            'presented_turn':'old','pending_start':None,'goal_id':self.goal.id,
+            'task_revision':task['revision']}
+        self.factory.task_store._write('stream',task)
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        budget=GoalCostBudget(self.estimator,0)
+        events=[e async for e in self.service.stream_turn('继续',
+            {'configurable':{'thread_id':'stream'}},cost_budget=budget,
+            approval_handler=lambda *a:'approve_once')]
+        self.assertFalse(any(e.kind=='usage' for e in events))
+        self.assertEqual(budget.spent,0)
+        self.assertEqual(self.goals.get(self.goal.id).state,'paused')
+
     async def test_draft_needs_live_user_authorization_and_current_presented_revision(self):
         from nailong.core.task_intake import TaskIntake, user_request
         intake=TaskIntake(self.factory.task_store,'natural')
