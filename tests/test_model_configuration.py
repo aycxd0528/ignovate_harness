@@ -384,11 +384,13 @@ class ModelPlainIntegrationTests(unittest.TestCase):
                 capture_output=True, text=True, timeout=15,
                 env={**os.environ, 'DEEPSEEK_API_KEY': 'fixture-key',
                      'DEEPSEEK_BASE_URL': 'https://api.invalid', 'DEEPSEEK_MODEL': 'deepseek-flash',
+                     'HOME': data, 'USERPROFILE': data, 'IGNOVATE_CONFIG_DIR': str(Path(data)/'config'),
                      'NAILONG_DATA_DIR': data, 'NO_COLOR': '1'})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('模型配置已保存', result.stdout)
             self.assertNotIn('已加入队列', result.stdout)
             saved = json.loads((Path(project)/'.nailong/settings.local.json').read_text())
+            self.assertIn('models', saved, result.stdout)
             self.assertEqual(saved['models'], {'pro': {'model': 'new-model'}})
             self.assertEqual(saved['model'], 'default')
 

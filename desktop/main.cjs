@@ -23,7 +23,9 @@ async function launch() {
   selectedProjects.add(project);
   const {python,pythonArgs}=runtimePaths({packaged:app.isPackaged,resourcesPath:process.resourcesPath,sourceRoot:root});
   const environment=app.isPackaged?{...process.env,PATH:path.join(process.resourcesPath,'tools')+path.delimiter+(process.env.PATH||'')}:process.env;
-  child = spawn(python, [...pythonArgs,'-m', 'nailong.gui', '--stdio', '--project', project], { cwd: app.isPackaged?project:root, env:environment, stdio: ['ignore','pipe','pipe'], windowsHide: true });
+  child = spawn(python, [...pythonArgs,'-m', 'nailong.gui', '--stdio', '--parent-pipe', '--project', project], { cwd: app.isPackaged?project:root, env:environment, stdio: ['pipe','pipe','pipe'], windowsHide: true });
+  child.stdin.on('error', () => {}); // Adapter may exit before the close request.
+  child.on('exit', () => { adapterExited=true;if(window&&!window.isDestroyed())window.webContents.send('kernel-exited'); });
   const url = await new Promise((resolve,reject) => {
     let pending = '';
     const timer = setTimeout(() => reject(new Error('Python adapter did not start within 30 seconds')), 30000);
@@ -65,7 +67,6 @@ async function launch() {
     backgroundColor: '#fbfcfd', webPreferences: { preload: path.join(__dirname,'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true } });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', (event, target) => { if(new URL(target).origin!==origin)event.preventDefault(); });
-  child.on('exit', () => { adapterExited=true;if(window&&!window.isDestroyed())window.webContents.send('kernel-exited'); });
   await window.loadURL(url);
 }
 app.on('window-all-closed', () => app.quit());
@@ -74,9 +75,9 @@ app.on('before-quit', event => {
   event.preventDefault();
   if(shuttingDown)return;
   shuttingDown=true;
-  // SIGTERM is handled by Python: cancellation joins tools before lease release.
+  // Join cancellation and SQLite writes before exit on Windows and macOS.
   const timer=setTimeout(()=>{if(!adapterExited)child.kill('SIGKILL');},20000);
   child.once('exit',()=>{clearTimeout(timer);adapterExited=true;app.quit();});
-  child.kill('SIGTERM');
+  if(!child.stdin.destroyed)child.stdin.end('shutdown\n');
 });
 launch().catch(async error => { await app.whenReady();dialog.showErrorBox('Ignovate 启动失败',error.message);if(child)child.kill();app.quit(); });

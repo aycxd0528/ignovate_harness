@@ -196,10 +196,10 @@ class NaturalIntakeTests(GoalStreamTests):
         self.assertEqual(self.factory.task_store.snapshot('natural')['intake']['stage'],'executing')
 
     async def test_failed_native_verification_repair_and_delivery_in_one_chat(self):
-        import shlex,sys
+        from platform_fixtures import python_command
         self.goals.update(self.goal.id,state='paused',summary='fixture idle',thread_id='stream')
         (self.root/'result.txt').write_text('bad')
-        command=shlex.quote(sys.executable)+' -c '+shlex.quote("from pathlib import Path; assert Path('result.txt').read_text()=='ok'")
+        command=python_command("from pathlib import Path; assert Path('result.txt').read_text()=='ok'")
         brief={'objective':'修复 result.txt 使验证通过','scope':['result.txt'],
             'acceptance':[{'description':'结果为 ok','step':'result','paths':['result.txt']}],
             'verification':[{'name':'result','kind':'test','command':command}]}

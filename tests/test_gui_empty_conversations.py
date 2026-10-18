@@ -2,6 +2,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from nailong.core.sessions import ProjectSessionStore
@@ -67,10 +68,35 @@ class EmptyConversationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_checkpoint_without_visible_messages_is_kept(self):
         branch = await self.controller.command('create', {})
-        with sqlite3.connect(self.sessions.database_path) as db:
+        with closing(sqlite3.connect(self.sessions.database_path)) as db:
             db.execute('CREATE TABLE checkpoints (thread_id TEXT)')
             db.execute('INSERT INTO checkpoints VALUES (?)', (branch['thread_id'],))
+            db.commit()
         self.assertEqual((await self.controller.command('prune_empty', {}))['removed'], [])
+
+    async def test_checkpoint_inspection_releases_its_database_handles(self):
+        from unittest.mock import patch
+        from nailong.gui.empty_conversations import empty_branch_ids
+        with closing(sqlite3.connect(self.sessions.database_path)) as db:
+            db.execute('CREATE TABLE checkpoints (thread_id TEXT)')
+        connections = []
+        connect = sqlite3.connect
+
+        def capture_connection(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        try:
+            with patch('nailong.gui.empty_conversations.sqlite3.connect', side_effect=capture_connection):
+                empty_branch_ids(self.controller)
+            self.assertTrue(connections)
+            for connection in connections:
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    connection.execute('SELECT 1')
+        finally:
+            for connection in connections:
+                connection.close()
 
     async def test_task_without_visible_messages_is_kept(self):
         from nailong.core.task_state import TaskStore

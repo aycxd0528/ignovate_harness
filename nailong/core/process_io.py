@@ -149,8 +149,11 @@ class PipeCapture:
     def __init__(self, command, *, cwd=None, env=None, shell=False,
                  max_output_chars=12000, separate_stderr=False, prefix=False, on_stdout=None,
                  universal_newlines=False):
+        # Bounded tool commands must not consume the desktop's parent-control
+        # pipe (PowerShell may block at startup when inheriting that open pipe).
         self.owner = OwnedProcess(command, cwd=cwd, env=env, shell=shell, bufsize=0,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT)
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if separate_stderr else subprocess.STDOUT)
         self.process = self.owner.process
         self.universal_newlines = universal_newlines
         buffer_class = _PrefixBuffer if prefix else HeadTailBuffer

@@ -292,20 +292,43 @@ class GoalExecutionSafetyTests(RuntimeTestCase):
         return model
 
     async def test_cancel_during_model_call_keeps_prior_charge_and_reservation(self):
+        await self.check_model_call_cancellation()
+
+    async def test_slow_start_still_cancels_at_model_boundary_and_preserves_charge(self):
+        original = RecordingModel._agenerate
+        async def delayed(model, *args, **kwargs):
+            if not model._calls:
+                await asyncio.sleep(3.2)
+            return await original(model, *args, **kwargs)
+        with patch.object(RecordingModel, '_agenerate', delayed):
+            await self.check_model_call_cancellation()
+
+    async def check_model_call_cancellation(self):
         model = self.blocking_model()
         # This test cancels an in-flight model call; finish real SQLite startup first.
         await self.factory.async_runtime(thread_id="cancel-model")
         goal = self.factory.goal_store.create("work", thread_id="cancel-model")
         task = asyncio.create_task(drive_goal(self.service, self.factory, self.factory.goal_store, self.estimator, goal, thread_id="cancel-model", emit=lambda _: None))
+        entered = asyncio.create_task(model._entered.wait())
         try:
-            await asyncio.wait_for(model._entered.wait(), timeout=3)
+            # Real file reads, SQLite writes and graph steps precede the second
+            # model call. Loaded Windows runners can take more than 3 seconds;
+            # this is a cancellation/accounting test, not a latency assertion.
+            # Watch the driver too, so a real failure is reported immediately.
+            done, _ = await asyncio.wait({entered, task}, timeout=30,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if task in done:
+                await task
+                self.fail('Goal driver exited before entering the model call')
+            self.assertIn(entered, done, 'Goal driver did not reach the model call within 30 seconds')
             task.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await task
         finally:
             if not task.done():
                 task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+            entered.cancel()
+            await asyncio.gather(task, entered, return_exceptions=True)
         saved = self.factory.goal_store.get(goal.id)
         self.assertEqual(saved.state, "paused")
         self.assertEqual(saved.round, 1)

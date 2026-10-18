@@ -1,4 +1,5 @@
 import tempfile
+import os
 import unittest
 from pathlib import Path
 
@@ -22,6 +23,17 @@ class RuntimeSourcesTests(unittest.TestCase):
         (self.root / 'nailong/tools/registry.py').write_text('def build_tool_specs(*, capability_catalog=None): pass\n')
         self.assertTrue(sources.changed())
         self.assertTrue(sources.changed(), 'a later check must not accept a changed revision')
+
+    def test_same_size_change_with_unchanged_timestamp_is_detected(self):
+        path = self.root / 'agent.py'
+        sources = self.snapshot()
+        self.assertFalse(sources.changed())
+        before = path.stat()
+        path.write_text('original = 2\n')
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertEqual(path.stat().st_size, before.st_size)
+        self.assertEqual(path.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertTrue(sources.changed())
 
     def test_adding_or_removing_runtime_modules_requires_restart(self):
         for operation in ('add', 'remove'):
