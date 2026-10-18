@@ -16,6 +16,7 @@ class ControlledService:
         self.session_store = sessions
         self.runtime_factory = SimpleNamespace(settings=SimpleNamespace(model='unknown', api_base='https://example.test'))
         self.task_store = None
+        self.failure_gate = asyncio.Event()
 
     async def stream_turn(self, message, config, *, approval_handler, **kwargs):
         identity = config['configurable']['thread_id']
@@ -35,6 +36,11 @@ class ControlledService:
         elif message == 'wait':
             await asyncio.sleep(60)
             answer = 'done'
+        elif message == 'timeout':
+            raise TimeoutError()
+        elif message == 'fail_later':
+            await self.failure_gate.wait()
+            raise TimeoutError()
         else:
             answer = 'answer: ' + message
         for kind, data in [('token', {'text': answer}), ('final', {'text': answer})]:
@@ -100,6 +106,159 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.controller.branches.draft(self.branch['id']), 'quote [密钥已隐藏]')
         self.assertEqual(len(self.sessions.read_events(self.branch['thread_id'])), 0)
         self.assertEqual(self.controller.snapshot()['project']['path'], str(self.project.resolve()))
+
+    async def test_edit_queued_message_keeps_position_mode_and_request_identity(self):
+        self.controller.paused = True
+        await self.controller.command('permission', {'branch_id': self.branch['id'], 'mode': 'acceptEdits'})
+        payload = {'branch_id': self.branch['id'], 'message': 'first', 'request_id': 'queue-edit'}
+        first = await self.controller.command('send', payload)
+        second = await self.controller.command('send', {**payload, 'message': 'second', 'request_id': 'queue-second'})
+        edited = await self.controller.command('queue_edit', {'branch_id': self.branch['id'], 'run_id': first['run_id'],
+            'message': 'updated question', 'expected_message': 'first'})
+        self.assertEqual(edited['message'], 'updated question')
+        self.assertEqual(self.controller.queue, [first['run_id'], second['run_id']])
+        self.assertEqual(self.controller.runs[first['run_id']]['payload']['permission_mode'], 'acceptEdits')
+        self.assertEqual((await self.controller.command('send', payload))['run_id'], first['run_id'])
+        saved = self.controller.branches.db.execute('SELECT payload FROM runs WHERE id=?', (first['run_id'],)).fetchone()
+        self.assertEqual(__import__('json').loads(saved['payload'])['message'], 'updated question')
+        self.assertEqual(self.sessions.read_events(self.branch['thread_id']), [])
+        await self.controller.command('resume_queue', {})
+        await self.until(lambda: self.controller.runs[second['run_id']]['status'] == 'completed')
+        self.assertEqual([node['prompt'] for node in self.controller.branches.path(self.branch['id'])], ['updated question', 'second'])
+
+    async def test_queued_edit_rejects_started_stale_empty_and_other_branch_messages(self):
+        self.controller.paused = True
+        queued = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'original', 'request_id': 'queue-guards'})
+        operation = {'branch_id': self.branch['id'], 'run_id': queued['run_id'], 'message': 'changed', 'expected_message': 'original'}
+        other = await self.controller.command('create', {'name': 'other'})
+        for invalid in ({'branch_id': other['id']}, {'message': '  '}, {'expected_message': 'outdated'}):
+            with self.assertRaises(ValueError):
+                await self.controller.command('queue_edit', {**operation, **invalid})
+        await self.controller.command('queue_edit', {**operation, 'message': 'wait'})
+        await self.controller.command('resume_queue', {})
+        await self.until(lambda: self.controller.runs[queued['run_id']]['status'] == 'running')
+        for name in ('queue_edit', 'queue_remove'):
+            with self.assertRaisesRegex(ValueError, '开始|等待|排队'):
+                await self.controller.command(name, {**operation, 'expected_message': 'wait'})
+
+    async def test_remove_queued_message_does_not_pause_active_work(self):
+        first = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'wait', 'request_id': 'queue-active'})
+        await self.until(lambda: self.controller.runs[first['run_id']]['status'] == 'running')
+        queued = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'remove me', 'request_id': 'queue-remove'})
+        result = await self.controller.command('queue_remove', {'branch_id': self.branch['id'], 'run_id': queued['run_id']})
+        self.assertEqual(result['status'], 'stopped')
+        self.assertNotIn(queued['run_id'], self.controller.queue)
+        self.assertFalse(self.controller.paused)
+        self.assertEqual(self.controller.runs[first['run_id']]['status'], 'running')
+
+    async def test_empty_exception_is_visible_and_saved_after_run_fails(self):
+        result = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'timeout', 'request_id': 'timeout-detail'})
+        await self.until(lambda: self.controller.runs[result['run_id']]['status'] == 'failed')
+        failed = next(run for run in self.controller.snapshot()['runs'] if run['id'] == result['run_id'])
+        self.assertIn('TimeoutError', failed['error'])
+        self.assertIn('超时', failed['error'])
+        saved = self.controller.branches.db.execute('SELECT payload FROM runs WHERE id=?', (result['run_id'],)).fetchone()
+        self.assertIn('TimeoutError', __import__('json').loads(saved['payload'])['_gui_error'])
+
+    async def test_new_message_after_failure_starts_when_no_pending_work_remains(self):
+        failed = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'timeout', 'request_id': 'failure-before-idle'})
+        await self.controller.worker
+        self.assertEqual(self.controller.runs[failed['run_id']]['status'], 'failed')
+        self.assertEqual(self.controller.queue, [])
+        sent = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'new explicit message', 'request_id': 'new-after-failure'})
+        await self.controller.worker
+        self.assertEqual(self.controller.runs[sent['run_id']]['status'], 'completed')
+        self.assertFalse(self.controller.paused)
+        self.assertEqual(self.controller.runs[failed['run_id']]['status'], 'failed')
+
+    async def test_new_message_does_not_replay_messages_waiting_after_a_failure(self):
+        failed = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'fail_later', 'request_id': 'failure-with-waiting'})
+        await self.until(lambda: self.controller.runs[failed['run_id']]['status'] == 'running')
+        earlier = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'earlier explicit input', 'request_id': 'pending-before-new'})
+        self.controller.service.failure_gate.set()
+        await self.controller.worker
+        later = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'later explicit input', 'request_id': 'pending-after-new'})
+        await self.controller.worker
+        self.assertEqual(self.controller.queue, [earlier['run_id'], later['run_id']])
+        self.assertTrue(self.controller.paused)
+        self.assertEqual([event['data']['text'] for event in self.sessions.read_events(self.branch['thread_id']) if event['kind'] == 'user'], ['fail_later'])
+
+    async def test_source_update_rejects_new_message_before_creating_a_stuck_run(self):
+        from nailong.gui.runtime_sources import RuntimeSources
+        code = Path(self.temp.name) / 'runtime';code.mkdir()
+        source = code / 'agent.py';source.write_text('version = 1\n')
+        self.controller.runtime_sources = RuntimeSources(code)
+        source.write_text('version = 2\n')
+        with self.assertRaisesRegex(ValueError, '更新.*重新启动'):
+            await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'after idle', 'request_id': 'updated-source'})
+        self.assertEqual(self.controller.queue, [])
+        self.assertEqual(self.controller.runs, {})
+        self.assertTrue(self.controller.snapshot()['runtime']['restart_required'])
+        self.assertEqual(self.sessions.read_events(self.branch['thread_id']), [])
+
+    async def test_source_update_before_worker_starts_does_not_call_model_or_tools(self):
+        from nailong.gui.runtime_sources import RuntimeSources
+        code = Path(self.temp.name) / 'runtime';code.mkdir()
+        source = code / 'agent.py';source.write_text('version = 1\n')
+        self.controller.runtime_sources = RuntimeSources(code)
+        result = await self.controller.command('send', {'branch_id': self.branch['id'], 'message': 'admitted before update', 'request_id': 'queued-source-update'})
+        source.write_text('version = 2\n')
+        await self.controller.worker
+        run = self.controller.runs[result['run_id']]
+        self.assertEqual(run['status'], 'failed')
+        self.assertIn('重新启动', run['error'])
+        self.assertIsNone(run['start_index'])
+        self.assertEqual(self.sessions.read_events(self.branch['thread_id']), [])
+
+    async def test_idle_event_poll_reports_a_source_update_once(self):
+        from nailong.gui.runtime_sources import RuntimeSources
+        code = Path(self.temp.name) / 'runtime';code.mkdir()
+        source = code / 'agent.py';source.write_text('version = 1\n')
+        self.controller.runtime_sources = RuntimeSources(code)
+        before = self.controller.sequence
+        source.write_text('version = 2\n')
+        events = self.controller.events(before)['events']
+        self.assertEqual([event['kind'] for event in events], ['runtime_updated'])
+        self.assertEqual(self.controller.events(self.controller.sequence)['events'], [])
+
+    async def test_switching_projects_does_not_accept_changed_code_in_same_process(self):
+        import os
+        from unittest.mock import patch
+        from nailong.gui.runtime_sources import RuntimeSources
+        code = Path(self.temp.name) / 'runtime';code.mkdir()
+        source = code / 'agent.py';source.write_text('version = 1\n')
+        self.controller.runtime_sources = RuntimeSources(code)
+        source.write_text('version = 2\n')
+        self.assertTrue(self.controller.runtime_sources.changed())
+        other = Path(self.temp.name) / 'other-project';other.mkdir()
+        with patch.dict(os.environ, {'NAILONG_DATA_DIR': str(Path(self.temp.name) / 'data')}):
+            snapshot = await self.controller.command('open_project', {'path': str(other)})
+        self.assertTrue(snapshot['runtime']['restart_required'])
+        with self.assertRaisesRegex(ValueError, '更新.*重新启动'):
+            await self.controller.command('send', {'branch_id': 'unneeded', 'message': 'new project', 'request_id': 'same-process-source'})
+
+    async def test_imported_completed_session_can_continue_in_same_window_after_restart(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+        from langgraph.graph import StateGraph, MessagesState, START, END
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        from nailong.gui.controller import GUIController
+        self.sessions.append_event('old-thread', 'user', {'text': 'yesterday'})
+        with SqliteSaver.from_conn_string(str(self.sessions.database_path)) as saver:
+            graph = StateGraph(MessagesState)
+            graph.add_node('answer', lambda state: {'messages': [AIMessage('saved answer')]})
+            graph.add_edge(START, 'answer'); graph.add_edge('answer', END)
+            graph.compile(checkpointer=saver).invoke({'messages': [HumanMessage('yesterday')]}, {'configurable': {'thread_id': 'old-thread'}})
+        self.sessions.append_event('old-thread', 'final', {'text': 'saved answer'})
+        await self.controller.close()
+        self.controller = GUIController(self.project, sessions=self.sessions, service=ControlledService(self.sessions))
+        branch = next(branch for branch in self.controller.snapshot()['branches'] if branch['thread_id'] == 'old-thread')
+        self.assertTrue(branch['can_continue'])
+        self.assertFalse(self.controller.branches.path(branch['id'])[-1]['recoverable'])
+        result = await self.controller.command('send', {'branch_id': branch['id'], 'message': 'continue today', 'request_id': 'continue-old'})
+        await self.until(lambda: self.controller.runs[result['run_id']]['status'] in {'completed', 'failed'})
+        self.assertEqual(self.controller.runs[result['run_id']]['status'], 'completed')
+        self.assertEqual(self.controller.branches.branch(branch['id'])['thread_id'], 'old-thread')
+        self.assertEqual([node['prompt'] for node in self.controller.branches.path(branch['id'])], ['yesterday', 'continue today'])
 
     async def test_request_id_cannot_change_command_kind(self):
         payload = {'branch_id': self.branch['id'], 'message': 'hello', 'request_id': 'same-operation-id'}

@@ -203,6 +203,20 @@ class GoalStore:
             self._save(goals)
             return goal
 
+    def revise(self, goal_id, *, objective, thread_id):
+        """Accept a revised paused brief without creating another spending ledger."""
+        with self.driver_lease(), self._locked():
+            goals=self._load();goal=goals.get(goal_id)
+            if goal is None or goal.thread_id!=thread_id or goal.state!='paused':
+                return False,'只能修订当前会话已暂停的目标。',goal
+            if self._limit_reason(goal):return False,self._limit_reason(goal)+' 请明确创建新目标。',goal
+            if not isinstance(objective,str) or not objective.strip():return False,'目标不能为空。',goal
+            goal.objective=objective.replace(self.api_key,'[密钥已隐藏]') if self.api_key else objective
+            self._clear_verification(goal)
+            goal.last_progress={}
+            self._save(goals)
+            return True,'已修订原目标，费用和轮数保留。',goal
+
     def resume(self, goal_id: str, *, thread_id: str | None = None) -> tuple[bool, str, Goal | None]:
         """Resume a paused goal only after an explicit caller action."""
         with self.driver_lease(), self._locked():
@@ -390,6 +404,17 @@ class GoalStore:
             if self.api_key:
                 summary = summary.replace(self.api_key, "[密钥已隐藏]")
                 blocker = blocker.replace(self.api_key, "[密钥已隐藏]") if blocker else blocker
+            if state=='complete' and getattr(self,'coordination_path',None) is not None:
+                from nailong.core.preferences import read_config
+                try:
+                    coordination=read_config(self.coordination_path,self.coordination_path.parent)
+                    if self.coordination_path.exists() and (coordination.get('version')!=1 or coordination.get('project')!=str(self.project_root) or not isinstance(coordination.get('leases'),dict)):
+                        raise ValueError('协调状态身份无效。')
+                    rows=coordination.get('dispatches',{})
+                    if not isinstance(rows,dict) or any(row.get('goal_id')==goal.id and row.get('state') in {'queued','admitted','running','needs_reconciliation'} for row in rows.values()):
+                        return False,'仍有未完成或待核对的派发，不能完成整体目标。',goal
+                except (ValueError,OSError,TypeError,AttributeError):
+                    return False,'无法核对派发控制状态，未完成整体目标。',goal
             task_identity = None
             current = None
             if state == 'complete' and self.task_store is not None:

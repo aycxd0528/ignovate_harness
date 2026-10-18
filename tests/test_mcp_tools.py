@@ -138,6 +138,7 @@ class MCPRuntimeTests(unittest.IsolatedAsyncioTestCase):
             factory.mcp_manager.store.add('test', {'transport': 'stdio', 'command': sys.executable, 'args': [str(SERVER)]})
             await factory.mcp_manager.connect('test')
             factory.model = Model(responses=[
+                AIMessage(content='', tool_calls=[{'name': 'discover_tools', 'args': {'query': 'mcp__test__echo'}, 'id': 'mcp-discovery'}]),
                 AIMessage(content='', tool_calls=[{'name': 'mcp__test__echo', 'args': {'payload': {'query': 'record'}}, 'id': 'mcp-call'}]),
                 AIMessage(content='已读取外部服务结果。'),
             ])
@@ -150,6 +151,10 @@ class MCPRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 {'configurable': {'thread_id': 'mcp-agent-turn'}, 'recursion_limit': 40}, approval_handler=approve)
             self.assertEqual(answer, '已读取外部服务结果。')
             self.assertEqual(approvals[0]['name'], 'mcp__test__echo')
+            requests = [row['data'] for row in factory.session_store.read_events('mcp-agent-turn')
+                        if row['kind'] == 'context_request']
+            self.assertNotIn('mcp__test__echo', requests[0]['tools'])
+            self.assertIn('mcp__test__echo', requests[1]['tools'])
             runtime = await factory.async_runtime(thread_id='mcp-agent-turn')
             state = await runtime.aget_state({'configurable': {'thread_id': 'mcp-agent-turn'}})
             tool_messages = [message for message in state.values['messages'] if message.type == 'tool']

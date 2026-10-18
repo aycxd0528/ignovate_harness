@@ -37,6 +37,8 @@ def message_usage(message) -> dict | None:
     result["cache_hit_tokens"] = min(result["input_tokens"], result["cache_hit_tokens"])
     result["total_tokens"] = result["input_tokens"] + result["output_tokens"]
     metadata=getattr(message,'response_metadata',{}) or {}
+    if isinstance(metadata.get('nailong_model_call_id'),str):
+        result['model_call_id']=metadata['nailong_model_call_id']
     actual=metadata.get('model_name') or metadata.get('model')
     if isinstance(actual,str) and actual: result['model']=actual
     provenance=metadata.get('nailong_call_provenance')

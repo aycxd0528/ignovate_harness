@@ -89,17 +89,24 @@ def input_fingerprint(root, generated=()):
 
 
 class VerificationService:
-    def __init__(self, project_root, session_store, goal_store=None, *, api_key='', task_store=None):
+    def __init__(self, project_root, session_store, goal_store=None, *, api_key='', task_store=None, steps_override=None):
         self.root=Path(project_root).resolve()
         self.store=session_store; self.goals=goal_store; self.api_key=api_key
         self.tasks=task_store
+        self.steps_override=steps_override
 
     def list_steps(self):
+        if self.steps_override is not None:
+            return self.validate_steps(self.steps_override,root=self.root)
         config=read_config(self.root/'.nailong/settings.json',self.root)
         verification=config.get('verification',{})
         if not isinstance(verification,dict): raise ValueError('verification 必须是对象。')
         if set(verification)-{'steps'}: raise ValueError('verification 包含未知字段。')
         steps=verification.get('steps',[])
+        return self.validate_steps(steps,root=self.root)
+
+    @staticmethod
+    def validate_steps(steps, *, root=None):
         if not isinstance(steps,list) or len(steps)>30: raise ValueError('verification.steps 必须是至多 30 项的数组。')
         names=set(); validated=[]
         for step in steps:
@@ -134,7 +141,7 @@ class VerificationService:
                     raise ValueError('生成物必须是项目内相对路径。')
                 if not Path(raw).parts or Path(raw).parts[0] in {'.','.nailong','AGENTS.md','CLAUDE.md'} or FileSession._is_protected(Path(raw).parts[0]):
                     raise ValueError('生成物不能排除配置或记忆。')
-                safe_config_path(self.root/raw,self.root)
+                if root is not None:safe_config_path(Path(root)/raw,Path(root))
             validated.append({**step,'timeout_seconds':timeout,'generated_paths':generated})
         return validated
 
@@ -213,9 +220,12 @@ class VerificationService:
                 started_at=datetime.now(timezone.utc).isoformat()
                 action={'name':'run_command','args':{'command':step['command']},'description':'执行项目验证',
                         'preview':{'command':step['command'],'cwd':str(self.root),'timeout_seconds':step['timeout_seconds']}}
+                from nailong.core.stage_constraints import compile_stage_policy
+                policy_task=self.tasks.snapshot(thread_id) if self.tasks is not None else None
+                stage_denial=compile_stage_policy(policy_task).check('run_command',action['args'])
                 decision=engine.decide_action('run_command',action['args'],mode=permission_mode)
-                allowed=decision.decision==Decision.ALLOW
-                if decision.decision==Decision.ASK and approval is not None:
+                allowed=decision.decision==Decision.ALLOW and stage_denial is None
+                if decision.decision==Decision.ASK and approval is not None and stage_denial is None:
                     choice=approval(action,index+1,len(selected))
                     if inspect.isawaitable(choice): choice=await choice
                     if isinstance(choice,ApprovalDecision):
@@ -224,6 +234,7 @@ class VerificationService:
                     else: allowed=choice in {'approve','approve_once','approve_session'}
                 if not allowed:
                     result={'ok':False,'exit_code':None,'output':'未批准，未执行。','timed_out':False,'observed':None,'started':False}
+                    if stage_denial:result.update(error_code='stage_restricted',output=stage_denial.get('error','当前用户阶段不允许运行此验证。'))
                 else:
                     try:
                         from nailong.tools.coordination import project_coordinator
@@ -234,9 +245,13 @@ class VerificationService:
                                 and (task['task_id'],task['revision'])==(current_task['task_id'],current_task['revision']))
                             same_configuration = self.list_steps()==steps
                             current_permission=engine.decide_action('run_command',action['args'],mode=permission_mode)
+                            current_stage=compile_stage_policy(current_task).check('run_command',action['args'])
                             still_allowed=(current_permission.decision == Decision.ALLOW or
                                 decision.decision == Decision.ASK and current_permission == decision)
-                            if not (task_matches and same_configuration and unchanged and still_allowed):
+                            from nailong.core.session_coordination import active_dispatch
+                            dispatch=active_dispatch.get()
+                            if dispatch:dispatch[0].guard(dispatch[1])
+                            if not (task_matches and same_configuration and unchanged and still_allowed and current_stage is None):
                                 result={'ok':False,'started':False,'exit_code':None,'timed_out':False,'observed':None,
                                     'error_code':'approval_invalidated','output':'审批绑定的输入、任务、配置或权限已变化；未启动。'}
                             else:
@@ -282,6 +297,10 @@ async def verify_goal_if_configured(service,factory,goal,thread_id,*,approval=No
     if settings is None or getattr(factory,'goal_store',None) is None: return None
     verification=VerificationService(settings.project_root,getattr(service,'session_store',None),factory.goal_store,
         api_key=settings.api_key,task_store=getattr(factory,'task_store',None))
+    task=verification.tasks.snapshot(thread_id) if verification.tasks else None
+    intake=(task or {}).get('intake',{})
+    if intake.get('stage')=='executing' and intake.get('verification'):
+        verification.steps_override=intake['verification']
     if not verification.list_steps(): return None
     current=factory.goal_store.get(goal.id)
     if current is None or current.state!='active': return None

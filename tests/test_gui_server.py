@@ -57,6 +57,15 @@ class ServerTests(unittest.TestCase):
                 self.assertTrue(body)
                 self.assertIn(content_type, headers['Content-Type'])
 
+    def test_queue_and_highlighting_assets_are_served_with_browser_mime_types(self):
+        for path, mime in [('/queue.js', 'text/javascript'), ('/queue.css', 'text/css'),
+                           ('/syntax.js', 'text/javascript'), ('/syntax-engine.js', 'text/javascript'), ('/syntax.css', 'text/css')]:
+            with self.subTest(path=path):
+                status, body, headers = self.request(path)
+                self.assertEqual(status, 200)
+                self.assertTrue(body)
+                self.assertIn(mime, headers['Content-Type'])
+
     def test_reload_asset_burst_can_queue_before_the_server_accepts(self):
         # A refresh opens CSS/script connections together, alongside API polling.
         # Pause acceptance so this tests the TCP backlog without timing a race.

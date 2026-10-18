@@ -2,6 +2,7 @@ from platform_fixtures import assert_private
 import asyncio
 import importlib
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,7 +91,8 @@ class HarnessWelcomeUiTests(unittest.IsolatedAsyncioTestCase):
             module = importlib.import_module('ui.setup')
         except ModuleNotFoundError:
             self.fail('Welcome/configuration UI is missing')
-        return module.SetupApp(store=store, project_root=store.path.parent)
+        with patch.dict(os.environ, {'DEEPSEEK_API_KEY': ''}):
+            return module.SetupApp(store=store, project_root=store.path.parent)
 
     async def test_cancel_welcome_does_not_create_config(self):
         with tempfile.TemporaryDirectory() as directory:

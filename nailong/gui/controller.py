@@ -12,10 +12,13 @@ from pathlib import Path
 
 from nailong.core.branches import BranchStore, clone_checkpoint
 from nailong.core.sessions import ProjectSessionStore
+from nailong.gui.runtime_sources import RuntimeSources, SOURCE_UPDATE_MESSAGE
 
 
 class GUIController:
-    def __init__(self, project, *, sessions=None, service=None):
+    def __init__(self, project, *, sessions=None, service=None, runtime_sources=None):
+        self.runtime_sources = runtime_sources if runtime_sources is not None else RuntimeSources()
+        self._runtime_update_emitted = False
         from config import select_project_root
         self.project = select_project_root(str(project))
         self.sessions = sessions or ProjectSessionStore(self.project)
@@ -128,7 +131,11 @@ class GUIController:
         self.events_log = self.events_log[-4000:]
 
     def events(self, after=0):
-        if time.monotonic()-self.last_history_sync > 1:
+        if self.runtime_sources.changed():
+            if not self._runtime_update_emitted:
+                self._runtime_update_emitted = True
+                self.emit('runtime_updated', {'restart_required': True, 'notice': SOURCE_UPDATE_MESSAGE})
+        elif time.monotonic()-self.last_history_sync > 1:
             if self._sync_history():
                 self.emit('history_updated', {})
         reset = after > self.sequence or (self.events_log and after < self.events_log[0]['sequence'] - 1)
@@ -216,7 +223,8 @@ class GUIController:
             self.last_history_sync = time.monotonic()
 
     def snapshot(self):
-        self._sync_history()
+        if not self.runtime_sources.changed():
+            self._sync_history()
         configuration = self.configuration()
         from nailong.gui.settings import GUISettings
         try:
@@ -226,11 +234,18 @@ class GUIController:
         from nailong.core.context import configured_context_window
         window = configured_context_window(configuration['model'], self.project) if configuration['configured'] else None
         branches = self.branches.branches()
+        from nailong.gui.empty_conversations import empty_branch_ids
+        empty = set(empty_branch_ids(self))
         paths = {branch['id']: self.branches.path(branch['id']) for branch in branches}
         from nailong.gui.presentation import artifact_cards
         nodes = {n['id']: {**n, 'task_snapshot': None,'artifacts':artifact_cards(n)} for path in paths.values() for n in path}
         for branch in branches:
+            branch['is_empty'] = branch['id'] in empty
             path = paths[branch['id']]
+            from nailong.gui.history import continuation_state
+            continuation = continuation_state(self, branch)
+            branch['can_continue'] = continuation['allowed']
+            branch['continuation_reason'] = continuation['reason']
             branch['updated_at'] = path[-1]['created'] if path else branch['created']
             branch['recoverable'] = not branch['history_conflict'] and (not branch['head'] and not branch['legacy'] or bool(path and path[-1]['recoverable']))
             branch['draft'] = self.branches.draft(branch['id'])
@@ -254,7 +269,8 @@ class GUIController:
                          'runs': [self._public_run(run) for run in self.runs.values()], 'paused': self.paused,
                          'approvals': [a['public'] for a in self.approvals.values()], 'layout': self.branches.layout(),
                          'layouts': {b['conversation_id']: self.branches.layout(b['conversation_id']) for b in branches},
-                         'control': control, 'error': self.error, 'kernel_version': '1.1.0'})
+                         'control': control, 'error': self.error, 'kernel_version': '1.1.0',
+                         'runtime': {'restart_required': self.runtime_sources.changed(), 'notice': SOURCE_UPDATE_MESSAGE}})
 
     def _weather(self, path, window):
         from ui.presentation import SessionMetrics
@@ -306,6 +322,12 @@ class GUIController:
         with self.branches.db:
             self.branches.db.execute('INSERT OR REPLACE INTO gui_branch_modes VALUES (?,?)', (identity, mode))
         self.branch_modes[identity] = mode
+        from nailong.core.session_policy import session_mode
+        thread=self.branches.branch(identity)['thread_id']
+        session_mode(self.sessions,thread,mode)
+        if self.factory is not None and (self.sessions.root/'coordination.json').exists():
+            from nailong.core.session_coordination import SessionCoordination
+            SessionCoordination(self.factory,thread).intervene(thread)
 
     async def _command_unlocked(self, name, payload):
         if not isinstance(payload, dict):
@@ -331,11 +353,18 @@ class GUIController:
             plugins = GUIPlugins(self)
             return plugins.catalog() if name == 'plugins' else await plugins.mutate(payload)
         if name == 'create':
+            if payload.get('reuse_branch_id') and payload.get('name', '新会话') == '新会话':
+                from nailong.gui.empty_conversations import empty_branch_ids
+                if payload['reuse_branch_id'] in empty_branch_ids(self):
+                    return self.branches.branch(payload['reuse_branch_id'])
             from nailong.gui.settings import GUISettings
             mode = GUISettings(self).preferences()['preferences']['default_permission']
             branch = self.branches.create(payload.get('name', '新会话'))
             self._set_branch_mode(branch['id'], mode)
             return branch
+        if name == 'prune_empty':
+            from nailong.gui.empty_conversations import prune_empty
+            return prune_empty(self, payload)
         if name == 'model':
             from nailong.gui.controls import change_model
             return change_model(self, payload)
@@ -345,7 +374,7 @@ class GUIController:
         if name == 'open_project':
             if self.current_task or self.queue:
                 raise ValueError('请先停止运行并移除队列，再切换项目。')
-            candidate = GUIController(payload['path'])
+            candidate = GUIController(payload['path'], runtime_sources=self.runtime_sources)
             sequence = self.sequence
             command_lock = self.command_lock
             await self.close()
@@ -356,6 +385,28 @@ class GUIController:
             return self.snapshot()
         if name in {'send', 'verify'}:
             return self._enqueue(payload, verify=name == 'verify')
+        if name in {'queue_edit', 'queue_remove'}:
+            run = self.runs.get(payload.get('run_id'))
+            if not run or run['branch_id'] != payload.get('branch_id'):
+                raise ValueError('排队消息不属于当前会话。')
+            if run['status'] != 'queued' or run['id'] not in self.queue:
+                raise ValueError('消息已开始执行或已移除，不能再修改等待队列。')
+            if name == 'queue_edit':
+                if run['payload'].get('verify'):
+                    raise ValueError('验证任务不能修改为聊天消息。')
+                if payload.get('expected_message') != run['message']:
+                    raise ValueError('排队消息已更改，请重新打开编辑。')
+                message = payload.get('message')
+                if not isinstance(message, str) or not message.strip() or len(message) > 100_000:
+                    raise ValueError('输入须为 1–100000 个字符。')
+                run['payload']['message'] = message
+                run['message'] = self.safe(message)
+            else:
+                self.queue.remove(run['id'])
+                run.update(status='stopped', finished_at=datetime.now(timezone.utc).isoformat())
+            self._save_run(run)
+            self.emit('run', self._public_run(run), run)
+            return self._public_run(run)
         if name == 'map_send':
             return await self._map_send(payload)
         if name == 'trace':
@@ -413,6 +464,8 @@ class GUIController:
                     pass
             return self._public_run(run)
         if name == 'resume_queue':
+            if self.runtime_sources.changed():
+                raise ValueError(SOURCE_UPDATE_MESSAGE)
             self.paused = False
             self._start_worker()
             return {'resumed': True}
@@ -570,6 +623,8 @@ class GUIController:
             if existing['payload'] != fingerprint:
                 raise ValueError('请求 ID 已用于不同输入。')
             return json.loads(existing['result'])
+        if self.runtime_sources.changed():
+            raise ValueError(SOURCE_UPDATE_MESSAGE)
         if self.current_task or self.queue:
             raise ValueError('请等待当前运行与队列结束，再从地图继续。')
         branch = self.branches.branch(payload['branch_id'])
@@ -630,15 +685,17 @@ class GUIController:
             if existing['payload'] != fingerprint:
                 raise ValueError('请求 ID 已用于不同输入。')
             return json.loads(existing['result'])
+        if self.runtime_sources.changed():
+            raise ValueError(SOURCE_UPDATE_MESSAGE)
         branch = self.branches.branch(payload['branch_id'])
         if branch['history_conflict']:
             raise ValueError('CLI 已回退或改写该会话；已保留 GUI 历史，请基于摘要创建新会话。')
         if branch['archived']:
             raise ValueError('请先取消归档。')
-        if branch['legacy'] and (not branch['head'] or not self.branches.path(branch['id'])[-1]['recoverable']):
-            # Interrupted new runs may continue explicitly; imported logs remain read-only.
-            if branch['legacy']:
-                raise ValueError('旧会话仅可查看，请基于摘要创建新会话。')
+        from nailong.gui.history import continuation_state
+        continuation = continuation_state(self, branch)
+        if not continuation['allowed']:
+            raise ValueError(continuation['reason'])
         message = payload.get('message', '运行配置的验证步骤' if verify else '')
         if not isinstance(message, str) or not message.strip() or len(message) > 100_000:
             raise ValueError('输入须为 1–100000 个字符。')
@@ -658,6 +715,13 @@ class GUIController:
                 reason = self.factory.goal_store._limit_reason(goal)
                 if reason:
                     raise ValueError(reason + ' 请创建新目标。')
+        if self.factory is not None and (self.sessions.root/'coordination.json').exists():
+            from nailong.core.capabilities import is_greeting
+            from nailong.core.task_requests import task_request_kind
+            from nailong.core.session_coordination import SessionCoordination
+            if not is_greeting(message) and task_request_kind(message)!='status':
+                SessionCoordination(self.factory,branch['thread_id']).intervene(
+                    branch['thread_id'],source_changed=task_request_kind(message)=='work')
         if not verify:self.branches.title_from_input(branch['id'],message)
         run_id = uuid.uuid4().hex
         run = {'id': run_id, 'branch_id': branch['id'], 'status': 'queued', 'message': self.safe(message),
@@ -669,6 +733,10 @@ class GUIController:
             self.branches.db.execute('INSERT INTO requests VALUES (?,?,?)', (identity, fingerprint, json.dumps(result)))
             self._save_run(run)
         self.runs[run_id] = run
+        # A fresh explicit message can start after an old failure/stop when
+        # nothing is waiting. Never replay previously queued requests here.
+        if self.paused and not self.queue and (self.current_task is None or self.current_task.done()):
+            self.paused = False
         self.queue.append(run_id)
         self.branches.draft(branch['id'], '')
         self.emit('run', self._public_run(run), run)
@@ -709,11 +777,15 @@ class GUIController:
         from nailong.core.project_execution import project_execution
         try:
             with project_execution(self.sessions):
+                if self.runtime_sources.changed():
+                    raise ValueError(SOURCE_UPDATE_MESSAGE)
                 # Check for CLI additions after enqueue and before model input.
                 self.branches.import_sessions()
                 branch = self.branches.branch(run['branch_id'])
-                if branch['legacy'] or branch['history_conflict']:
-                    raise ValueError('CLI 已更新该会话；请查看同步的历史并基于摘要新建。')
+                from nailong.gui.history import continuation_state
+                continuation = continuation_state(self, branch)
+                if not continuation['allowed']:
+                    raise ValueError(continuation['reason'])
                 with self.sessions.run_scope(run['id'], branch['thread_id']):
                     await self._execute_owned(run)
         except (BlockingIOError, ValueError) as error:
@@ -791,7 +863,8 @@ class GUIController:
             run['status'] = 'stopped'
             raise
         except Exception as error:
-            run.update(status='failed', error=self.safe(str(error)))
+            from nailong.gui.errors import describe_run_error
+            run.update(status='failed', error=self.safe(describe_run_error(error)))
             self.paused = True
         finally:
             if run['payload'].get('profile') == 'goal':
@@ -850,7 +923,9 @@ class GUIController:
             except (ValueError, OSError):
                 result['delivery']['status'] = 'unknown'
         from nailong.gui.presentation import artifact_cards
-        return self.safe({**result,'artifacts':artifact_cards(result), 'events': events})
+        from nailong.core.diagnostics import usage_snapshot
+        return self.safe({**result,'artifacts':artifact_cards(result), 'events': events,
+                          'session_usage':usage_snapshot(self.sessions,node['thread_id'])})
 
     async def _fork(self, payload, *, target_branch_id=None, target_thread_id=None):
         branch = self.branches.branch(payload['branch_id'])

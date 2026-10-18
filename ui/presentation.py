@@ -67,6 +67,7 @@ class SessionMetrics:
     last_input_tokens: int | None = None
     usage_complete: bool = True
     context_history: list[int | None] = field(default_factory=list)
+    _seen_call_ids: set[str] = field(default_factory=set, repr=False)
 
     def begin_context_turn(self) -> None:
         """Reserve one sample per visible user turn, updated by its main calls."""
@@ -83,8 +84,9 @@ class SessionMetrics:
 
     @classmethod
     def from_events(cls, events: list[dict]) -> "SessionMetrics":
+        from nailong.core.usage_projection import canonical_usage_events
         metrics = cls()
-        for record in events:
+        for record in canonical_usage_events(events):
             if not isinstance(record, dict):
                 continue
             if record.get("kind") == "turn_start":
@@ -104,6 +106,15 @@ class SessionMetrics:
             self._set_context_sample(None)
 
     def observe_usage(self, data: dict) -> None:
+        identity=data.get('model_call_id')
+        if isinstance(identity,str) and identity:
+            if identity in self._seen_call_ids:
+                return
+            self._seen_call_ids.add(identity)
+        if isinstance(data.get('calls'),list) and data['calls']:
+            for row in data['calls']:
+                self.observe_usage({**{key:data[key] for key in ('scope','estimated') if key in data},**row})
+            return
         def amount(key: str) -> int:
             try:
                 return max(0, int(data.get(key, 0) or 0))
@@ -120,7 +131,7 @@ class SessionMetrics:
                 self.observe_missing(data)
         self.input_tokens += amount("input_tokens")
         self.output_tokens += amount("output_tokens")
-        self.cache_hit_tokens += amount("cache_hit_tokens")
+        self.cache_hit_tokens += min(amount("input_tokens"),amount("cache_hit_tokens"))
 
 
 def render_model_status(*, model, reasoning_effort=None, permission_mode='default',

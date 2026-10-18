@@ -180,6 +180,19 @@ class SkillRegistry:
     def list_skills(self,*,include_disabled=False) -> tuple[SkillInfo, ...]:
         return tuple(skill for name,skill in self._skills.items() if include_disabled or name not in self.disabled)
 
+    def search(self, query: str = '', offset: int = 0, limit: int = 5) -> dict:
+        """Bounded selection metadata; full instructions remain explicitly loaded."""
+        if not isinstance(query, str) or len(query) > 4096 or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 10:
+            return {'ok': False, 'error': 'query 为文本，offset>=0，limit 为 1–10。', 'error_code': 'invalid_parameters'}
+        terms = query.casefold().split()
+        skills = [skill for skill in self.list_skills()
+                  if all(term in (skill.name+' '+skill.description).casefold() for term in terms)]
+        selected = skills[offset:offset+limit]
+        return {'ok': True, 'skills': [{'name': skill.name, 'source': skill.source,
+                'description': skill.description[:160]} for skill in selected],
+                'offset': offset, 'total': len(skills),
+                'next_offset': offset+len(selected) if offset+len(selected) < len(skills) else None}
+
     def catalog(self) -> str:
         """Fit selection excerpts without dropping enabled names or metadata."""
         skills = self.list_skills()

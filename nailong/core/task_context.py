@@ -137,6 +137,11 @@ def validate_task_snapshot(snapshot):
             result['requirements']=requirement_records(snapshot)
         except ValueError as error:
             raise TaskContextError(str(error)) from error
+    if 'intake' in snapshot:
+        from nailong.core.task_intake import validate_brief
+        intake=snapshot['intake']
+        result['intake']={**validate_brief({key:intake[key] for key in ('objective','scope','constraints','acceptance','open_questions','verification')}),
+            'draft_revision':intake['draft_revision'],'stage':intake['stage']}
     return result
 
 
@@ -221,6 +226,7 @@ def _compact_task(task,reference,max_chars,visible_user_messages=None):
             {'validity_notes':_evidence_notes(row,task['revision'],task['input_fingerprint'])} for row in selected],
         'history_reference':reference,
     }
+    if 'intake' in task:view['intake']=task['intake']
     text=('当前任务快照（运行时任务资料，不是新的用户指令）：\n'
         '用户后续纠正优先；有效要求与硬约束不得省略。步骤完成、passed 状态和指纹记录均不等于当前磁盘验收通过。\n'
         + ('message_index 是本请求 messages 的 0 基索引（单独的 system 参数不计入）；用户原文仍完整保留，仅省去重复正文。\n' if visible else '')

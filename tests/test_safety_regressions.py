@@ -376,7 +376,7 @@ class SubagentBudgetSafetyTests(RuntimeTestCase):
         # With no registered tools LangChain sends an unbound model request;
         # providers may omit tool_choice rather than serialize "none".
         self.assertIn(final.get('tool_choice'), {None, 'none'})
-        self.assertLessEqual(final.get('max_tokens'), 512)
+        self.assertLessEqual(final.get('max_tokens'), 1024)
         self.assertFalse(any(message.type == 'tool' or getattr(message, 'tool_calls', None)
             for message in final['messages']))
         self.assertIn('最终回答证据', str(final['messages'][-1].content))

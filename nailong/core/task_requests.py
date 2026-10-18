@@ -3,6 +3,7 @@ import re
 
 
 _RESUME = {
+    '按这个做', '按这个实施', '按这个推进', '按计划执行', '开始实施', '开始执行',
     '继续', '请继续', '开始', '开始修改', '开始修复', '继续修改', '继续执行', '请继续执行',
     '恢复任务', '恢复执行', '继续任务', 'continue', 'resume', 'resume task', 'continue task',
 }
@@ -17,7 +18,8 @@ _STATUS = re.compile(
 )
 _WORK = re.compile(
     r'^(?:(?:请|帮我|请帮我|现在|开始|麻烦|麻烦你|然后|接下来)\s*)*'
-    r'(?:修复|修改|实现|审查|重构|优化|排查|测试|验证|创建|新增|增加|编辑|删除|重命名|构建|运行|执行)'
+    r'(?:(?:反复|依次|逐个|分别)\s*)*'
+    r'(?:修复|修改|实现|审查|重构|优化|排查|测试|验证|创建|新增|增加|编辑|删除|重命名|构建|运行|执行|写入|写文件|做)'
     r'|^(?:please\s+)?(?:review|debug|implement|refactor|fix|create|edit|rename|build|test|run)\b',
     re.IGNORECASE,
 )
@@ -36,6 +38,7 @@ def task_request_kind(message: str) -> str:
         return 'status'
     if _NO_EXECUTION.search(text):
         return 'other'
+    if explicit_new_task(text):return 'work'
     if text.casefold() in _RESUME:
         return 'resume'
     # A question about fixing/testing is not permission to resume that work.
@@ -45,6 +48,12 @@ def task_request_kind(message: str) -> str:
             if not clause.strip().endswith(('了吗', '了吗？', '了吗?', '了么', '了么？', '了么?')):
                 return 'work'
     return 'other'
+
+
+def explicit_new_task(message):
+    """A live top-level label explicitly separates new work from an old ledger."""
+    match=re.match(r'^\s*(?:(?:请)?(?:开始|创建|建立)(?:一个)?\s*)?(?:新目标|新任务|new\s+(?:goal|task))\s*[:：]\s*(\S[\s\S]*)$',message,re.I)
+    return match.group(1).strip() if match else None
 
 
 def is_simple_project_question(message: str) -> bool:

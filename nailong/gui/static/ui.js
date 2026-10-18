@@ -126,7 +126,7 @@ export function prose(text, className = '') {
   template.innerHTML=markdown.parse(String(text||''),{async:false});
   for(const node of [...template.content.querySelectorAll('*')]){
     if(!allowedTags.has(node.tagName)){node.replaceWith(document.createTextNode(node.textContent));continue;}
-    const href=node.tagName==='A'?node.getAttribute('href'):null,language=node.tagName==='CODE'?node.className.match(/(?:^|\s)language-([\w-]{1,40})(?:\s|$)/)?.[1]:null;
+    const href=node.tagName==='A'?node.getAttribute('href'):null,language=node.tagName==='CODE'?node.className.match(/(?:^|\s)language-([\w+#-]{1,40})(?:\s|$)/)?.[1]:null;
     const checked=node.tagName==='INPUT'&&node.hasAttribute('checked'),start=node.tagName==='OL'?node.getAttribute('start'):null;
     for(const attribute of [...node.attributes])node.removeAttribute(attribute.name);
     if(node.tagName==='INPUT'){node.type='checkbox';node.disabled=true;node.checked=checked;}
@@ -137,6 +137,7 @@ export function prose(text, className = '') {
   root.append(template.content);
   for(const pre of root.querySelectorAll('pre')){
     pre.classList.add('code-block');const code=pre.querySelector('code');
+    highlightCode(code);
     const wrapper=el('div','code-frame'),header=el('div','code-header');
     const copy=iconButton('copy','复制代码',()=>copyText(copy.closest('.code-frame')?.querySelector('pre')?.textContent||''));
     header.append(el('span','',code?.dataset.language||'代码'),copy);
@@ -154,5 +155,6 @@ export function download(filename, text) {
 }
 import {icon} from './icons.js';
 import {Marked} from './markdown-engine.js';
+import {highlightCode} from './syntax.js';
 export {icon};
 export {permissionGlyph,permissionIcon} from './icons.js';

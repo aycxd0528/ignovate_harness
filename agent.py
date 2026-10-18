@@ -175,6 +175,7 @@ class ModelAccountingMiddleware(AgentMiddleware):
         token_hold = cost_hold = session_hold = None
         response = None
         provider_started = False
+        usage_observed = False
         collector = active_usage_collector.get()
         try:
             if token_budget is not None:
@@ -202,10 +203,11 @@ class ModelAccountingMiddleware(AgentMiddleware):
             self._publish(response)
             if collector is not None:
                 collector.observe(response.result)
+                usage_observed = True
             self._check_response(response, budget)
             return response
         except BaseException:
-            if collector is not None:
+            if collector is not None and provider_started and not usage_observed:
                 collector.complete = False
             raise
         finally:
@@ -350,8 +352,18 @@ class AgentRuntimeFactory:
         from nailong.core.task_state import TaskStore
         self.task_store = TaskStore(self.session_store, api_key=settings.api_key)
         self.goal_store.task_store = self.task_store
+        self.task_store.goal_store = self.goal_store
+        self.goal_store.coordination_path=self.session_store.root/'coordination.json'
+        from nailong.core.runtime_options import child_options
+        from nailong.core.context import configured_context_window
+        from nailong.core.child_continuations import ChildContinuations
+        self.child_options=child_options(settings.project_root,model_output=generation_policy(settings).max_output_tokens,
+            context_window=configured_context_window(settings.model,settings.project_root))
         self.task_runner = ReadOnlyTaskRunner(self._run_readonly_subagent,
+            max_concurrency=self.child_options['max_concurrency'],token_budget=self.child_options['stage_tokens'],
+            child_output_tokens=self.child_options['output_tokens'],
             record=lambda thread_id, row: self.session_store.append_event(thread_id, 'subagent_budget', row))
+        self.task_runner.continuations=ChildContinuations(self.session_store,self.task_store)
         self.skill_registry = SkillRegistry(settings.project_root, api_key=settings.api_key)
         from nailong.core.permissions import PermissionEngine, Decision
         self._memory_permissions = PermissionEngine(settings.project_root)
@@ -490,7 +502,7 @@ class AgentRuntimeFactory:
             base_url=self.settings.api_base,timeout=30,max_retries=0,max_tokens=output_cap,
             **self._reasoning_kwargs(self.settings.model,self.settings.reasoning_effort))
             if isinstance(self.model,_DeepSeekBase) else self.model)
-        finish_budget=ChildResearchBudgetMiddleware()
+        finish_budget=ChildResearchBudgetMiddleware(self.child_options['final_output_tokens'])
         child = create_agent(
             model=child_model,
             tools=child_tools,
@@ -504,6 +516,7 @@ class AgentRuntimeFactory:
         )
         with collect_model_usage(reuse=True) as collector:
             budget_failure=None
+            messages=[]
             try:
                 # The parent's once-only permit authorizes its task handler,
                 # not nested child tools. Children use their own subagent gate.
@@ -527,7 +540,20 @@ class AgentRuntimeFactory:
             finally:
                 await finish_budget.close()
             answer = answer.replace(self.settings.api_key, "[密钥已隐藏]") if self.settings.api_key else answer
-            return ChildTaskResult(answer, dict(collector.totals), collector.complete,list(collector.records),budget_failure)
+            if finish_budget.used_final and budget_failure is None:
+                budget_failure={'reason':'final_answer_reserved'}
+            from nailong.core.child_continuations import NATIVE_CHILD_RESULT
+            evidence=[]
+            for message in messages:
+                if getattr(message,'type',None)!='tool':continue
+                try:body=json.loads(message.content)
+                except (ValueError,TypeError):continue
+                if not isinstance(body,dict):continue
+                evidence.append({'tool':message.name,'call_id':message.tool_call_id,
+                    **{key:body[key] for key in ('ok','path','offset','content_offset','next_offset','next_char_offset',
+                        'truncated','read_complete','version','reference','tool_result_id') if key in body}})
+            return ChildTaskResult(answer, dict(collector.totals), collector.complete,list(collector.records),budget_failure,
+                evidence,NATIVE_CHILD_RESULT)
 
     def _tool_session(self, thread_id: str | None) -> FileSession:
         root = str(self.settings.project_root.resolve())
@@ -613,6 +639,7 @@ class AgentRuntimeFactory:
         checkpointer=None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         review_paths: frozenset[str] | None = None,
+        adaptive_context: bool = False,
     ) -> CompiledStateGraph:
         if profile != 'subagent':
             task = self._task_for_profile(thread_id, profile, target_path)
@@ -627,8 +654,16 @@ class AgentRuntimeFactory:
             return task['scope'] if task else None
         memory_context = MemoryReadContext(snapshot,
             task_scope_provider=current_memory_scope if thread_id else None)
+        from nailong.core.capabilities import CapabilityCatalog, CapabilityMiddleware
+        capability_catalog = (CapabilityCatalog(explicit_tools=allowed_tools,
+            prompt_builder=lambda names: self._prompt_parts(profile,target_path,names,thread_id,snapshot),
+            permission_mode=self.tool_execution_context.permission_mode,
+            task_provider=lambda: current_task(thread_id) if thread_id else None)
+            if profile == 'chat' and adaptive_context else None)
         from nailong.core.task_history import TaskContextHistory
         task_history=TaskContextHistory(self.history_archive,thread_id,self.settings.project_root) if thread_id and profile!='subagent' else None
+        from nailong.core.task_intake import TaskIntake
+        from nailong.core.session_coordination import SessionCoordination
         tools = build_tools(
             api_key=self.settings.api_key,
             profile=profile,
@@ -647,7 +682,12 @@ class AgentRuntimeFactory:
             execution_context=self.tool_execution_context,
             mcp_manager=self.mcp_manager,
             task_history=task_history,
+            capability_catalog=capability_catalog,
+            task_intake=TaskIntake(self.task_store,thread_id) if thread_id and profile=='chat' and adaptive_context else None,
+            session_coordination=SessionCoordination(self,thread_id) if thread_id and profile=='chat' and adaptive_context else None,
         )
+        if capability_catalog is not None:
+            capability_catalog.register(tools)
         tool_names = {tool.name for tool in tools}
         from nailong.core.costs import CostEstimator
         self.active_price_snapshot = CostEstimator(self.settings.model,self.settings.project_root).snapshot()
@@ -661,7 +701,8 @@ class AgentRuntimeFactory:
             request_filter=memory_context.filter_messages,requested_output=getattr(self.model,'max_tokens',None),
             memory_budget=snapshot.report(), task_snapshot_provider=current_task if thread_id else None,
             memory_request_context=memory_context,task_history=task_history,
-            runtime_environment=self._runtime_environment())
+            runtime_environment=self._runtime_environment(),
+            capability_view=capability_catalog.view if capability_catalog is not None else None)
         # Budget accounting sees the complete request, including the task tail.
         # The execution gate still checks permissions and versions. Native graph
         # approvals are collected before any sibling tool starts a side effect.
@@ -673,10 +714,12 @@ class AgentRuntimeFactory:
                 if thread_id else None),
             context, ReviewInputMiddleware(),
             BatchApprovalMiddleware(self.tool_execution_context, tools, profile, thread_id,
-                                    current_task if thread_id else None),
+                                    current_task if thread_id else None, capability_catalog=capability_catalog),
             ModelAccountingMiddleware(self.settings, main_agent=True, record=lambda kind, data:
                 self.session_store.append_event(thread_id, kind, data) if thread_id else None),
             SecretRedactionMiddleware(self.settings.api_key)]
+        if capability_catalog is not None:
+            middleware.insert(0, CapabilityMiddleware(capability_catalog))
 
         runtime = create_agent(
             model=self.model,
@@ -701,9 +744,11 @@ class AgentRuntimeFactory:
         thread_id: str | None = None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         review_paths: frozenset[str] | None = None,
+        adaptive_context: bool = False,
     ) -> CompiledStateGraph:
         """Build a runtime for synchronous compatibility callers."""
-        return self._build_runtime(profile, target_path, thread_id, allowed_tools=allowed_tools,review_paths=review_paths)
+        return self._build_runtime(profile, target_path, thread_id, allowed_tools=allowed_tools,
+                                   review_paths=review_paths,adaptive_context=adaptive_context)
 
     async def async_runtime(
         self,
@@ -712,6 +757,7 @@ class AgentRuntimeFactory:
         thread_id: str | None = None,
         allowed_tools: set[str] | frozenset[str] | None = None,
         review_paths: frozenset[str] | None = None,
+        adaptive_context: bool = False,
     ) -> CompiledStateGraph:
         """Build a runtime backed by the async SQLite checkpointer."""
         if self.async_checkpointer is None:
@@ -745,6 +791,7 @@ class AgentRuntimeFactory:
             checkpointer=self.async_checkpointer,
             allowed_tools=allowed_tools,
             review_paths=review_paths,
+            adaptive_context=adaptive_context,
         )
 
     def close(self) -> None:

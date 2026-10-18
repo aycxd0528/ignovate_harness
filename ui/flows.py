@@ -161,9 +161,50 @@ async def drive_goal(
             thread_id=thread_id, emit=emit, status=status, approval=approval, history_display=history_display)
 
 
-async def _drive_goal(
+async def _drive_goal(service, factory, goal_store, cost_estimator, goal, *, thread_id,
+                      emit, status=None, approval=None, history_display=None):
+    """Callback compatibility over the shared incremental event engine."""
+    events=_goal_events(service,factory,goal_store,cost_estimator,goal,thread_id=thread_id,
+        emit=None,status=status,approval=approval,history_display=history_display)
+    try:
+        async for event in events:
+            try:
+                await _emit(emit,event)
+            except BaseException as error:
+                # Preserve the original callback boundary for round settlement.
+                try:
+                    await events.athrow(error)
+                except BaseException as cleanup_error:
+                    if cleanup_error is not error and not isinstance(cleanup_error,StopAsyncIteration):
+                        error.add_note('Goal event cleanup: '+type(cleanup_error).__name__)
+                raise
+    finally:
+        await events.aclose()
+    return goal_store.get(goal.id) or goal
+
+
+async def stream_goal(service, factory, goal_store, cost_estimator, goal, *, thread_id,
+                      status=None, approval=None, history_display=None, initial_visible=True):
+    """Incremental events in the caller's task, without a background lease."""
+    lease=goal_store.driver_lease() if hasattr(goal_store,'driver_lease') else nullcontext()
+    with lease:
+        if hasattr(goal_store,'attach_thread'):
+            goal=goal_store.attach_thread(goal.id,thread_id) or goal
+        events=_goal_events(service,factory,goal_store,cost_estimator,goal,thread_id=thread_id,
+            emit=None,status=status,approval=approval,history_display=history_display,initial_visible=initial_visible)
+        try:
+            async for event in events:
+                yield event
+        finally:
+            await events.aclose()
+            current=goal_store.get(goal.id)
+            if current is not None and current.state=='active':
+                goal_store.update(goal.id,state='paused',summary='目标事件流已结束或取消。',thread_id=thread_id)
+
+
+async def _goal_events(
     service, factory, goal_store, cost_estimator, goal, *, thread_id: str,
-    emit, status=None, approval=None, history_display: str | None = None,
+    emit, status=None, approval=None, history_display: str | None = None, initial_visible=True,
 ):
     """Advance a persisted goal while GoalStore enforces cost and round limits."""
     first_round = True
@@ -176,7 +217,7 @@ async def _drive_goal(
         control = decide_goal_turn(goal, before)
         try:
             for attempt in range(8):
-                await _emit(emit, TurnEvent('goal_control', {'goal_id': goal.id, **control}))
+                yield TurnEvent('goal_control', {'goal_id': goal.id, **control})
                 # Every publication yields. Admit only after a stable reread,
                 # including a pause during publication of a changed decision.
                 goal = goal_store.get(goal.id) or goal
@@ -197,8 +238,8 @@ async def _drive_goal(
                 _, _, saved = goal_store.update(goal.id, state='paused',
                     summary=control['reason']+' '+control['resume_condition'], thread_id=thread_id)
                 goal = saved or goal
-            await _emit(emit, TurnEvent('goal_status', {'goal': goal, 'text': control['reason']}))
-            await _emit(emit, TurnEvent('notice', {'text': goal.pause_reason or control['reason']}))
+            yield TurnEvent('goal_status', {'goal': goal, 'text': control['reason']})
+            yield TurnEvent('notice', {'text': goal.pause_reason or control['reason']})
             break
         round_id = uuid.uuid4().hex
         round_usage = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
@@ -223,9 +264,11 @@ async def _drive_goal(
                 f"\n任务：{control.get('task_id')}；要求版本：{control.get('task_revision')}。")
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 40}
         budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd)
+        budget.goal_round_id=round_id
         round_error = None
         stop_reason = ""
         progress = assess_goal_progress(before, None)
+        model_observed=False
         try:
             stream = service.stream_turn(
                 goal_prompt,
@@ -233,12 +276,13 @@ async def _drive_goal(
                 profile="chat",
                 cost_budget=budget,
                 pin_message="goal",
-                history_display=(history_display or f"/goal {goal.objective}") if first_round else None,
+                history_display=(history_display or f"/goal {goal.objective}") if first_round and initial_visible else None,
                 approval_handler=approval,
                 status_handler=status,
             )
             async with aclosing(stream):
                 async for event in stream:
+                    if event.kind in {'usage','usage_missing'}:model_observed=True
                     if event.kind == "usage":
                         for key in round_usage:
                             try:
@@ -256,22 +300,25 @@ async def _drive_goal(
                         summary = str(event.data.get("text", ""))[:1_000]
                     elif event.kind in {"error", "hook_blocked", "task_paused"}:
                         stop_reason = str(event.data.get("message") or event.data.get("reason") or "目标轮次被阻止。")
-                    await _emit(emit, event)
+                    yield event
             if not stop_reason and budget.usage_complete:
                 from nailong.core.verification import verify_goal_if_configured
-                verification=await verify_goal_if_configured(service,factory,goal,thread_id,approval=approval,emit=emit)
+                verification_events=[]
+                verification=await verify_goal_if_configured(service,factory,goal,thread_id,approval=approval,emit=verification_events.append)
+                for verification_event in verification_events:
+                    yield verification_event
                 if verification:
                     summary+='\n核心项目验证：'+verification['status']
                     tool_calls+=len(verification['steps'])
                     if verification['status']=='unverified':
                         unattended_approval=approval is None
                         stop_reason='项目验证待审批或被拒绝，目标已暂停。'
-                    await _emit(emit,TurnEvent('notice',{'text':'项目验证：'+verification['status']}))
+                    yield TurnEvent('notice',{'text':'项目验证：'+verification['status']})
             if not stop_reason and callable(getattr(service, 'delivery_report', None)):
                 delivery = await service.delivery_report(thread_id)
                 if delivery is not None:
                     from nailong.core.delivery import render_delivery_report
-                    await _emit(emit, TurnEvent('notice', {'text': render_delivery_report(delivery)}))
+                    yield TurnEvent('notice', {'text': render_delivery_report(delivery)})
                     latest_goal = goal_store.get(goal.id)
                     if not stop_reason and latest_goal is not None and latest_goal.state == 'active':
                         task_store = getattr(service, 'task_store', None)
@@ -283,7 +330,7 @@ async def _drive_goal(
                             stop_reason = '目标等待用户人工验收；请核对 /task，确认后恢复目标。'
         except BaseException as error:
             round_error = error
-            stop_reason = "目标运行已取消。" if isinstance(error, asyncio.CancelledError) else str(error) or type(error).__name__
+            stop_reason = "目标运行已取消。" if isinstance(error, (asyncio.CancelledError,GeneratorExit)) else str(error) or type(error).__name__
         finally:
             try:
                 round_cost = max(cost_estimator.estimate(round_usage), budget.spent)
@@ -306,9 +353,18 @@ async def _drive_goal(
                 round_id=round_id, stop_reason=stop_reason,
                 progress=progress,
             ) or goal
+            task_store=getattr(service,'task_store',None)
+            if model_observed and before and before.get('intake') and task_store is not None:
+                with task_store.bound_task(thread_id,before['task_id'],before['revision']) as current:
+                    intake=(current or {}).get('intake',{})
+                    if intake.get('goal_id')==goal.id and intake.get('draft_revision')==before['intake']['draft_revision']:
+                        intake['implementation_started']=True
+                        task_store._write(thread_id,current)
+        if isinstance(round_error,(GeneratorExit,asyncio.CancelledError)):
+            raise round_error
         try:
-            await _emit(emit, TurnEvent('goal_progress', {'goal_id': goal.id,
-                'round_id': round_id, **progress}))
+            yield TurnEvent('goal_progress', {'goal_id': goal.id,
+                'round_id': round_id, **progress})
         except BaseException as error:
             goal_store.update(goal.id, state='paused',
                 summary='目标运行已取消。' if isinstance(error, asyncio.CancelledError) else str(error),
@@ -318,17 +374,17 @@ async def _drive_goal(
         if round_error is not None and not isinstance(round_error, CostBudgetExceeded):
             raise round_error
         try:
-            await _emit(emit, TurnEvent("goal_status", {
+            yield TurnEvent("goal_status", {
                 "goal": goal,
                 "text": (
                     f"目标状态：{goal.state} · 第 {goal.round}/{goal.max_rounds} 轮 · "
                     f"累计约 ${goal.spent_usd:.4f}/${goal.max_cost_usd:.4f}"
                 ),
-            }))
+            })
             if goal.pause_reason:
-                await _emit(emit, TurnEvent("notice", {"text": goal.pause_reason}))
+                yield TurnEvent("notice", {"text": goal.pause_reason})
         except asyncio.CancelledError:
             # This round is already settled. Pause without charging it again.
             goal_store.update(goal.id, state="paused", summary="目标运行已取消。", thread_id=thread_id)
             raise
-    return goal
+    return

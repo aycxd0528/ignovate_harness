@@ -5,6 +5,7 @@ import {File02Icon,Attachment01Icon} from '@hugeicons/core-free-icons';
 import PromptBar from './components/PromptBar.jsx';
 import BranchedMenu from './components/BranchedMenu.jsx';
 import ThoughtLine from './components/ThoughtLine.jsx';
+import IgnovateAvatar from './components/IgnovateAvatar.jsx';
 
 // React owns only these hosts. The native renderer retains messages and output.
 const mounted=new Set();
@@ -52,7 +53,11 @@ export function mountThoughtLine(host,data){
     const label=props.status==='waiting_approval'?'等待批准':props.status==='stopping'?'正在停止':props.activity==='tools'?'正在调用工具':props.activity==='thinking'?'思考中':'处理中';
     const elapsed=Number.isFinite(props.elapsed_ms)?Math.max(0,props.elapsed_ms)+(live?Math.max(0,(props.now??performance.now())-props.receivedAt):0):null;
     const doneLabel=props.status==='completed'?'已完成':props.status==='failed'?'执行失败':props.status==='stopped'?'已停止':props.status==='interrupted'?'已中断':'执行结束';
-    return <ThoughtLine label={label} doneLabel={doneLabel} renderLabel={(text,working)=><span className={working?'runtime-label':'thought-done-label'} data-phase={props.activity||props.status}>{text}</span>} working={live} steps={stepsFor(props.tools,props.status)} elapsed={elapsed===null?undefined:elapsed/1000} showTimer={elapsed!==null} fontSize={12} color="var(--muted)" glyphColor={live?'var(--accent)':'var(--muted)'} collapseOnSettle className="ignovate-thought-line"/>;
+    return <div className="avatar-thought-line"><IgnovateAvatar status={props.status} activity={props.activity} decorative/><ThoughtLine glyph="none" label={label} doneLabel={doneLabel} renderLabel={(text,working)=><span className={working?'runtime-label':'thought-done-label'} data-phase={props.activity||props.status}>{text}</span>} working={live} steps={stepsFor(props.tools,props.status)} elapsed={elapsed===null?undefined:elapsed/1000} showTimer={elapsed!==null} fontSize={12} color="var(--muted)" glyphColor={live?'var(--accent)':'var(--muted)'} collapseOnSettle className="ignovate-thought-line"/></div>;
   });
   controller.tick=()=>{if(['running','queued','waiting_approval','stopping'].includes(controller.props.status))controller.update({now:performance.now()});};return controller;
+}
+
+export function mountAvatar(host,options={}){
+  return island(host,options,props=><IgnovateAvatar {...props}/>);
 }

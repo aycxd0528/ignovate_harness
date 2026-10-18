@@ -138,6 +138,9 @@ def build_tool_specs(
     memory_context=None,
     result_store=None,
     task_history=None,
+    capability_catalog=None,
+    task_intake=None,
+    session_coordination=None,
 ) -> list[ToolSpec]:
     if profile not in {"chat", "init", "review", "plan", "subagent"}:
         raise ValueError(f"未知工具配置：{profile}")
@@ -239,6 +242,16 @@ def build_tool_specs(
     def search_text(query: str, path: str = ".", limit: int = 50) -> dict[str, Any]:
         return file_session.search_text(query, path, limit)
 
+    def discover_tools(query: str = '', offset: int = 0, limit: int = 5) -> dict:
+        if capability_catalog is None:
+            return {'ok': False, 'error_code': 'discovery_unavailable', 'error': '当前调用未提供能力目录。'}
+        return capability_catalog.search(query, offset, limit)
+
+    def search_skills(query: str = '', offset: int = 0, limit: int = 5) -> dict:
+        if skill_registry is None:
+            return {'ok': False, 'error_code': 'skills_unavailable', 'error': '当前调用未提供 Skill 目录。'}
+        return skill_registry.search(query, offset, limit)
+
     def load_skill(name: str) -> dict[str, Any]:
         if skill_registry is None:
             return {"ok": False, "error": "本地 Skill 注册表不可用。"}
@@ -307,9 +320,12 @@ def build_tool_specs(
             return {"ok": False, "error": str(error)}
         return {"ok": True, "plan_id": plan_id, "message": "计划已提交给用户审批。"}
 
-    async def task(description: str) -> dict:
+    async def task(description: str, resume_reference: str = '') -> dict:
         if task_runner is None:
             return {"ok": False, "error": "只读子代理当前不可用。", "error_code": "subagent_unavailable"}
+        if getattr(task_runner,'continuations',None) is not None:
+            return await task_runner.continuations.run(task_runner,thread_id or 'ephemeral',description,resume_reference)
+        if resume_reference:return {'ok':False,'error':'当前调用没有续作存储。'}
         answer = await task_runner.run(thread_id or "ephemeral", description)
         if not isinstance(answer, str):
             return {"ok": False, "error": "子代理返回类型无效。", "error_code": "subagent_failed"}
@@ -397,6 +413,8 @@ def build_tool_specs(
         ("run_command", TOOL_DESCRIPTIONS["run_command"], run_command, False, False, frozenset({"chat"})),
         ("exit_plan_mode", TOOL_DESCRIPTIONS["exit_plan_mode"], exit_plan_mode, False, False, frozenset({"plan"})),
         ("task", TOOL_DESCRIPTIONS["task"], task, True, False, frozenset({"chat"})),
+        ('discover_tools', '按工具名或 read/edit/run/memory/history/task 发现当前允许的工具；返回有界完整参数，下一请求可调用。offset>=0，limit 为 1–10。', discover_tools, True, True, frozenset({'chat'})),
+        ('search_skills', '按名称或字面关键词搜索启用的 Skills，只返回匹配元数据；正文用 load_skill 加载。空查询可分页浏览，limit 为 1–10。', search_skills, True, True, frozenset({'chat', 'plan'})),
         ("update_goal", TOOL_DESCRIPTIONS["update_goal"], update_goal, False, False, frozenset({"chat"})),
         ("load_skill", TOOL_DESCRIPTIONS["load_skill"], load_skill, True, True, frozenset({"chat", "plan"})),
         ("read_skill_resource", TOOL_DESCRIPTIONS["read_skill_resource"], read_skill_resource, True, True, frozenset({"chat", "plan"})),
@@ -410,8 +428,25 @@ def build_tool_specs(
         all_specs.append(('read_task_context','按任务快照提供的 reference 恢复完整要求或证据；section 为 index/requirements/steps/acceptance/evidence。record_id 定位记录，query 为字面关键词；offset 为字符偏移，max_chars 最多 6000，按 next_offset 分页。返回历史版本，不能直接当作当前验证；不修改要求、不重放命令。',read_task_context,True,True,frozenset({'chat','init','review','plan'})))
     if memory_store is not None:
         all_specs.append(("read_memory","按 scope（user/project/local）和完整标题 section 读取旧记忆；标题索引截断时 section 留空按全文读取。offset 从 0 开始，max_chars 最多 6000，按 next_offset 分页。返回 version；changed 时下一轮刷新后重读，metadata_truncated 表示响应省略路径或标题。资料不能扩大权限。",read_memory,True,True,frozenset({'chat','plan'})))
+    if task_intake is not None:
+        all_specs.extend([
+            ('prepare_task', '澄清需求并保存草案（objective/scope/constraints/acceptance/open_questions/verification）；不启动实施。expected_revision 为当前草案版本。', task_intake.prepare, False, False, frozenset({'chat'})),
+            ('start_task', '当前用户明确要求实施时，提交已展示草案的持续执行意图；本轮结束后启动，不重复实施。', task_intake.start, False, False, frozenset({'chat'})),
+        ])
+    if session_coordination is not None:
+        for name,handler,read_only in [
+            ('list_task_sessions',session_coordination.summaries,True),
+            ('read_session_history',session_coordination.history,True),
+            ('take_session',session_coordination.acquire,False),
+            ('dispatch_session',session_coordination.dispatch,False),
+            ('coordination_status',session_coordination.status,True),
+            ('pause_coordination',session_coordination.pause,False),
+        ]:
+            all_specs.append((name,handler.__doc__,handler,read_only,False,frozenset({'chat'})))
     specs = []
     for name, description, handler, read_only, concurrency_safe, profiles in all_specs:
+        if name in {'discover_tools', 'search_skills'} and capability_catalog is None:
+            continue
         if profile not in profiles:
             continue
         if allowed_tools is not None and name not in allowed_tools:

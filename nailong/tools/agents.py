@@ -43,8 +43,10 @@ def readonly_prompt_parts(project_root, tool_names, permission_mode="default"):
 class ChildResearchBudgetMiddleware(AgentMiddleware):
     """Keep a small final answer affordable even after a large research result."""
 
-    def __init__(self):
+    def __init__(self, final_output_tokens=512):
         super().__init__()
+        self.final_output_tokens=final_output_tokens
+        self.used_final = False
         self.final_hold = None
         self.final_limit = None
         self.final_output = None
@@ -76,7 +78,8 @@ class ChildResearchBudgetMiddleware(AgentMiddleware):
                 result = json.loads(content)
                 if isinstance(result, dict):
                     result = {key: result[key] for key in (
-                        "ok", "path", "offset", "truncated", "read_complete", "error", "error_code",
+                        "ok", "path", "offset", "next_offset", "next_char_offset", "version", "tool_result_id",
+                        "truncated", "read_complete", "error", "error_code",
                         "content", "text", "files", "matches", "reference",
                     ) if key in result}
                     content = json.dumps(result, ensure_ascii=False)
@@ -102,7 +105,7 @@ class ChildResearchBudgetMiddleware(AgentMiddleware):
             return await handler(request)
         if self.final_hold is None:
             self.budget = budget
-            self.final_output = min(512, _configured_output(request), budget.output_tokens)
+            self.final_output = min(self.final_output_tokens, _configured_output(request), budget.output_tokens)
             # 3072 is a bound on serialized evidence bytes, not actual tokens.
             self.final_limit = _input_bound(self._final_request(request)) + self.final_output + 3072
             self.final_hold = await budget.reserve_final(self.final_limit, output=self.final_output)
@@ -111,6 +114,7 @@ class ChildResearchBudgetMiddleware(AgentMiddleware):
         except TokenBudgetExceeded as error:
             if budget.stopped or error.diagnostics.get("reason") not in {"final_answer_reserved", "input_does_not_fit"}:
                 raise
+            self.used_final = True
             prepared = self._bounded_final_request(request)
             token = active_final_reservation.set(self.final_hold)
             try:
@@ -134,6 +138,8 @@ class ChildTaskResult:
     usage_complete: bool = True
     usage_records: list[dict] = field(default_factory=list)
     budget_failure: dict | None = None
+    evidence: list[dict] = field(default_factory=list)
+    native_attestation: object = field(default=None,repr=False)
 
 
 class ReadOnlyTaskRunner:
@@ -148,6 +154,7 @@ class ReadOnlyTaskRunner:
     ):
         if max_concurrency < 1 or max_concurrency > 3:
             raise ValueError("子代理并发数必须在 1 到 3 之间。")
+        self.continuations=None
         self.worker = worker
         self.semaphore = asyncio.Semaphore(max_concurrency)
         self.token_budget = max(0, int(token_budget))
@@ -189,6 +196,9 @@ class ReadOnlyTaskRunner:
                                                output=self.child_output_tokens)
             except TokenBudgetExceeded as error:
                 self._refused_tasks[thread_id][fingerprint] = str(error)
+                from nailong.core.child_continuations import active_child_result
+                sink=active_child_result.get()
+                if sink is not None:sink.update(result=ChildTaskResult(str(error),budget_failure=error.diagnostics),usage=self._empty_usage(),usage_complete=True)
                 return str(error)
             admission.task_key = fingerprint[:16]
             budget_token = active_token_budget.set(budget)
@@ -226,6 +236,9 @@ class ReadOnlyTaskRunner:
                             usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
                             estimated = True
                         await budget.settle_admission(admission, usage, complete=not estimated)
+                        from nailong.core.child_continuations import active_child_result
+                        sink=active_child_result.get()
+                        if sink is not None:sink.update(result=result,usage=dict(usage),usage_complete=not estimated)
                         async with self._budget_lock:
                             records=collector.records or (result.usage_records if isinstance(result,ChildTaskResult) else [])
                             self._pending_records[thread_id].extend(dict(row) for row in records)
