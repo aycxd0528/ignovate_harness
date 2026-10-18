@@ -89,6 +89,34 @@ class GoalStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(saved.spent_usd,0)
 
 class NaturalIntakeTests(GoalStreamTests):
+    async def test_directory_scope_is_canonical_before_native_goal_handoff(self):
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        responses=self.natural_file_responses()
+        responses[0].tool_calls[0]['args']['brief']['scope']=['./']
+        self.factory.model.responses=responses
+        events=[e async for e in self.service.stream_turn('请创建 output.txt 并持续推进',
+            {'configurable':{'thread_id':'canonical'}},approval_handler=lambda *a:'approve_once')]
+        self.assertEqual((self.root/'output.txt').read_text(),'native surface')
+        task=self.factory.task_store.snapshot('canonical')
+        self.assertEqual(task['scope'],['.'])
+        self.assertEqual(task['intake']['scope'],['.'])
+        self.assertTrue(any(e.kind=='goal_progress' for e in events))
+
+    async def test_brief_canonicalizes_acceptance_paths_without_changing_input(self):
+        from nailong.core.task_intake import TaskIntake,user_request
+        import copy
+        brief={'objective':'测试 src','scope':['src/'],'acceptance':[{
+            'description':'src 通过测试','step':'unit','paths':['src/']}],
+            'verification':[{'name':'unit','kind':'test','command':'python -m unittest'}]}
+        original=copy.deepcopy(brief)
+        token=user_request.set({'thread_id':'canonical','text':'请测试 src','turn_id':'current'})
+        try:result=TaskIntake(self.factory.task_store,'canonical').prepare(brief)
+        finally:user_request.reset(token)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['brief']['scope'],['src'])
+        self.assertEqual(result['brief']['acceptance'][0]['paths'],['src'])
+        self.assertEqual(brief,original)
+
     async def test_external_budget_accounts_for_natural_startup_and_goal_calls(self):
         from nailong.core.budgets import GoalCostBudget
         self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')

@@ -100,12 +100,12 @@ class TaskIntake:
         """保存需求草案；列明关键疑问和可观察验收。此操作不启动实施。"""
         try:
             request=self._request(); brief=validate_brief(brief)
-            for path in brief['scope']:self.store._relative(path)
+            brief['scope']=[self.store._relative(path) for path in brief['scope']]
             steps={row['name']:row for row in brief['verification']}
             for row in brief['acceptance']:
                 if isinstance(row,dict):
                     if row['step'] not in steps:raise ValueError('验收步骤不存在。')
-                    for path in row['paths']:self.store._relative(path)
+                    row['paths']=[self.store._relative(path) for path in row['paths']]
             with self.store._locked(self.thread_id):
                 task=self.store._read(self.thread_id)
                 previous=(task or {}).get('intake',{})
