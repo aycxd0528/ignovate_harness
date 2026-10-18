@@ -113,13 +113,15 @@ def validate_task_snapshot(snapshot):
         })
         if 'verification_binding' in row:
             binding = row['verification_binding']
-            if not isinstance(binding, dict) or binding.get('source') != 'user':
-                raise TaskContextError('验收 verification_binding 必须为用户提供的步骤/覆盖路径映射。')
+            if not isinstance(binding, dict) or binding.get('source') not in {'user', 'agent'}:
+                raise TaskContextError('验收 verification_binding 必须注明用户或代理声明的步骤/覆盖路径映射。')
             result['acceptance'][-1]['verification_binding'] = {
                 'step': _text(binding, 'step', nonempty=True),
                 'paths': _strings(binding, 'paths', paths=True),
-                'source': 'user',
+                'source': binding['source'],
             }
+            if binding['source'] == 'agent':
+                result['acceptance'][-1]['requirement_ids'] = _strings(row, 'requirement_ids')
     result['evidence'] = [{
         'id': _text(row, 'id', nonempty=True),
         'kind': _choice(row, 'kind', {'read', 'edit', 'test', 'build', 'run', 'review', 'manual'}),

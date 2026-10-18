@@ -24,6 +24,13 @@ _WORK = re.compile(
     re.IGNORECASE,
 )
 _QUESTION = re.compile(r'是什么|为什么|怎么样|怎样|如何|是否|能否|可否|了吗|了么|先解释|解释一下|说明一下|\b(?:what|why|how|whether)\b', re.IGNORECASE)
+_REPORT = re.compile(r'^(?:请\s*)?(?:整理|输出|提供|总结)\s*(?:最终|本次|本轮|任务|交付|验收|变更).{0,24}(?:说明|报告|总结)', re.IGNORECASE)
+_NO_AUTOMATIC_EXECUTION = re.compile(
+    r'只读|(?:不要|禁止|暂不|先不|先别|别|不必|无需|不用|不需要|不)'
+    r'(?:(?:再|重新|额外|擅自|立即|马上|先|任何|一切|进行)\s*)*'
+    r'(?:运行|执行|测试|验证|启动|操作|做任何操作|做任何事|做任何修改)'
+)
+_REPORT_ONLY = re.compile(r'(?:仅|只)(?:需(?:要)?|要|做)?(?:汇报|说明|输出|报告)')
 _NO_EXECUTION = re.compile(
     r'(?:不要|不需要|禁止|暂不|先不|别)(?:再|先|立即|马上)?(?:恢复|继续)'
     r'|(?:不要|禁止|暂不|先不|别)(?:再)?执行(?:任务|任何操作|任何任务)'
@@ -55,6 +62,10 @@ def _live_request_text(message: str) -> str:
     return re.sub(r'''“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`\n]*`''', '', '\n'.join(lines))
 
 
+def automatic_execution_prohibited(message):
+    return bool(_NO_AUTOMATIC_EXECUTION.search(_live_request_text(message)))
+
+
 def task_request_kind(message: str) -> str:
     """Match whole status questions; a mixed question/change request stays work."""
     live = _live_request_text(message).strip()
@@ -66,6 +77,9 @@ def task_request_kind(message: str) -> str:
     if explicit_new_task(text):return 'work'
     if text.casefold() in _RESUME:
         return 'resume'
+    if (_REPORT.search(text) and not _QUESTION.search(text) and not re.search(r'[?？]', text)
+            and not _NO_AUTOMATIC_EXECUTION.search(text) and not _REPORT_ONLY.search(text)):
+        return 'report'
     if _AUTHORIZED_WORK.search(text) and (_QUESTION.search(live) or re.search(
         r'吗|么|[?？]|不同意|不授权|未授权|(?:撤回|撤销|取消)授权|(?:不要|暂不|先不)(?:执行|实施)', live)):
         return 'other'

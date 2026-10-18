@@ -67,6 +67,11 @@ class TaskLifecycleMiddleware(AgentMiddleware):
         if self.snapshot is None:
             return None
         expected = self.snapshot
+        from nailong.core.task_acceptance import binding_transition
+        from nailong.core.task_intake import user_request
+        current = self.task_store.snapshot(expected['thread_id'])
+        if binding_transition(current, expected, user_request.get()):
+            expected['revision'] = current['revision']
         with self.task_store.bound_task(expected['thread_id'], expected['task_id'], expected['revision']) as task:
             if task is None:
                 raise TaskExecutionStopped('本轮任务已更新；旧执行已停止，请按当前要求继续。', task_replaced=True)

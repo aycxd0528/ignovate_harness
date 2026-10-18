@@ -297,6 +297,11 @@ class PermissionEngine:
             if is_native_coordination(spec,self.project_root):
                 return PermissionResult(Decision.ALLOW,'原生协调控制；文件与命令仍在目标会话接受独立审批。',suggested_rule=suggested)
             return PermissionResult(Decision.DENY,'协调工具不是本项目原生处理器。')
+        if name == 'bind_task_acceptance':
+            from nailong.core.task_acceptance import is_native_acceptance
+            if is_native_acceptance(spec, self.project_root):
+                return PermissionResult(Decision.ALLOW, '仅绑定原生任务验收；实际命令另行审批。', suggested_rule=suggested)
+            return PermissionResult(Decision.DENY, '验收工具不是本项目原生处理器。')
         if name in {'prepare_task','start_task'}:
 
             from nailong.core.task_intake import is_native_intake

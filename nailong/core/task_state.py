@@ -203,7 +203,7 @@ class TaskStore:
             if 'verification_binding' in row:
                 binding = row['verification_binding']
                 if (not isinstance(binding, dict) or set(binding) != {'step', 'paths', 'source'}
-                        or binding['source'] != 'user' or row['kind'] not in {'test', 'build', 'run'}
+                        or binding['source'] not in {'user', 'agent'} or row['kind'] not in {'test', 'build', 'run'}
                         or row['id'].startswith('verify:')
                         or not isinstance(binding['step'], str) or not binding['step'].strip()
                         or len(binding['step']) > 80 or not isinstance(binding['paths'], list)
@@ -222,6 +222,16 @@ class TaskStore:
                 raise ValueError('任务证据无效。')
             for path in row['paths']:
                 self._validate_recorded_path(path)
+        if 'acceptance_plan' in value:
+            from nailong.core.task_acceptance import validate_plan
+            validate_plan(value['acceptance_plan'], value, self._relative)
+        requirement_ids = {row['id'] for row in requirement_records(value)}
+        for row in value['acceptance']:
+            if row.get('verification_binding', {}).get('source') == 'agent':
+                if (not row['id'].startswith('auto:') or 'acceptance_plan' not in value
+                        or not isinstance(row.get('requirement_ids'), list) or not row['requirement_ids']
+                        or any(not isinstance(key, str) or key not in requirement_ids for key in row['requirement_ids'])):
+                    raise ValueError('代理验收缺少计划或用户要求关联。')
         if 'intake' in value:
             from nailong.core.task_intake import validate_brief
             intake=value['intake']
@@ -772,15 +782,20 @@ class TaskStore:
                 if current_revision:
                     for criterion in task['acceptance']:
                         binding = criterion.get('verification_binding')
-                        if (not isinstance(binding, dict) or binding.get('source')!='user'
+                        if (not isinstance(binding, dict) or binding.get('source') not in {'user', 'agent'}
                                 or binding.get('step')!=name or criterion['kind']!=kind):
                             continue
+                        if binding['source'] == 'agent':
+                            from nailong.core.task_acceptance import current_plan, configuration_fingerprint
+                            plan = current_plan(task)
+                            if not plan or record.get('configuration_fingerprint') != configuration_fingerprint(plan['verification']):
+                                continue
                         self.record_evidence(thread_id, {
                             'id': f"verify-{record.get('run_id', '')}-{index}-"+observation_digest(criterion['id'])[:16],
                             'kind':kind,'source':'runtime','status':status,'task_revision':record['task_revision'],
                             'paths':list(binding['paths']),'input_fingerprint':record.get('input_after',''),
                             'coverage':'complete' if same_input and started else 'unknown',
-                            'summary':f"按用户声明的覆盖绑定执行配置验证 {name}。",
+                            'summary':f"按{'用户' if binding['source']=='user' else '代理'}声明的覆盖绑定执行配置验证 {name}。",
                             'artifact_ref':f"verification:{record.get('run_id','')}",
                         }, acceptance_ids=[criterion['id']])
             task = self._read(thread_id)

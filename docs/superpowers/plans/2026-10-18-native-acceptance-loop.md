@@ -31,9 +31,9 @@ Files: new nailong/core/task_acceptance.py; task_state.py, verification.py, capa
 
 Interfaces: bind_task_acceptance(acceptance, verification, expected_revision) returns task identity/revision; current task plan resolves native verification. VerificationService remains owner of all execution evidence.
 
-- [ ] Write real store/graph/process tests: success, failure, denied process, stale revision, invalid path/step, new requirement, file change, preserved criteria and idempotence. Witness failures first.
-- [ ] Implement bounded atomic binding and native tool/schema/permission discovery.
-- [ ] Execute current plan before final report; adopt only native binding revision for this turn; persist real evidence and errors.
+- [x] Write real store/graph/process tests: success, failure, denied process, stale revision, invalid path/step, new requirement, file change, preserved criteria and idempotence. Witness failures first.
+- [x] Implement bounded atomic binding and native tool/schema/permission discovery.
+- [x] Execute current plan before final report; adopt only native binding revision for this turn; persist real evidence and errors.
 - [ ] Run focused and complete suites; independent review; resolve important findings with red/green regressions; commit.
 
 ## Task 2 — Fixed multi-task repeated evaluation
@@ -57,3 +57,8 @@ Files: existing macOS packaging/CI, version declarations, docs/RELEASE_NOTES.md,
 
 - Baseline: 4a63aaf, worktree clean and isolated. Prior canonical evidence audited; main checkout has user IDE staging. Previous goal turn classified progress: two product fixes, actual six-round execution and evidence archive.
 - Execution authorized by user's persistent end-to-end goal; implement inline without repeated approval gates.
+- Native binding red/green witnessed; 1722 tests passed with 44 skips before independent-review fixes. Review reproduced legacy-goal override, explicit tool allowlist autorun, and missing declaration provenance; regression failures witnessed, fixes in progress.
+- Budget side-chat guidance received: keep strict hard ceiling and separate actual use/reservations/reasons; stage-specific actual output limits require wire-level truncation/recovery proof before any adoption, never accounting-only changes or default overspend. Evaluate only with frozen settings; no in-flight run restart. Existing full-output reserve behavior remains unchanged in Task 1.
+- Review security regressions reproduced and fixed: negative report/work execution directives under preapproved commands; model-authored automatic verification bypassing command hooks; post-hook cancellation losing an already-executed receipt. Also hardened the preexisting automatic sustained-goal/coordination hook omission with the same shared callbacks, backed by a real goal-hook regression. Explicit user /verify interface unchanged.
+- Updated user objective retains the entire delivery/test/macOS release scope and requests waiting through any 5-hour product quota reset. No quota stop has been observed; preserve actual process handles and revalidate before resuming.
+- Final Task 1 native changes: 23 focused tests passed; independent review passed 53 targeted tests and found no remaining material issue. Complete suite after all fixes: 1734 tests, 1690 passed, 44 skipped (175.057s); Node 17/17 passed. Logs and red/green evidence under ignored artifacts/native-acceptance-*. Preserve this result separately from post-main-integration validation and paid trials.

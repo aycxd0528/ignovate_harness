@@ -87,6 +87,10 @@ def _coverage_group(report: dict, *, configured: bool) -> dict:
             group[key].append(row["id"])
             if row["required"]:
                 required[key].append(row)
+    if not configured:
+        sources = {row.get('coverage_declaration', {}).get('source')
+            for key in required for row in required[key]}
+        group['coverage_basis'] = 'agent_declared' if 'agent' in sources else 'user_declared'
     if required["failed"]:
         group["status"] = "failed"
     elif required["pending"] or required["stale"]:
@@ -120,6 +124,9 @@ def _assess_acceptance(item: dict, snapshot: dict, index: dict, duplicates: set,
                        scope: tuple[str, ...], fingerprint: str | None) -> dict:
     row = {"id": item["id"], "description": item["description"], "kind": item["kind"],
            "required": item["required"], "status": "pending", "evidence_ids": [], "reasons": []}
+    binding = item.get('verification_binding')
+    if isinstance(binding, dict) and binding.get('source') in {'agent', 'user'}:
+        row['coverage_declaration'] = {'source': binding['source'], 'requirement_ids': list(item.get('requirement_ids', []))}
     ids = item.get("evidence_ids")
     if not isinstance(ids, list) or not all(_text(identifier) for identifier in ids):
         row["reasons"].append("验收证据引用无效。")
@@ -348,6 +355,12 @@ def render_delivery_report(report: dict) -> str:
     status = report.get("status")
     label = labels.get(status, "未验证") if isinstance(status, str) else "未验证"
     lines = ["交付状态：" + label]
+    agent_declared = any(row.get('coverage_declaration', {}).get('source') == 'agent'
+            for key in ('satisfied', 'pending', 'failed', 'stale') for row in report.get(key, []) if isinstance(row, dict))
+    if agent_declared:
+        if status == 'verified':
+            lines[0] = '交付状态：原生检查已验证（覆盖含代理声明）'
+        lines.append('覆盖范围含代理声明的验收条件；执行结果来自原生验证，不等于用户确认或独立功能验收。')
     for key, title in (("configured_verification", "配置验证流程"), ("goal_coverage", "用户目标覆盖")):
         group = report.get(key)
         if isinstance(group, dict):
@@ -355,6 +368,10 @@ def render_delivery_report(report: dict) -> str:
             group_label = labels.get(state, "未验证") if isinstance(state, str) else "未验证"
             if key == "configured_verification" and state == "verified":
                 group_label = "配置执行条件已通过（不代表功能覆盖）"
+            if key == 'goal_coverage' and group.get('coverage_basis') == 'agent_declared':
+                title = '代理声明的目标覆盖'
+                if state == 'verified':
+                    group_label = '绑定的原生检查已通过；语义覆盖需独立验收'
             lines.append(title + "：" + group_label)
     for key, title in (("satisfied", "已满足"), ("pending", "待确认"), ("failed", "失败"),
                        ("stale", "过期"), ("waived", "用户免除（不计为验证通过）")):
@@ -370,6 +387,9 @@ def render_delivery_report(report: dict) -> str:
             description = _display(row.get("description")) or "描述未知"
             optional = "（可选）" if row.get("required") is False else ""
             lines.append(f"- {identifier} {description}{optional}".strip())
+            declaration = row.get('coverage_declaration', {})
+            if declaration.get('source') == 'agent':
+                lines.append('  代理声明覆盖要求：' + '、'.join(_display(key) for key in declaration.get('requirement_ids', [])))
             reasons = row.get("reasons", [])
             if isinstance(reasons, list):
                 lines.extend("  " + text for reason in reasons if (text := _display(reason)))

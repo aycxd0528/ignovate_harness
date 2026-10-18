@@ -281,7 +281,9 @@ class SessionCoordination:
                             task_store=self.tasks,api_key=self.factory.settings.api_key,
                             steps_override=target_intake.get('verification') if target_intake.get('stage')=='executing' and target_intake.get('verification') else None)
                         if verification.list_steps():
-                            verified=await verification.run(row['target'],approval=approval,permission_engine=service.permission_engine,permission_mode=service.permission_mode)
+                            from nailong.core.verification import native_verification_callbacks
+                            verified=await verification.run(row['target'],approval=approval,permission_engine=service.permission_engine,
+                                permission_mode=service.permission_mode, **native_verification_callbacks(service, approval))
                             verification_status=verified['status']
                     delivery=await service.delivery_report(row['target'])
                     self.guard(row)

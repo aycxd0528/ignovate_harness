@@ -376,7 +376,11 @@ class AgentService:
             from nailong.core.verification import VerificationService
             intake=(self.task_store.snapshot(thread_id) or {}).get('intake',{})
             steps = VerificationService(self.permission_engine.project_root, self.session_store,
-                steps_override=intake.get('verification') if intake.get('stage')=='executing' and intake.get('verification') else None).list_steps()
+                task_store=self.task_store,
+                steps_override=intake.get('verification') if intake.get('stage')=='executing' and intake.get('verification') else None).list_steps(thread_id)
+            if (self.task_store.snapshot(thread_id) or {}).get('acceptance_plan') and not steps:
+                # New user requirements must not erase the prior checks or reuse their pass.
+                return self.task_store.snapshot(thread_id)
             self.task_store.configure_verification(thread_id, steps)
         if profile == 'review':
             current = self.task_store.snapshot(thread_id)
@@ -472,6 +476,15 @@ class AgentService:
         before = self.task_store.snapshot(thread_id)
         if before is None or before['task_id'] != turn_task['task_id']:
             return None
+        if name == 'bind_task_acceptance' and ok is True:
+            from nailong.core.task_intake import user_request
+            live = user_request.get()
+            plan = before.get('acceptance_plan', {})
+            if (live and plan.get('source_turn') == live['turn_id']
+                    and body.get('task_id') == turn_task['task_id']
+                    and body.get('previous_revision') == turn_task['revision']
+                    and body.get('task_revision') == before['revision'] == turn_task['revision'] + 1):
+                turn_task['revision'] = before['revision']
         versioned_read = (name == 'read_file' and ok is True and
             isinstance(body.get('version'), str) and body.get('coverage') in {'partial', 'complete'})
         current_input = (await self._task_input_fingerprint(before)
@@ -1820,6 +1833,25 @@ class AgentService:
                     yield child_usage
                 if review_collector is not None:
                     await self._finish_review(thread_id, participating_task, review_collector)
+                if (profile == 'chat' and not pin_message and participating_task is not None
+                        and (allowed_tools is None or 'run_command' in allowed_tools)):
+                    from nailong.core.task_acceptance import current_plan
+                    current = self.task_store.snapshot(thread_id)
+                    if (current and current['task_id'] == participating_task['task_id']
+                            and current['revision'] == participating_task['revision'] and current_plan(current)):
+                        from nailong.core.verification import VerificationService
+                        verifier = VerificationService(self.permission_engine.project_root, self.session_store,
+                            task_store=self.task_store, api_key=getattr(self.runtime_factory.settings, 'api_key', ''))
+                        from nailong.core.verification import bound_verification_is_current, native_verification_callbacks
+                        if verifier.list_steps(thread_id) and not await bound_verification_is_current(verifier, thread_id):
+                            verification_stream = verifier.stream(thread_id, approval=approval_handler,
+                                permission_engine=self.permission_engine, permission_mode=self.permission_mode,
+                                **native_verification_callbacks(self, approval_handler, profile))
+                            try:
+                                async for event in verification_stream:
+                                    yield self._event(thread_id, event.kind, event.data)
+                            finally:
+                                await verification_stream.aclose()
                 report = (await self.delivery_report(thread_id, expected_task_id=participating_task['task_id'],
                     expected_revision=participating_task['revision']) if participating_task is not None else None)
                 if report is not None:
