@@ -1,0 +1,13 @@
+:root{--code-font:Consolas,"Cascadia Mono","Cascadia Code","SFMono-Regular",Menlo,Monaco,"Liberation Mono",monospace;--code-keyword:#9a205a;--code-string:#1b6b35;--code-number:#075bbc;--code-title:#6639ba;--code-attribute:#8c3800;--code-comment:#626b75}
+:root[data-theme=dark]{--code-keyword:#ff9bce;--code-string:#9cdb9a;--code-number:#8cc8ff;--code-title:#d9b8ff;--code-attribute:#ffc58f;--code-comment:#a8adb5}
+@media(prefers-color-scheme:dark){:root[data-theme=system]{--code-keyword:#ff9bce;--code-string:#9cdb9a;--code-number:#8cc8ff;--code-title:#d9b8ff;--code-attribute:#ffc58f;--code-comment:#a8adb5}}
+:root .prose pre,:root .prose code{font-family:var(--code-font);font-variant-ligatures:none}
+.prose pre{font-size:14px;line-height:1.65;tab-size:4}
+.prose pre code{font-size:inherit;line-height:inherit;color:var(--ink)}
+.prose .hljs-keyword,.prose .hljs-selector-tag,.prose .hljs-meta .hljs-keyword,.prose .hljs-doctag{color:var(--code-keyword)}
+.prose .hljs-string,.prose .hljs-regexp,.prose .hljs-template-tag,.prose .hljs-template-variable,.prose .hljs-addition{color:var(--code-string)}
+.prose .hljs-number,.prose .hljs-literal,.prose .hljs-symbol,.prose .hljs-bullet,.prose .hljs-built_in,.prose .hljs-link{color:var(--code-number)}
+.prose .hljs-title,.prose .hljs-section,.prose .hljs-type,.prose .hljs-selector-id,.prose .hljs-selector-class{color:var(--code-title)}
+.prose .hljs-attr,.prose .hljs-attribute,.prose .hljs-variable,.prose .hljs-name,.prose .hljs-tag,.prose .hljs-meta,.prose .hljs-deletion{color:var(--code-attribute)}
+.prose .hljs-comment,.prose .hljs-quote{color:var(--code-comment)}
+.prose .hljs-emphasis{font-style:italic}.prose .hljs-strong{font-weight:600}

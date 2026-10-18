@@ -111,6 +111,8 @@ class GUIHandler(BaseHTTPRequestHandler):
                 types = {'index.html': 'text/html', 'app.js': 'text/javascript', 'map.js': 'text/javascript', 'map-control.js': 'text/javascript',
                          'style.css': 'text/css', 'settings.css': 'text/css', 'settings.js': 'text/javascript',
                          'trace.css': 'text/css', 'trace.js': 'text/javascript',
+                         'queue.css': 'text/css', 'queue.js': 'text/javascript',
+                         'syntax.css': 'text/css', 'syntax.js': 'text/javascript', 'syntax-engine.js': 'text/javascript',
                          'react-bits.css': 'text/css', 'react-bits.js': 'text/javascript',
                          'react-bits-islands.css': 'text/css', 'react-bits-islands.js': 'text/javascript',
                          'preferences.js': 'text/javascript', 'rendering.js': 'text/javascript', 'startup.js': 'text/javascript', 'motion.css': 'text/css', 'ui.js': 'text/javascript', 'icons.js': 'text/javascript',

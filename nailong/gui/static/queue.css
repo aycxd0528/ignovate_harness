@@ -1,0 +1,8 @@
+.message-queue{max-width:940px;margin:0 auto 8px;max-height:190px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.message-queue:before{content:'等待发送';display:block;padding:7px 12px 0;color:var(--muted);font-size:11px}
+.message-queue[data-paused=true]:before{content:'等待恢复 · 点击“显式恢复队列”后发送'}
+.queued-message{display:flex;align-items:center;gap:8px;padding:6px 10px;min-width:0;border-bottom:1px solid var(--border)}
+.queued-message:last-child{border:0}.queued-message-text{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:64px;overflow:auto;font-size:13px;line-height:1.55}
+.queued-message-actions{display:flex;align-items:center;gap:3px;flex-shrink:0}.queued-message-actions .icon-button{width:28px;height:28px;padding:6px}
+.queued-message-editor{flex:1;min-width:0;resize:vertical;font:inherit;font-size:13px;line-height:1.55;max-height:120px;min-height:56px;padding:6px 8px}
+@media(max-width:600px){.queued-message:has(textarea){flex-wrap:wrap}.queued-message-editor{flex-basis:100%}.queued-message:has(textarea) .queued-message-actions{margin-left:auto}}

@@ -294,6 +294,12 @@ class BranchStore:
             if row['thread_id'] in exclude:
                 continue
             events = self.sessions.read_events(row['thread_id'])
+            if not events:
+                try:
+                    if not self.sessions.session_path(row['thread_id']).stat().st_size:
+                        continue
+                except FileNotFoundError:
+                    continue
             first_input=next((event.get('data',{}).get('text','') for event in events if event.get('kind')=='user'), '')
             title=row.get('name') or ' '.join(str(first_input).split())[:80] or '历史会话'
             branch = existing.get(row['thread_id']) or self.create(title, thread_id=row['thread_id'], legacy=True)

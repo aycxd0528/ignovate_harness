@@ -49,6 +49,25 @@ class NativeGUITests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('A_ONLY_LATER_REQUIREMENT', json.dumps(task, ensure_ascii=False))
         self.assertEqual([n['prompt'] for n in self.controller.branches.path(child['id'])], ['共同设计要求', 'B_ONLY_REQUIREMENT'])
 
+    async def test_imported_runtime_retains_context_through_two_gui_restarts(self):
+        thread = self.root['thread_id']
+        # Simulate the original CLI/runtime, before GUI node bindings existed.
+        async for _event in self.controller.service.stream_turn('YESTERDAY_SAVED_REQUIREMENT', {'configurable': {'thread_id': thread}}):
+            pass
+        for message in ('TODAY_CONTINUATION', 'SECOND_RESTART_CONTINUATION'):
+            await self.controller.close()
+            with patch('agent.ChatDeepSeek', return_value=OfflineModel(responses=[])):
+                self.factory = AgentRuntimeFactory(Settings('test-key', 'https://example.test', 'unknown', self.project), session_store=self.sessions)
+            self.controller = GUIController(self.project, sessions=self.sessions, service=AgentService(self.factory, api_key='test-key'))
+            branch = next(branch for branch in self.controller.snapshot()['branches'] if branch['id'] == self.root['id'])
+            self.assertTrue(branch['can_continue'], branch['continuation_reason'])
+            await self.send(branch, message)
+            self.assertEqual(self.controller.branches.branch(branch['id'])['thread_id'], thread)
+            history = str(self.controller.service.get_history(thread))
+            self.assertIn('YESTERDAY_SAVED_REQUIREMENT', history)
+            self.assertIn(message, history)
+        self.assertIn('TODAY_CONTINUATION', history)
+
     async def test_map_followup_from_history_forks_exactly_once_on_retry(self):
         first = await self.send(self.root, '共同输入')
         await self.send(self.root, 'MAIN_ONLY_LATER')
