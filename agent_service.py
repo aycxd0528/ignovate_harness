@@ -1915,8 +1915,41 @@ class AgentService:
             self._pause_turn_task(thread_id)
             self._event(thread_id,'usage_missing',{'scope':'main','reason':'cancelled_or_timed_out'})
             raise
-        except CostBudgetExceeded:
-            self._pause_turn_task(thread_id, '已达到本次成本预算。')
+        except CostBudgetExceeded as error:
+            for event in response_usage():
+                yield event
+            reason = self._redact_secret(str(error))
+            self._pause_turn_task(thread_id, reason)
+            with self._bound_turn_task(thread_id) as bound:
+                saved = dict(bound) if bound is not None else None
+            report = (await self.delivery_report(thread_id,
+                expected_task_id=participating_task['task_id'],
+                expected_revision=participating_task['revision']) if participating_task is not None else None)
+            report = dict(report or {'status': 'unverified'})
+            if report['status'] in {'verified', 'reviewed'}:
+                report['status'] = 'unverified'
+            report['reasons'] = [*report.get('reasons', []), '本轮因费用准入暂停，尚未完成交付收尾。']
+            paths = list((saved or {}).get('changed_paths', []))
+            resume = '确认可用预算后再继续；原任务、已落盘改动和证据保留。'
+            handoff = {key: saved[key] for key in ('task_id', 'revision')} if saved else {}
+            handoff.update(changed_paths=paths, resume_condition=resume)
+            from nailong.core.delivery import render_delivery_report
+            text = reason + '\n' + render_delivery_report(report)
+            if paths:
+                text += '\n已记录改动路径：' + '、'.join(paths[:40])
+                if len(paths) > 40:
+                    text += f'（另有 {len(paths)-40} 项保留在任务记录中）'
+            text += '\n' + resume
+            diagnostics = self._redact_tree(error.diagnostics)
+            yield self._event(thread_id, 'cost_budget_stop', diagnostics)
+            yield self._event(thread_id, 'delivery', {**report, 'text': render_delivery_report(report)})
+            yield self._event(thread_id, 'final', self._redact_tree({
+                'text': text, 'local': True, 'output_status': 'budget_limit',
+                'diagnostics': diagnostics, 'delivery': report, 'handoff': handoff,
+                'stats': {'model_calls': turn_budget.calls, 'model_call_limit': max_model_calls,
+                          'tool_calls': tool_ledger.request_count}}))
+            # Preserve the service exception contract and the callers' budget
+            # status; the local report costs no additional provider request.
             raise
         except Exception:
             self._pause_turn_task(thread_id)

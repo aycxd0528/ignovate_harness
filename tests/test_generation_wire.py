@@ -16,12 +16,14 @@ from nailong.core.sessions import ProjectSessionStore
 
 
 def sse_completion(*, identity, text, reasoning, finish_reason, inputs, outputs,
-                   cache, reasoning_tokens):
+                   cache, reasoning_tokens, tool_calls=None):
     base = {'id': identity, 'object': 'chat.completion.chunk', 'created': 1,
             'model': 'deepseek-flash'}
     delta = {'role': 'assistant', 'content': text}
     if reasoning:
         delta['reasoning_content'] = reasoning
+    if tool_calls:
+        delta['tool_calls']=tool_calls
     chunks = [
         {**base, 'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]},
         {**base, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': finish_reason}]},
@@ -65,12 +67,84 @@ class GenerationWireTests(unittest.IsolatedAsyncioTestCase):
 
         factory = self.factory(replay)
         budget = GoalCostBudget(CostEstimator('deepseek-flash', self.root), .01)
+        events=[]
         with self.assertRaises(CostBudgetExceeded):
-            _events = [event async for event in AgentService(factory).stream_turn(
-                '请介绍当前项目并说明用途', self.config, allowed_tools=set(), cost_budget=budget)]
+            async for event in AgentService(factory).stream_turn(
+                    '请介绍当前项目并说明用途', self.config, allowed_tools=set(), cost_budget=budget):
+                events.append(event)
         self.assertEqual(len(self.requests), 0)
         self.assertEqual(budget.reserved, 0)
         self.assertTrue(budget.stopped)
+        finals=[e.data for e in events if e.kind=='final']
+        self.assertEqual(len(finals),1,'budget refusal must leave a local handoff report')
+        final=finals[0]
+        self.assertTrue(final['local'])
+        self.assertEqual(final['output_status'],'budget_limit')
+        self.assertEqual(final['delivery']['status'],'unverified')
+        self.assertEqual(final['stats']['model_calls'],0)
+        self.assertGreater(final['diagnostics']['required_usd'],final['diagnostics']['remaining_usd'])
+
+    async def test_budget_pressure_compacts_prior_turns_in_actual_sdk_request(self):
+        from nailong.core.budgets import GoalCostBudget
+        from nailong.core.costs import CostEstimator
+        old_reasoning='old reasoning '*20000
+        def replay(_request,attempt):
+            return sse_completion(identity=f'phase-{attempt}',text='计划已记录' if attempt==1 else '核对完成',
+                reasoning=old_reasoning if attempt==1 else 'Current reasoning.',finish_reason='stop',
+                inputs=100,outputs=70000 if attempt==1 else 50,cache=80,reasoning_tokens=69990 if attempt==1 else 30)
+        factory=self.factory(replay)
+        service=AgentService(factory)
+        budget=GoalCostBudget(CostEstimator('deepseek-flash',self.root),.3)
+        [e async for e in service.stream_turn('请排查项目并先给出计划。',self.config,cost_budget=budget)]
+        events=[e async for e in service.stream_turn('请继续排查项目并核对方案。',self.config,cost_budget=budget)]
+        self.assertEqual(len(self.requests),2)
+        payload=json.loads(self.requests[-1].content)
+        self.assertEqual(payload['max_tokens'],131072)
+        self.assertNotIn(old_reasoning,json.dumps(payload,ensure_ascii=False))
+        self.assertIn('read_history_result',{t['function']['name'] for t in payload['tools']})
+        self.assertEqual(events[-1].data['text'],'核对完成')
+        self.assertFalse(budget.stopped)
+
+    async def test_cost_pause_preserves_edit_and_resumes_after_restart_without_replay(self):
+        from nailong.core.budgets import CostBudgetExceeded, GoalCostBudget
+        from nailong.core.costs import CostEstimator
+        def replay(_request,attempt):
+            return sse_completion(identity=f'resume-{attempt}',text='' if attempt==1 else '文件已保留，尚待验收。',
+                reasoning='Apply requested edit.' if attempt==1 else 'The recorded edit already succeeded.',
+                finish_reason='tool_calls' if attempt==1 else 'stop',inputs=100,
+                outputs=131072 if attempt==1 else 50,cache=80,reasoning_tokens=131000 if attempt==1 else 30,
+                tool_calls=[{'index':0,'id':'apply-once','type':'function','function':{'name':'write_file',
+                    'arguments':json.dumps({'path':'output.txt','content':'retained edit'})}}] if attempt==1 else None)
+        factory=self.factory(replay)
+        service=AgentService(factory)
+        first=GoalCostBudget(CostEstimator('deepseek-flash',self.root),.2)
+        events=[]
+        with self.assertRaises(CostBudgetExceeded):
+            async for event in service.stream_turn('请创建 output.txt，写入 retained edit。',self.config,
+                    cost_budget=first,approval_handler=lambda *a:'approve_once'):
+                events.append(event)
+        finals=[e.data for e in events if e.kind=='final']
+        self.assertEqual(len(finals),1,'applied edits must have a local handoff before refusal')
+        final=finals[0]
+        self.assertTrue(final['local'])
+        self.assertIn('output.txt',final['text'])
+        self.assertEqual(final['delivery']['status'],'blocked')
+        self.assertEqual((self.root/'output.txt').read_text(),'retained edit')
+        saved=factory.task_store.snapshot('wire')
+        self.assertEqual(saved['lifecycle'],'paused')
+        with self.assertRaises(CostBudgetExceeded):
+            [e async for e in service.stream_turn('继续',self.config,cost_budget=first)]
+        self.assertEqual(len(self.requests),1,'continuation cannot reset a stopped caller budget')
+        await factory.aclose();factory.close()
+        resumed=self.factory(replay)
+        fresh=GoalCostBudget(CostEstimator('deepseek-flash',self.root),.5)
+        resumed_events=[e async for e in AgentService(resumed).stream_turn('继续',self.config,
+            cost_budget=fresh,approval_handler=lambda *a:'approve_once')]
+        current=resumed.task_store.snapshot('wire')
+        self.assertEqual((current['task_id'],current['revision']),(saved['task_id'],saved['revision']))
+        self.assertEqual(len(current['evidence']),len(saved['evidence']))
+        self.assertFalse(any(e.kind=='tool_start' for e in resumed_events))
+        self.assertEqual(len(self.requests),2)
 
     async def asyncSetUp(self):
         temporary = tempfile.TemporaryDirectory()

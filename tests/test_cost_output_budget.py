@@ -33,6 +33,37 @@ class CostOutputBudgetTests(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(hold, .131072)
         self.assertAlmostEqual(budget.reserved, .131072)
 
+    async def test_admission_preview_reports_full_cost_without_reserving_or_stopping(self):
+        budget=GoalCostBudget(self.estimator,.1)
+        self.assertTrue(callable(getattr(budget,'preview',None)))
+        info=budget.preview(self.request())
+        self.assertFalse(info['can_reserve'])
+        self.assertAlmostEqual(info['required_usd'],.131072)
+        self.assertAlmostEqual(info['remaining_usd'],.1)
+        self.assertEqual(info['output_tokens'],131072)
+        self.assertEqual(budget.reserved,0)
+        self.assertFalse(budget.stopped)
+
+    async def test_refusal_contains_atomic_cost_diagnostics(self):
+        budget=GoalCostBudget(self.estimator,.1)
+        with self.assertRaises(CostBudgetExceeded) as caught:
+            await budget.reserve(self.request())
+        info=getattr(caught.exception,'diagnostics',{})
+        self.assertAlmostEqual(info.get('required_usd',0),.131072)
+        self.assertAlmostEqual(info.get('remaining_usd',0),.1)
+        self.assertEqual(info.get('output_tokens'),131072)
+
+    async def test_scoped_preview_respects_either_scope_without_spending(self):
+        from nailong.core.budgets import ScopedCostBudget
+        for local_limit,parent_limit in ((.5,.1),(.1,.5)):
+            local=GoalCostBudget(self.estimator,local_limit)
+            parent=GoalCostBudget(self.estimator,parent_limit)
+            info=ScopedCostBudget(local,parent).preview(self.request())
+            self.assertFalse(info['can_reserve'])
+            self.assertAlmostEqual(info['remaining_usd'],.1)
+            self.assertFalse(local.stopped or parent.stopped)
+            self.assertEqual(local.reserved+parent.reserved,0)
+
     async def test_insufficient_funds_refuse_instead_of_reducing_output(self):
         budget = GoalCostBudget(self.estimator, .1)
         with self.assertRaises(CostBudgetExceeded):

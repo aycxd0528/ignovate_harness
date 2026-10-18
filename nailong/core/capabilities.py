@@ -108,7 +108,7 @@ class CapabilityCatalog:
             from nailong.core.task_requests import task_request_kind
             task = self.task_provider() if self.task_provider is not None else None
             if task:
-                names.add('read_task_context')
+                names.update({'read_task_context', 'read_history_result'})
             if task or task_request_kind(text) == 'work' or (user and user.additional_kwargs.get('nailong_pin')):
                 names.update(READ | EDIT)
                 if task and task.get('intake',{}).get('stage') in {'clarifying','ready'}:
