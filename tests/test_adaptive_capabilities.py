@@ -111,6 +111,27 @@ class AdaptiveCapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('fixture-99', sent)
         self.assertNotIn('BODY_MUST_BE_LOADED_EXPLICITLY', sent)
 
+    async def test_ordinary_task_with_many_evidence_records_uses_recoverable_projection(self):
+        from nailong.core.task_context import render_task_context, TaskContextTooLargeError
+        from nailong.core.task_history import TaskContextHistory
+        tasks=self.factory.task_store
+        tasks.begin('chat','只读取项目，保留原接口与所有原始证据。')
+        for index in range(45):
+            tasks.record_evidence('chat',{'id':f'read-{index:032d}','kind':'read','source':'runtime',
+                'status':'passed','coverage':'complete','paths':['README.md'],
+                'artifact_ref':'hist_'+f'{index:064x}','summary':f'原始读取证据 {index}'})
+        with self.assertRaises(TaskContextTooLargeError):
+            render_task_context(tasks.snapshot('chat'))
+        await self.ask('继续只读调查并说明已经核对的事实。')
+        self.assertIn('read_task_context',self.model._bindings[-1])
+        report=self.request_reports()[-1]['task_projection']
+        self.assertLessEqual(report['characters'],12000)
+        history=TaskContextHistory(self.factory.history_archive,'chat',self.root)
+        record=history.read(report['history_reference'],section='evidence',record_id='read-'+f'{0:032d}')
+        self.assertTrue(record['archive_complete'])
+        self.assertEqual(json.loads(record['content'])[0]['summary'],'原始读取证据 0')
+        self.assertEqual(len(tasks.snapshot('chat')['evidence']),45)
+
     def test_common_chinese_execution_requests_are_work_but_questions_are_not(self):
         from nailong.core.task_requests import task_request_kind
         for text in ('请反复写文件', '依次写文件后汇报', '做两件事'):
