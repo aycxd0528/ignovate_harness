@@ -664,6 +664,13 @@ class GUIController:
                 reason = self.factory.goal_store._limit_reason(goal)
                 if reason:
                     raise ValueError(reason + ' 请创建新目标。')
+        if self.factory is not None and (self.sessions.root/'coordination.json').exists():
+            from nailong.core.capabilities import is_greeting
+            from nailong.core.task_requests import task_request_kind
+            from nailong.core.session_coordination import SessionCoordination
+            if not is_greeting(message) and task_request_kind(message)!='status':
+                SessionCoordination(self.factory,branch['thread_id']).intervene(
+                    branch['thread_id'],source_changed=task_request_kind(message)=='work')
         if not verify:self.branches.title_from_input(branch['id'],message)
         run_id = uuid.uuid4().hex
         run = {'id': run_id, 'branch_id': branch['id'], 'status': 'queued', 'message': self.safe(message),

@@ -220,9 +220,12 @@ class VerificationService:
                 started_at=datetime.now(timezone.utc).isoformat()
                 action={'name':'run_command','args':{'command':step['command']},'description':'执行项目验证',
                         'preview':{'command':step['command'],'cwd':str(self.root),'timeout_seconds':step['timeout_seconds']}}
+                from nailong.core.stage_constraints import compile_stage_policy
+                policy_task=self.tasks.snapshot(thread_id) if self.tasks is not None else None
+                stage_denial=compile_stage_policy(policy_task).check('run_command',action['args'])
                 decision=engine.decide_action('run_command',action['args'],mode=permission_mode)
-                allowed=decision.decision==Decision.ALLOW
-                if decision.decision==Decision.ASK and approval is not None:
+                allowed=decision.decision==Decision.ALLOW and stage_denial is None
+                if decision.decision==Decision.ASK and approval is not None and stage_denial is None:
                     choice=approval(action,index+1,len(selected))
                     if inspect.isawaitable(choice): choice=await choice
                     if isinstance(choice,ApprovalDecision):
@@ -231,6 +234,7 @@ class VerificationService:
                     else: allowed=choice in {'approve','approve_once','approve_session'}
                 if not allowed:
                     result={'ok':False,'exit_code':None,'output':'未批准，未执行。','timed_out':False,'observed':None,'started':False}
+                    if stage_denial:result.update(error_code='stage_restricted',output=stage_denial.get('error','当前用户阶段不允许运行此验证。'))
                 else:
                     try:
                         from nailong.tools.coordination import project_coordinator
@@ -241,12 +245,13 @@ class VerificationService:
                                 and (task['task_id'],task['revision'])==(current_task['task_id'],current_task['revision']))
                             same_configuration = self.list_steps()==steps
                             current_permission=engine.decide_action('run_command',action['args'],mode=permission_mode)
+                            current_stage=compile_stage_policy(current_task).check('run_command',action['args'])
                             still_allowed=(current_permission.decision == Decision.ALLOW or
                                 decision.decision == Decision.ASK and current_permission == decision)
                             from nailong.core.session_coordination import active_dispatch
                             dispatch=active_dispatch.get()
                             if dispatch:dispatch[0].guard(dispatch[1])
-                            if not (task_matches and same_configuration and unchanged and still_allowed):
+                            if not (task_matches and same_configuration and unchanged and still_allowed and current_stage is None):
                                 result={'ok':False,'started':False,'exit_code':None,'timed_out':False,'observed':None,
                                     'error_code':'approval_invalidated','output':'审批绑定的输入、任务、配置或权限已变化；未启动。'}
                             else:

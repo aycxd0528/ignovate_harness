@@ -7,9 +7,10 @@ from nailong.core.preferences import atomic_json,read_config
 from nailong.core.file_locks import file_lock
 from nailong.core.task_requests import task_request_kind
 from nailong.core.session_policy import session_mode,restricted_mode
+from nailong.core.verification import input_fingerprint
 
 active_dispatch=ContextVar('nailong_dispatch',default=None)
-TERMINAL={'completed','failed','cancelled','needs_reconciliation'}
+TERMINAL={'completed','partial','failed','cancelled','needs_reconciliation'}
 
 
 def checkpoint(factory,thread):
@@ -182,6 +183,10 @@ class SessionCoordination:
                 task=self.tasks.snapshot(row['target']);goal=self.goals.get(row['goal_id'])
                 proven=bool(task and (task['task_id'],task['revision'])==(row['task_id'],row['revision']) and goal
                     and checkpoint(self.factory,row['target'])==receipt.get('checkpoint'))
+                if proven:
+                    try:
+                        proven=bool(receipt.get('input_fingerprint') and input_fingerprint(self.factory.settings.project_root)==receipt['input_fingerprint'])
+                    except (ValueError,OSError):proven=False
                 if proven and receipt['budget_round_id'] not in goal.settled_round_ids:
                     if receipt.get('standalone'):
                         self.goals.record_round(goal.id,cost_usd=receipt['cost_usd'],files_changed=False,tool_calls=0,
@@ -249,7 +254,7 @@ class SessionCoordination:
                 service.permission_engine=PermissionEngine(self.factory.settings.project_root)
                 execution=getattr(self.factory,'tool_execution_context',None)
                 if execution is not None:execution.permission_engine=service.permission_engine
-                token=active_dispatch.set((self,row));error=None;delivery=None;complete=False;tool_failed=False
+                token=active_dispatch.set((self,row));error=None;delivery=None;complete=False;tool_failed=False;verification_status=None;observed_tools=0
                 before_spent=budget.spent
                 try:
                     stream=service.stream_turn('协调阶段目标（不修改原任务要求）：'+row['stage'],{'configurable':{'thread_id':row['target']}},
@@ -257,9 +262,10 @@ class SessionCoordination:
                         approval_handler=approval,cost_budget=budget)
                     try:
                         async for event in stream:
-                            if event.kind=='usage':
-                                event=service._event(self.owner,'usage',{**event.data,'scope':'coordination','dispatch_id':row['request_id'],'run_id':row['run_id'],'worker_thread':row['target']})
+                            if event.kind in {'usage','usage_missing'}:
+                                event=service._event(self.owner,event.kind,{**event.data,'scope':'coordination','dispatch_id':row['request_id'],'run_id':row['run_id'],'worker_thread':row['target']})
                             if event.kind=='tool_end' and not event.data.get('ok'):tool_failed=True
+                            if event.kind=='tool_end' and event.data.get('ok'):observed_tools+=1
                             if event.kind=='final':
                                 complete=True;delivery=event.data.get('delivery')
                                 yield TurnEvent('coordination_update',{'request_id':row['request_id'],'text':event.data.get('text','')})
@@ -274,7 +280,9 @@ class SessionCoordination:
                         verification=VerificationService(self.factory.settings.project_root,self.sessions,self.goals,
                             task_store=self.tasks,api_key=self.factory.settings.api_key,
                             steps_override=target_intake.get('verification') if target_intake.get('stage')=='executing' and target_intake.get('verification') else None)
-                        if verification.list_steps():await verification.run(row['target'],approval=approval,permission_engine=service.permission_engine,permission_mode=service.permission_mode)
+                        if verification.list_steps():
+                            verified=await verification.run(row['target'],approval=approval,permission_engine=service.permission_engine,permission_mode=service.permission_mode)
+                            verification_status=verified['status']
                     delivery=await service.delivery_report(row['target'])
                     self.guard(row)
                 except BaseException as caught:error=caught
@@ -284,12 +292,20 @@ class SessionCoordination:
                     service.last_turn_task_id=prior_task
                     if execution is not None:execution.permission_engine=prior_engine
                     outcome='needs_reconciliation' if error else 'completed' if complete and budget.usage_complete and not tool_failed else 'failed'
+                    if outcome=='completed':
+                        if verification_status in {'failed','invalidated','cancelled'} or (delivery or {}).get('status')=='failed':outcome='failed'
+                        elif verification_status in {'partial','unverified'} or any((delivery or {}).get(key) for key in ('pending','stale')):outcome='partial'
+                        elif not observed_tools and verification_status!='passed' and (delivery or {}).get('status') not in {'verified','reviewed','user_confirmed'}:outcome='partial'
+                    try:receipt_fingerprint=input_fingerprint(self.factory.settings.project_root)
+                    except (ValueError,OSError):receipt_fingerprint=None
+                    if outcome=='completed' and not receipt_fingerprint:outcome='needs_reconciliation'
                     result={'run_id':row['run_id'],'delivery':delivery,'turn_completed':complete,'usage_complete':budget.usage_complete,
-                        'event_reference':'events:'+row['target'],'error':type(error).__name__ if error else None}
+                        'verification_status':verification_status,'observed_tools':observed_tools,'event_reference':'events:'+row['target'],'error':type(error).__name__ if error else None}
                     receipt={'request_id':row['request_id'],'run_id':row['run_id'],'task_id':row['task_id'],
                         'revision':row['revision'],'generation':row['generation'],'state':outcome,'result':result,
                         'usage_complete':budget.usage_complete,'budget_round_id':getattr(budget,'goal_round_id','unknown'),
                         'standalone':cost_budget is None,'cost_usd':max(0,budget.spent-before_spent),
+                        'input_fingerprint':receipt_fingerprint,
                         'checkpoint':checkpoint(self.factory,row['target']) if error is None else None}
                     self.sessions.append_event(row['target'],'coordination_receipt',receipt)
                     if cost_budget is None:

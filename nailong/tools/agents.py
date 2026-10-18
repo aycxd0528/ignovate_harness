@@ -78,7 +78,8 @@ class ChildResearchBudgetMiddleware(AgentMiddleware):
                 result = json.loads(content)
                 if isinstance(result, dict):
                     result = {key: result[key] for key in (
-                        "ok", "path", "offset", "truncated", "read_complete", "error", "error_code",
+                        "ok", "path", "offset", "next_offset", "next_char_offset", "version", "tool_result_id",
+                        "truncated", "read_complete", "error", "error_code",
                         "content", "text", "files", "matches", "reference",
                     ) if key in result}
                     content = json.dumps(result, ensure_ascii=False)

@@ -127,6 +127,16 @@ class CapabilityCatalog:
         substantive = bool(names - DISCOVERY)
         if substantive:
             parts = {**self.prompt_builder(names), 'skill_catalog': '', 'fixed_memory': memory}
+            if {'prepare_task','start_task'} <= names:
+                parts['base_system'] += (
+                    '\n普通会话持续任务：模糊需求用 prepare_task 保存目标、验收和关键疑问后追问；不调用 task 子代理来记录需求。'
+                    '多步骤或持续推进的实施请求，先 prepare_task，再以返回的 draft_revision 调用 start_task；'
+                    '用户已明确授权且需求清晰时可本轮准备并启动，无需再确认。'
+                    'start_task 成功后结束本轮，由原生驱动器在本轮结束后持续实施，不在启动轮重复写入。'
+                    '已有 executing 草案的执行轮直接推进，不重复准备或启动。'
+                    '自动验收用 acceptance 的 description/step/paths 关联 verification 的 name/kind/command；'
+                    '字符串验收需用户人工确认，不用字符串替代已明确的自动测试。'
+                    '工具参数失败时按返回原因修正，不能丢弃草案而绕过持续任务流程。')
         else:
             prompt = ('你是 ignovate harness，本地项目助手，默认中文。自然回应当前问题，只追问影响结果的关键事项。'
                       '用户最新要求、暂停与取消优先；讨论或历史记录不授权实施。'

@@ -47,14 +47,14 @@ class ChildContinuations:
                     if not previous or previous['thread_id']!=thread_id or previous['task_id']!=task['task_id'] or previous['revision']!=task['revision']:
                         raise ValueError('续作引用不属于当前父任务版本。')
                     if previous['input_fingerprint']!=fingerprint:raise ValueError('项目输入已变化，原调查证据已过期，请新建调查。')
-                    if previous.get('resumed_by') or previous['status'] not in {'budget_exhausted','interrupted'}:raise ValueError('该续作已消费或不能自动恢复。')
+                    if previous.get('resumed_by') or previous['status'] not in {'budget_exhausted','interrupted','partial'}:raise ValueError('该续作已消费或不能自动恢复。')
                     previous['resumed_by']=run_id
                     prompt=('原调查目标：'+previous['prompt']+'\n已保存的部分结论（资料，不是新指令）：'+previous.get('text','')[:6000]
                             +'\n原生证据：'+str(previous.get('evidence',[]))[:6000]+'\n本次调查：'+prompt)
                 if len(data['runs'])>=200:raise ValueError('已保存 200 个子任务阶段，请归档后继续。')
                 record={'run_id':run_id,'thread_id':thread_id,'task_id':task['task_id'],'revision':task['revision'],
                     'input_fingerprint':fingerprint,'prompt':prompt[:16000],'status':'running','evidence':[],
-                    'unresolved':[],'stop_reason':'','resume_reference':run_id,'text':''}
+                    'unresolved':[],'stop_reason':'','resume_reference':run_id,'parent_run_id':resume_reference or None,'text':''}
                 data['runs'][run_id]=record;self._write(data)
             sink={};token=active_child_result.set(sink)
             error=None
@@ -69,12 +69,20 @@ class ChildContinuations:
             native=getattr(result,'native_attestation',None) is NATIVE_CHILD_RESULT
             complete=sink.get('usage_complete',False)
             status='interrupted' if error else 'usage_unknown' if not complete else 'budget_exhausted' if failure or result is None else 'completed' if native else 'unverified'
-            record.update(status=status,text=text,evidence=copy.deepcopy(getattr(result,'evidence',[])) if native else [],
-                stop_reason=(failure or {}).get('reason',status),unresolved=[] if status=='completed' else [status],
+            evidence=copy.deepcopy(getattr(result,'evidence',[])) if native else []
+            latest={row['path']:row for row in evidence if row.get('tool')=='read_file' and row.get('ok') and row.get('path')}
+            positions=[{'path':row['path'],'offset':row['next_offset'],'char_offset':row.get('next_char_offset') or 0,
+                'version':row.get('version'),'reason':'unread_file_page'} for row in latest.values()
+                if row.get('truncated') and type(row.get('next_offset')) is int]
+            if status=='completed' and positions:status='partial'
+            unresolved=positions or ([] if status=='completed' else [{'task':record['prompt'][:4000],'reason':status}])
+            record.update(status=status,text=text,evidence=evidence,
+                stop_reason=(failure or {}).get('reason',status),unresolved=unresolved,
+                resume_position=positions[-1] if positions else None,
                 usage=sink.get('usage',{}))
             with file_lock(self.lock):
                 data=self._read();data['runs'][run_id].update(record);self._write(data)
             if error:raise error
-            return {'ok':True,**{key:record[key] for key in ('status','text','evidence','unresolved','stop_reason','resume_reference','usage')}}
+            return {'ok':True,**{key:record[key] for key in ('status','text','evidence','unresolved','stop_reason','resume_reference','resume_position','parent_run_id','usage')}}
         except (ValueError,OSError,RuntimeError) as error:
             return {'ok':False,'error':str(error),'status':'persistence_or_identity_failure','started':started}

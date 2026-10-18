@@ -184,14 +184,14 @@ async def _drive_goal(service, factory, goal_store, cost_estimator, goal, *, thr
 
 
 async def stream_goal(service, factory, goal_store, cost_estimator, goal, *, thread_id,
-                      status=None, approval=None, history_display=None):
+                      status=None, approval=None, history_display=None, initial_visible=True):
     """Incremental events in the caller's task, without a background lease."""
     lease=goal_store.driver_lease() if hasattr(goal_store,'driver_lease') else nullcontext()
     with lease:
         if hasattr(goal_store,'attach_thread'):
             goal=goal_store.attach_thread(goal.id,thread_id) or goal
         events=_goal_events(service,factory,goal_store,cost_estimator,goal,thread_id=thread_id,
-            emit=None,status=status,approval=approval,history_display=history_display)
+            emit=None,status=status,approval=approval,history_display=history_display,initial_visible=initial_visible)
         try:
             async for event in events:
                 yield event
@@ -204,7 +204,7 @@ async def stream_goal(service, factory, goal_store, cost_estimator, goal, *, thr
 
 async def _goal_events(
     service, factory, goal_store, cost_estimator, goal, *, thread_id: str,
-    emit, status=None, approval=None, history_display: str | None = None,
+    emit, status=None, approval=None, history_display: str | None = None, initial_visible=True,
 ):
     """Advance a persisted goal while GoalStore enforces cost and round limits."""
     first_round = True
@@ -268,6 +268,7 @@ async def _goal_events(
         round_error = None
         stop_reason = ""
         progress = assess_goal_progress(before, None)
+        model_observed=False
         try:
             stream = service.stream_turn(
                 goal_prompt,
@@ -275,12 +276,13 @@ async def _goal_events(
                 profile="chat",
                 cost_budget=budget,
                 pin_message="goal",
-                history_display=(history_display or f"/goal {goal.objective}") if first_round else None,
+                history_display=(history_display or f"/goal {goal.objective}") if first_round and initial_visible else None,
                 approval_handler=approval,
                 status_handler=status,
             )
             async with aclosing(stream):
                 async for event in stream:
+                    if event.kind in {'usage','usage_missing'}:model_observed=True
                     if event.kind == "usage":
                         for key in round_usage:
                             try:
@@ -351,6 +353,13 @@ async def _goal_events(
                 round_id=round_id, stop_reason=stop_reason,
                 progress=progress,
             ) or goal
+            task_store=getattr(service,'task_store',None)
+            if model_observed and before and before.get('intake') and task_store is not None:
+                with task_store.bound_task(thread_id,before['task_id'],before['revision']) as current:
+                    intake=(current or {}).get('intake',{})
+                    if intake.get('goal_id')==goal.id and intake.get('draft_revision')==before['intake']['draft_revision']:
+                        intake['implementation_started']=True
+                        task_store._write(thread_id,current)
         if isinstance(round_error,(GeneratorExit,asyncio.CancelledError)):
             raise round_error
         try:

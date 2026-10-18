@@ -87,3 +87,74 @@ class RecoveryTests(unittest.IsolatedAsyncioTestCase):
         [e async for e in c.drain(self.service)]
         self.assertFalse((self.root/'target.txt').exists(),'target default permissions must remain in force')
         self.assertEqual(self.service.permission_mode,'bypassPermissions','coordinator policy must be restored')
+
+    async def test_failed_verification_cannot_complete_dispatch_or_release_dependents(self):
+        from nailong.core.preferences import atomic_json
+        root=self.factory.task_store.project_root
+        config=root/'.nailong/settings.json'
+        atomic_json(config,{'verification':{'steps':[{'name':'must-pass','kind':'test','command':'false'}]}},root)
+        # Reconcile the user-configured verification before freezing dispatch authority.
+        from nailong.core.verification import VerificationService
+        self.factory.task_store.configure_verification('target',VerificationService(self.root,self.factory.session_store).list_steps())
+        c=self.queue('first')
+        task=self.factory.task_store.snapshot('target');generation=c._read()['leases']['target']['generation']
+        self.assertTrue(c.dispatch('dependent','target','接着修改文件',generation,['first'])['ok'])
+        self.factory.model.i=0;self.factory.model.responses=[answer('请执行验证。')]
+        [e async for e in c.drain(self.service,approval=lambda *a:'approve_once')]
+        rows={row['request_id']:row for row in c.status()['dispatches']}
+        self.assertEqual(rows['first']['state'],'failed',rows['first'])
+        self.assertEqual(rows['dependent']['state'],'queued')
+
+    async def test_missing_worker_usage_remains_unknown_in_owner_bill(self):
+        from langchain_core.messages import AIMessage
+        c=self.queue()
+        self.factory.model.i=0;self.factory.model.responses=[AIMessage(content='用量缺失。')]
+        [e async for e in c.drain(self.service)]
+        summary=self.service.get_usage_summary('owner')
+        self.assertFalse(summary['cumulative']['usage_complete'],summary)
+        self.assertFalse(summary['cumulative']['cost_complete'],summary)
+
+    async def test_automatic_verification_respects_target_stage_restriction(self):
+        import shlex,sys
+        from nailong.core.preferences import atomic_json
+        from nailong.core.verification import VerificationService
+        root=self.factory.task_store.project_root
+        (root/'check.py').write_text("from pathlib import Path;Path('forbidden.txt').write_text('effect')")
+        self.factory.task_store.begin('target','stage: design\nonly run check.py in stage implementation')
+        atomic_json(root/'.nailong/settings.json',{'verification':{'steps':[{'name':'restricted','kind':'test','command':shlex.quote(sys.executable)+' check.py'}]}},root)
+        self.factory.task_store.configure_verification('target',VerificationService(root,self.factory.session_store).list_steps())
+        c=self.queue()
+        self.factory.model.i=0;self.factory.model.responses=[answer('准备验证。')]
+        [e async for e in c.drain(self.service,approval=lambda *a:'approve_once')]
+        self.assertFalse((root/'forbidden.txt').exists(),'automatic verification must not bypass stage constraints')
+
+    async def test_recovery_cannot_restore_completion_after_artifact_changed(self):
+        c=self.queue()
+        self.factory.model.i=0;self.factory.model.responses=[answer('',[{'name':'write_file','args':{'path':'target.txt','content':'once'},'id':'write'}]),answer('保存。')]
+        [e async for e in c.drain(self.service,approval=lambda *a:'approve_once')]
+        data=c._read();data['dispatches']['recover']['state']='running';c._write(data)
+        (self.root/'target.txt').write_text('user edit after execution')
+        fresh=self.coordinator();fresh.reconcile()
+        self.assertEqual(fresh.status('recover')['dispatches'][0]['state'],'needs_reconciliation')
+        self.assertEqual((self.root/'target.txt').read_text(),'user edit after execution')
+
+    async def test_unverified_prose_only_stage_cannot_release_dependencies(self):
+        c=self.queue('first');generation=c._read()['leases']['target']['generation']
+        self.assertTrue(c.dispatch('dependent','target','使用前一阶段产物',generation,['first'])['ok'])
+        self.factory.model.i=0;self.factory.model.responses=[answer('模型声称已经修复，但没有执行或验证。')]
+        [e async for e in c.drain(self.service)]
+        rows={row['request_id']:row for row in c.status()['dispatches']}
+        self.assertEqual(rows['first']['state'],'partial')
+        self.assertEqual(rows['dependent']['state'],'queued')
+
+    async def test_gui_new_instruction_invalidates_lease_at_enqueue_before_execution(self):
+        from nailong.gui.controller import GUIController
+        c=self.queue();controller=GUIController(self.root,sessions=self.factory.session_store,service=self.service)
+        try:
+            branch=next(b for b in controller.branches.branches() if b['thread_id']=='target')
+            controller.paused=True
+            queued=await controller.command('send',{'branch_id':branch['id'],'message':'请修改目标，先不要创建文件','request_id':'intervene-at-enqueue'})
+            self.assertEqual(controller.runs[queued['run_id']]['status'],'queued')
+            self.assertEqual(c._read()['leases']['target']['state'],'paused')
+            self.assertEqual(c.status('recover')['dispatches'][0]['state'],'cancelled')
+        finally:await controller.close()

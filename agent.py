@@ -175,6 +175,7 @@ class ModelAccountingMiddleware(AgentMiddleware):
         token_hold = cost_hold = session_hold = None
         response = None
         provider_started = False
+        usage_observed = False
         collector = active_usage_collector.get()
         try:
             if token_budget is not None:
@@ -202,10 +203,11 @@ class ModelAccountingMiddleware(AgentMiddleware):
             self._publish(response)
             if collector is not None:
                 collector.observe(response.result)
+                usage_observed = True
             self._check_response(response, budget)
             return response
         except BaseException:
-            if collector is not None:
+            if collector is not None and provider_started and not usage_observed:
                 collector.complete = False
             raise
         finally:
@@ -350,6 +352,7 @@ class AgentRuntimeFactory:
         from nailong.core.task_state import TaskStore
         self.task_store = TaskStore(self.session_store, api_key=settings.api_key)
         self.goal_store.task_store = self.task_store
+        self.task_store.goal_store = self.goal_store
         self.goal_store.coordination_path=self.session_store.root/'coordination.json'
         from nailong.core.runtime_options import child_options
         from nailong.core.context import configured_context_window
@@ -547,7 +550,8 @@ class AgentRuntimeFactory:
                 except (ValueError,TypeError):continue
                 if not isinstance(body,dict):continue
                 evidence.append({'tool':message.name,'call_id':message.tool_call_id,
-                    **{key:body[key] for key in ('ok','path','offset','truncated','read_complete','reference','result_id') if key in body}})
+                    **{key:body[key] for key in ('ok','path','offset','content_offset','next_offset','next_char_offset',
+                        'truncated','read_complete','version','reference','tool_result_id') if key in body}})
             return ChildTaskResult(answer, dict(collector.totals), collector.complete,list(collector.records),budget_failure,
                 evidence,NATIVE_CHILD_RESULT)
 

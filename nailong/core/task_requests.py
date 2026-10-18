@@ -38,6 +38,7 @@ def task_request_kind(message: str) -> str:
         return 'status'
     if _NO_EXECUTION.search(text):
         return 'other'
+    if explicit_new_task(text):return 'work'
     if text.casefold() in _RESUME:
         return 'resume'
     # A question about fixing/testing is not permission to resume that work.
@@ -47,6 +48,12 @@ def task_request_kind(message: str) -> str:
             if not clause.strip().endswith(('了吗', '了吗？', '了吗?', '了么', '了么？', '了么?')):
                 return 'work'
     return 'other'
+
+
+def explicit_new_task(message):
+    """A live top-level label explicitly separates new work from an old ledger."""
+    match=re.match(r'^\s*(?:(?:请)?(?:开始|创建|建立)(?:一个)?\s*)?(?:新目标|新任务|new\s+(?:goal|task))\s*[:：]\s*(\S[\s\S]*)$',message,re.I)
+    return match.group(1).strip() if match else None
 
 
 def is_simple_project_question(message: str) -> bool:

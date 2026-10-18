@@ -252,6 +252,13 @@ class ToolExecutionContext:
                     or Path(task['project_root']).resolve() != self.project_root):
                 raise ValueError('任务阶段策略不属于调用项目或会话。')
             intake=(task or {}).get('intake',{})
+            if intake.get('stage')=='executing' and not spec.read_only and spec.name not in {'prepare_task','start_task','update_goal'}:
+                from nailong.core.session_coordination import active_dispatch
+                from nailong.core.task_intake import bound_goal
+                if active_dispatch.get() is None:
+                    goal=bound_goal(getattr(self.task_snapshot_provider,'__self__',None),thread,task)
+                    if goal is None or goal.state!='active':
+                        return failure('goal_not_active','原目标已暂停或无法核对；本轮仅可修订草案，重新确认后继续。',started=False)
             if intake and (intake.get('stage') in {'clarifying','ready'} or intake.get('pending_start')) and not spec.read_only and spec.name not in {'prepare_task','start_task','update_goal'}:
                 return failure('task_not_started','需求澄清或启动交接中，尚不能执行文件或命令操作。',started=False)
             from nailong.core.stage_constraints import compile_stage_policy

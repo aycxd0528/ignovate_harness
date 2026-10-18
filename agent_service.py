@@ -1125,19 +1125,39 @@ class AgentService:
     async def stream_turn(self, message, config, **kwargs):
         """Settle an explicit coordinator turn and all its workers once."""
         thread=config.get('configurable',{}).get('thread_id')
+        ordinary=kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message')
         if self.session_store and thread and kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message'):
             from nailong.core.session_policy import session_mode
             session_mode(self.session_store,thread,self.permission_mode)
         goals=getattr(self.runtime_factory,'goal_store',None)
-        goal=goals.active() if goals and not kwargs.get('pin_message') and kwargs.get('cost_budget') is None else None
-        owned=goal is not None and goal.thread_id==thread and (task_request_kind(message) in {'work','resume'} or bool(re.search(r'接管|协调|coordinate',message,re.I)))
+        from nailong.core.task_intake import bound_goal
+        from nailong.core.task_requests import explicit_new_task
+        from nailong.core.capabilities import is_greeting
+        task=self.task_store.snapshot(thread) if ordinary and self.task_store and thread else None
+        associated=bound_goal(self.task_store,thread,task) if task else None
+        new_objective=explicit_new_task(kwargs.get('history_display') or message) if ordinary else None
+        if new_objective and self.task_store and thread:
+            from nailong.core.project_execution import project_execution
+            with project_execution(self.session_store):
+                if associated and associated.state=='active':
+                    goals.update(associated.id,state='paused',summary='用户明确创建新目标；原费用保留。',thread_id=thread)
+                task=self.task_store.begin(thread,new_objective,new=True,latest_request=kwargs.get('history_display') or message)
+            associated=None
+        substantive=not is_greeting(message) and task_request_kind(message)!='status'
+        if associated and substantive and goals._limit_reason(associated):
+            yield self._event(thread,'notice',{'text':goals._limit_reason(associated)+' 原任务与费用已保留；如需独立额度，请明确输入“新目标：…”创建新的任务。'})
+            return
+        goal=(associated or goals.active()) if goals and ordinary and kwargs.get('cost_budget') is None else None
+        owned=goal is not None and goal.thread_id==thread and (associated and substantive or task_request_kind(message) in {'work','resume'} or bool(re.search(r'接管|协调|coordinate',message,re.I)))
         budget=None
         if owned:
             from nailong.core.costs import CostEstimator
             budget=GoalCostBudget(CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),goal.max_cost_usd-goal.spent_usd)
             kwargs={**kwargs,'cost_budget':budget}
         run_id=uuid.uuid4().hex
-        if budget is not None:budget.goal_round_id='outer:'+run_id
+        if budget is not None:
+            budget.goal_round_id='outer:'+run_id
+            budget.outer_used=False
         from nailong.core.task_intake import user_request
         live_request={'thread_id':thread,'text':kwargs.get('history_display') or message,'turn_id':run_id} if kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message') else None
         stream=self._stream_task_turn(message,config,**kwargs)
@@ -1148,13 +1168,15 @@ class AgentService:
                 try:event=await anext(stream)
                 except StopAsyncIteration:break
                 finally:user_request.reset(token)
+                if budget is not None and event.kind in {'usage','usage_missing'} and event.data.get('turn_id')==run_id:
+                    budget.outer_used=True
                 yield event
             finished=True
         finally:
             token=user_request.set(live_request)
             try:await stream.aclose()
             finally:user_request.reset(token)
-            if budget is not None:
+            if budget is not None and (budget.outer_used or budget.spent or not budget.usage_complete):
                 goals.record_round(goal.id,cost_usd=budget.spent,files_changed=False,tool_calls=0,
                     summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
                     stop_reason='本轮已取消或用量未知。' if not finished or not budget.usage_complete else None)
@@ -1175,7 +1197,8 @@ class AgentService:
                 SessionCoordination(self.runtime_factory,thread_id).intervene(thread_id,source_changed=task_request_kind(text)=='work')
         if intake:
             task=self.task_store.snapshot(thread_id)
-            latest=self.runtime_factory.goal_store.latest() if hasattr(self.runtime_factory,'goal_store') else None
+            from nailong.core.task_intake import bound_goal
+            latest=bound_goal(self.task_store,thread_id,task)
             if latest and latest.thread_id==thread_id and (task or {}).get('intake',{}).get('stage')=='executing':
                 text=(kwargs.get('history_display') or message).strip().strip('。.!！')
                 if text in {'暂停','暂停任务','暂停执行','停止执行','先停一下'}:
@@ -1194,11 +1217,16 @@ class AgentService:
                     from ui.flows import stream_goal
                     events=stream_goal(self,self.runtime_factory,self.runtime_factory.goal_store,
                         CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),latest,
-                        thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'))
+                        thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),
+                        history_display=kwargs.get('history_display') or message)
                     try:
                         async for event in events:yield event
                     finally:await events.aclose()
                     return
+                if latest.state=='paused' and task_request_kind(text)=='work':
+                    # Replanning may use the remaining budget. Native effect
+                    # gates still prohibit implementation until reaccepted.
+                    self.task_store.set_state(thread_id,lifecycle='active',blockers=[])
         with project_execution(self.session_store):
             stream=self._stream_turn_unlocked(message,config,**kwargs)
             try:
@@ -1228,10 +1256,32 @@ class AgentService:
                 self.task_store.set_state(thread_id,lifecycle='paused',progress='其他会话的目标仍在执行。')
                 yield self._event(thread_id,'notice',{'text':'其他会话的目标仍在执行，当前任务已保存，请稍后继续。'})
                 return
-            goal=existing or goals.create(intent['objective'],thread_id=thread_id,
-                max_rounds=intent['max_rounds'],max_cost_usd=intent['max_cost_usd'])
+            if intent.get('goal_id'):
+                setup_budget=kwargs.get('cost_budget')
+                if setup_budget is not None and getattr(setup_budget,'goal_round_id','').startswith('outer:'):
+                    goals.record_round(intent['goal_id'],cost_usd=setup_budget.spent,files_changed=False,tool_calls=0,
+                        summary='需求修订与重新确认',round_id=setup_budget.goal_round_id,
+                        stop_reason='用量未知。' if not setup_budget.usage_complete else None)
+                ok,reason,goal=goals.resume(intent['goal_id'],thread_id=thread_id)
+                if not ok:
+                    yield self._event(thread_id,'notice',{'text':reason})
+                    return
+            else:
+                if existing:
+                    yield self._event(thread_id,'notice',{'text':'当前会话已有目标，未创建另一份费用额度。请先暂停并修订原目标。'})
+                    return
+                goal=goals.create(intent['objective'],thread_id=thread_id,
+                    max_rounds=intent['max_rounds'],max_cost_usd=intent['max_cost_usd'])
+            with self.task_store._locked(thread_id):
+                current=self.task_store._read(thread_id)
+                if current['task_id']!=intent['task_id'] or current['revision']!=intent['task_revision']:
+                    goals.update(goal.id,state='paused',summary='启动前任务版本已变化。',thread_id=thread_id)
+                    yield self._event(thread_id,'notice',{'text':'启动前任务版本已变化，已暂停。'})
+                    return
+                current['intake']['goal_id']=goal.id
+                self.task_store._write(thread_id,current)
             events=stream_goal(self,factory,goals,CostEstimator(factory.settings.model,factory.settings.project_root),goal,
-                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'))
+                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),initial_visible=False)
             try:
                 async for event in events:yield event
             finally:await events.aclose()
@@ -1388,11 +1438,17 @@ class AgentService:
         if prompt_hooks.feedback:
             safe_message += "\n\n项目钩子补充上下文：\n" + self._redact_secret(prompt_hooks.feedback)
             yield self._event(thread_id, "hook_feedback", {"event": "UserPromptSubmit", "text": prompt_hooks.feedback})
+        pin_identity=f"nailong-fixed-{pin_message if isinstance(pin_message,str) else 'plan'}" if pin_message else None
+        if pin_message=='goal' and self.runtime_factory is not None:
+            active_goal=self.runtime_factory.goal_store.active()
+            if active_goal is not None and active_goal.thread_id==thread_id:
+                revision=(participating_task or {}).get('revision',0)
+                pin_identity=f'nailong-fixed-goal-{active_goal.id}-{revision}'
         current_input = {
             "messages": [
                 HumanMessage(
                     content=safe_message,
-                    id=(f"nailong-fixed-{pin_message if isinstance(pin_message,str) else 'plan'}" if pin_message else None),
+                    id=pin_identity,
                     additional_kwargs={
                         **({"nailong_pin": pin_message if isinstance(pin_message, str) else "plan"} if pin_message else {}),
                         **({"nailong_display": self._redact_secret(history_display)} if history_display is not None else {}),

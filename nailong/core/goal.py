@@ -203,6 +203,20 @@ class GoalStore:
             self._save(goals)
             return goal
 
+    def revise(self, goal_id, *, objective, thread_id):
+        """Accept a revised paused brief without creating another spending ledger."""
+        with self.driver_lease(), self._locked():
+            goals=self._load();goal=goals.get(goal_id)
+            if goal is None or goal.thread_id!=thread_id or goal.state!='paused':
+                return False,'只能修订当前会话已暂停的目标。',goal
+            if self._limit_reason(goal):return False,self._limit_reason(goal)+' 请明确创建新目标。',goal
+            if not isinstance(objective,str) or not objective.strip():return False,'目标不能为空。',goal
+            goal.objective=objective.replace(self.api_key,'[密钥已隐藏]') if self.api_key else objective
+            self._clear_verification(goal)
+            goal.last_progress={}
+            self._save(goals)
+            return True,'已修订原目标，费用和轮数保留。',goal
+
     def resume(self, goal_id: str, *, thread_id: str | None = None) -> tuple[bool, str, Goal | None]:
         """Resume a paused goal only after an explicit caller action."""
         with self.driver_lease(), self._locked():

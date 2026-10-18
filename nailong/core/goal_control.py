@@ -159,7 +159,8 @@ def decide_goal_turn(goal, task, *, progress=None) -> dict:
         if row['required'] and row['kind'] == 'manual']
     # A newly accepted natural brief may require a human check of the result.
     # That check gates delivery after implementation, not its first execution.
-    initial_natural=task.get('intake',{}).get('stage')=='executing' and _value(goal,'round',0)==0
+    intake=task.get('intake',{})
+    initial_natural=intake.get('stage')=='executing' and not intake.get('implementation_started',_value(goal,'round',0)>0)
     if manual and not initial_natural:
         return decision('wait', '目标等待用户人工验收：'+', '.join(row['id'] for row in manual),
             '用户核对当前输入并确认或明确免除相应验收，再显式恢复目标。')
