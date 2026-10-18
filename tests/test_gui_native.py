@@ -33,6 +33,10 @@ class NativeGUITests(unittest.IsolatedAsyncioTestCase):
             while self.controller.runs[result['run_id']]['status'] in {'queued', 'running', 'waiting_approval'}:
                 await asyncio.sleep(.01)
         await asyncio.wait_for(wait(), 10)
+        # Run status is published before checkpoint and ledger closeout finish.
+        # Await the owning worker before issuing a map follow-up.
+        if self.controller.worker:
+            await asyncio.wait_for(asyncio.shield(self.controller.worker), 10)
         run = self.controller.runs[result['run_id']]
         self.assertEqual(run['status'], 'completed', run.get('error'))
         return self.controller.branches.node(run['node_id'])

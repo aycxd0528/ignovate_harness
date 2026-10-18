@@ -31,9 +31,8 @@ class RuntimeSources:
             return True
         try:
             signature = self._signatures()
-            if signature == self._signature:
-                return False
-            # A timestamp-only touch is harmless; Python interface changes are not.
+            # Same-size writes can share a timestamp on Windows. Metadata alone
+            # cannot establish that a long-lived adapter still has the same code.
             self._changed = set(signature) != set(self._signature) or any(
                 self._digest(path) != self._hashes[path] for path in signature)
             if not self._changed:

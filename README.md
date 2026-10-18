@@ -21,13 +21,14 @@
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载适合你系统的安装包。安装器会准备运行环境；首次运行时按提示配置模型提供商、API 地址、模型 ID 和 API Key。
+从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载适合你系统的安装包。首次运行时按提示配置模型提供商、API 地址、模型 ID 和 API Key。
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| macOS 13+（Apple Silicon） | [桌面版 DMG](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/Ignovate-1.2.1-macos-arm64.dmg) | 拖入 Applications 后打开 |
-| macOS / Linux | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-unix.tar.gz) | 解压后运行 `install.sh` |
-| Windows 11 x64 | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.1/ignovate-1.2.1-windows.zip) | PowerShell 原生安装，无需 WSL |
+| macOS 13+（Apple Silicon） | [桌面版 DMG](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/Ignovate-1.2.3-macos-arm64.dmg) | 拖入 Applications 后打开 |
+| Windows 11 x64 | [桌面版 ZIP](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/Ignovate-1.2.3-windows-x64.zip) | 解压后双击 `Ignovate.exe` |
+| macOS / Linux | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-unix.tar.gz) | 解压后运行 `install.sh` |
+| Windows 11 x64 | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-windows.zip) | PowerShell 原生安装，无需 WSL |
 
 CLI 安装完成后，在要处理的项目目录运行：
 
@@ -48,7 +49,7 @@ ignovate
 | 上下文与记忆 | 管理长会话上下文，并按需读取用户、项目和本地记忆 |
 | 多种工作方式 | 提供桌面 GUI、Textual/inline 终端界面及 JSON 无头模式 |
 
-桌面端支持 macOS Apple Silicon；CLI 支持 macOS、Linux 和 Windows 11 x64。项目沿用 DeepSeek 模型连接，也支持配置兼容的提供商。更多设计与边界见[项目介绍](docs/PROJECT.md)。
+桌面端支持 macOS Apple Silicon 和 Windows 11 x64；CLI 支持 macOS、Linux 和 Windows 11 x64。项目默认使用 DeepSeek 模型连接，也可配置其他兼容的模型提供商。更多设计与边界见[项目介绍](docs/PROJECT.md)。
 
 ## 文档
 
@@ -73,7 +74,7 @@ python -m pip install -e .
 python -m unittest discover -s tests -v
 ```
 
-完整贡献、CI 和发布流程见 [CLI 与运行时参考](docs/CLI_REFERENCE.md) 与 [CI 工作流](.github/workflows/tests.yml)。
+完整 CI 和发布流程见 [CI 工作流](.github/workflows/tests.yml) 与 [CLI 参考](docs/CLI_REFERENCE.md)。
 
 ## 许可证
 

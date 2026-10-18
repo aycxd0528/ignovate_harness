@@ -524,11 +524,11 @@ check_config.py  环境变量读取示例
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.2.1-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.2.3-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](../.github/workflows/tests.yml)。
 
-推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；Mac 桌面应用还会验证签名、重定位、内置 Python 和实际启动；全部检查通过后发布 CLI 安装包、Mac DMG、wheel 和校验清单。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
+推送与 `pyproject.toml` 版本一致的 `v*` tag 后，Release 工作流会执行 Python 3.11/3.13 完整离线测试、macOS/Linux 实际安装检查，以及 Windows 原生启动器和未预装 Python 时的真实自动安装检查。Windows 原生用例验证文件工具、存储权限、跨进程锁和命令取消；Mac 桌面应用还会验证签名、重定位、内置 Python 和实际启动；Windows 桌面 ZIP 还会验证内置 Python/ripgrep、中文路径重定位、沙箱、剪贴板及正常退出；全部检查通过后发布 CLI 安装包、Mac DMG、Windows 桌面 ZIP、wheel 和校验清单。Windows CI 使用 Windows Server 2025 的同代原生 API；Windows 11 桌面的交互终端仍需实机验证。
 
-真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 和 Windows 实机仍需另行验证。
+真实模型检查按需手动执行 `python scripts/smoke_real_api.py --output /tmp/ignovate-live-api.json`；`--only headless_json` 可定向补测。脚本使用本机连接与临时项目，限制调用次数并保存脱敏结果。本次实际结果及首次失败/补测记录见 [CI 与真实 API 验证记录](reviews/2026-10-08-ci-real-api-verification.md)。第三方 MCP 仍需按具体服务另行验证。Windows 11 x64 本机已完成桌面启动与退出检查，Python 3.13 全量 1,546 项测试通过（23 项平台跳过），包内 Python 3.11 的 25 项安全回归测试通过。

@@ -1,0 +1,79 @@
+name: Windows desktop
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: windows-2025
+    timeout-minutes: 25
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+      - name: Install packaging and smoke dependencies
+        run: |
+          npm ci --prefix desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop dependencies failed' }
+          npm install --prefix "$env:RUNNER_TEMP/windows-smoke" playwright@1.62.1
+          if ($LASTEXITCODE -ne 0) { throw 'Smoke dependencies failed' }
+      - name: Download and verify official Windows runtime and tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $downloads = @(
+            @('astral-sh/python-build-standalone', '20260510', 'cpython-3.11.15+20260510-x86_64-pc-windows-msvc-install_only.tar.gz', 'c0d6d9da1286640790c07f32c74516486c4ccd170a65952eebb3e125c34e6c67'),
+            @('BurntSushi/ripgrep', '15.2.0', 'ripgrep-15.2.0-x86_64-pc-windows-msvc.zip', '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'),
+            @('electron/electron', 'v44.7.0', 'electron-v44.7.0-win32-x64.zip', 'eee30dc8fa1f5ea95490e59f44e46ea68dd24c6e93d22facf70fe5c2d4c2665c')
+          )
+          $cache = New-Item -ItemType Directory "$env:RUNNER_TEMP/windows-desktop"
+          foreach ($item in $downloads) {
+            gh release download $item[1] --repo $item[0] --pattern $item[2] --dir $cache.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Download failed: $($item[2])" }
+            if ((Get-FileHash (Join-Path $cache.FullName $item[2]) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $item[3]) { throw 'Checksum failed' }
+          }
+          tar -xzf "$cache/cpython-3.11.15+20260510-x86_64-pc-windows-msvc-install_only.tar.gz" -C $cache.FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Python extraction failed' }
+          Expand-Archive "$cache/ripgrep-15.2.0-x86_64-pc-windows-msvc.zip" "$cache/rg"
+      - name: Build self-contained desktop ZIP
+        run: |
+          python -m pip wheel --no-deps --wheel-dir dist .
+          if ($LASTEXITCODE -ne 0) { throw 'Wheel build failed' }
+          $cache = "$env:RUNNER_TEMP/windows-desktop"
+          python scripts/build_windows.py --wheel (Get-Item dist/*.whl).FullName --output dist/windows --runtime-base "$cache/python" --python-standalone-build 20260510 --ripgrep "$cache/rg/ripgrep-15.2.0-x86_64-pc-windows-msvc/rg.exe" --electron-zip-dir $cache
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
+          npm run check --prefix desktop
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop syntax check failed' }
+          node --test tests/desktop-runtime.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Runtime path tests failed' }
+      - name: Validate the extracted desktop application without system Python
+        run: |
+          Expand-Archive (Get-Item dist/windows/Ignovate-*-windows-x64.zip).FullName dist/installed
+          $env:IGNOVATE_APP = (Resolve-Path dist/installed/Ignovate).Path
+          $env:NODE_PATH = "$env:RUNNER_TEMP/windows-smoke/node_modules"
+          $env:IGNOVATE_SCREENSHOT = "$env:RUNNER_TEMP/ignovate-windows-installed.png"
+          node tests/gui-windows-packaged.spec.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Installed desktop smoke failed' }
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: windows-desktop-release
+          path: |
+            dist/windows/*-windows-x64.zip
+            dist/windows/SHA256SUMS-windows-desktop
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: windows-desktop-screenshot
+          path: ${{ runner.temp }}/ignovate-windows-installed.png
+          if-no-files-found: ignore

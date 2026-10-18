@@ -1,6 +1,6 @@
 # Ignovate GUI
 
-PRD：[飞书 PRD v0.2](https://qcnvafay57br.feishu.cn/wiki/NSDnwv74PiTwrlkSISScV3aYnyf)。macOS 已进行 Electron 与 Chrome 验证，Apple Silicon 可使用内置 Python 的 DMG 桌面安装包；当前为本地签名，Developer ID、公证、Intel Mac 与 Windows/Linux 桌面安装包留在后续阶段。
+PRD：[飞书 PRD v0.2](https://qcnvafay57br.feishu.cn/wiki/NSDnwv74PiTwrlkSISScV3aYnyf)。Apple Silicon macOS 提供内置 Python 的 DMG，Windows 11 x64 提供内置 Python 的桌面 ZIP，构建与验证入口见[安装文档](INSTALL.md)。Mac 当前为本地签名，Windows 当前未签名；Developer ID、公证、Intel Mac 与 Linux 桌面安装包留在后续阶段。
 
 ## 启动
 
