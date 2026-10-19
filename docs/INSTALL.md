@@ -23,9 +23,11 @@ python scripts/build_macos.py \
 
 ## Windows 桌面版（Windows 11 x64）
 
+v1.3.0 预发布版不发布 Windows 桌面或 CLI 安装包。Windows 旧版下载见 [v1.2.3 Release](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.3)。以下为源码构建与本地安装说明。
+
 桌面包名为 `Ignovate-1.3.0-windows-x64.zip`。解压完整目录后双击 `Ignovate.exe`，首次启动按照使用引导选择本地工作区并连接模型；可跳过或从设置重新打开。包内包含 Electron、Python 3.11、固定版本依赖和 ripgrep，无需预装 Python、Node.js 或 WSL，无需管理员权限。支持中文和含空格路径；不要单独移动 EXE，需保留旁边的 `resources` 和 DLL。
 
-从 v1.3.0 Release 下载桌面 ZIP，并用 `SHA256SUMS-windows-desktop` 校验文件。`ignovate-1.3.0-windows.zip` 是另行提供的 CLI 安装包，并非桌面包。`.github/workflows/windows-desktop.yml` 会在 push / PR 时构建并验证桌面 ZIP，Actions 产物名为 `windows-desktop-release`。当前桌面构建未使用代码签名证书，Windows 可能显示发行者未验证。
+源码构建桌面 ZIP 后，可用生成的 `SHA256SUMS-windows-desktop` 校验文件。`scripts/build_release.py` 生成的 `ignovate-1.3.0-windows.zip` 是 CLI 安装包，并非桌面包；本次 Release 不上传这两类 Windows 产物。`.github/workflows/windows-desktop.yml` 保留构建与验证能力，Actions 产物名为 `windows-desktop-release`。当前桌面构建未使用代码签名证书，Windows 可能显示发行者未验证。
 
 升级前关闭应用，将新版解压到新目录后启动；模型设置和项目会话仍使用用户目录中的原有数据。关闭窗口会通过私有父进程管道请求内核清理工具进程并关闭数据库；桌面进程意外退出也会触发同样的清理。
 
@@ -76,7 +78,7 @@ ignovate doctor --output-format json
 
 支持 Windows 11 x64 原生运行。无需 WSL、Linux 环境、虚拟化或预装 Python；安装在当前用户目录，无需管理员权限。
 
-下载 `ignovate-1.3.0-windows.zip`，在 PowerShell 中执行：
+本次预发布不提供 Windows CLI 下载。自行运行 `scripts/build_release.py` 构建 `ignovate-1.3.0-windows.zip` 后，可在 PowerShell 中执行：
 
 ```powershell
 Expand-Archive .\ignovate-1.3.0-windows.zip -DestinationPath .\ignovate-release

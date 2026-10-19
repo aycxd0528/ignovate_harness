@@ -3,6 +3,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Existing source tag or commit to build (empty uses this branch)
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -15,6 +20,8 @@ jobs:
         python-version: ['3.11', '3.13']
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: ${{ matrix.python-version }}
@@ -39,6 +46,9 @@ jobs:
           python -m pip wheel --no-deps --wheel-dir dist .
           python scripts/build_release.py --wheel dist/*.whl
           python scripts/smoke_wheel.py dist/*.whl
+          rm dist/release/*-windows.zip
+          cd dist/release
+          sha256sum *.whl *-unix.tar.gz > SHA256SUMS
       - uses: actions/upload-artifact@v7.0.2
         if: matrix.python-version == '3.11'
         with:
@@ -54,6 +64,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: actions/download-artifact@v8.0.2
         with:
           name: release-assets
@@ -72,16 +84,14 @@ jobs:
           "$IGNOVATE_BIN_DIR/ignovate" --help
           "$IGNOVATE_BIN_DIR/ignovate" doctor --output-format json > "$RUNNER_TEMP/doctor.json" || test "$?" = 1
           python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert all(c["status"]=="ok" for c in r["checks"] if c["name"] in ("python","textual","mcp","rg"))' "$RUNNER_TEMP/doctor.json"
-  windows-smoke:
-    uses: ./.github/workflows/windows-native.yml
-  windows-desktop:
-    uses: ./.github/workflows/windows-desktop.yml
   macos-desktop:
     needs: build
     runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.11'
@@ -131,12 +141,14 @@ jobs:
             dist/macos/SHA256SUMS-macos
   publish:
     if: github.ref_type == 'tag'
-    needs: [install-smoke, windows-smoke, macos-desktop, windows-desktop]
+    needs: [install-smoke, macos-desktop]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.source_ref || github.ref }}
       - uses: actions/download-artifact@v8.0.2
         with:
           name: release-assets
@@ -144,10 +156,6 @@ jobs:
       - uses: actions/download-artifact@v8.0.2
         with:
           name: macos-desktop-release
-          path: release-assets
-      - uses: actions/download-artifact@v8.0.2
-        with:
-          name: windows-desktop-release
           path: release-assets
       - name: Publish validated assets
         env:
