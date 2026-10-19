@@ -4,7 +4,7 @@
 
 ## macOS 桌面版（macOS 13+，Apple Silicon）
 
-下载 `Ignovate-1.3.0-macos-arm64.dmg`，打开后将 `Ignovate.app` 拖入 `Applications`。从应用程序打开，选择工作区，再在模型设置中配置提供商。安装包包含 Python 3.11、应用依赖和 ripgrep，无需另装 Python 或克隆源码。
+下载 `Ignovate-1.3.0-macos-arm64.dmg`，打开后将 `Ignovate.app` 拖入 `Applications`。首次打开进入四步使用引导：欢迎、选择工作区、连接模型、开始使用。可返回、跳过，或从「设置 → 通用设置 → 使用引导」重新打开；保存配置不发送模型任务，示例只填入草稿。后续启动会记住仍存在的已选工作区。安装包包含 Python 3.11、应用依赖和 ripgrep，无需另装 Python 或克隆源码。
 
 当前 Mac 包采用本地 ad hoc 签名，尚未取得 Developer ID 签名和 Apple 公证，macOS 可能阻止首次打开。公开可信分发需要维护者配置 Apple 开发者签名与公证。此包仅支持 macOS 13 及以上的 Apple Silicon Mac；Intel Mac 可使用下面的 CLI 安装包。
 
@@ -23,7 +23,7 @@ python scripts/build_macos.py \
 
 ## Windows 桌面版（Windows 11 x64）
 
-桌面包名为 `Ignovate-1.3.0-windows-x64.zip`。解压完整目录后双击 `Ignovate.exe`，首次启动选择本地工作区，再在模型设置中配置提供商。包内包含 Electron、Python 3.11、固定版本依赖和 ripgrep，无需预装 Python、Node.js 或 WSL，无需管理员权限。支持中文和含空格路径；不要单独移动 EXE，需保留旁边的 `resources` 和 DLL。
+桌面包名为 `Ignovate-1.3.0-windows-x64.zip`。解压完整目录后双击 `Ignovate.exe`，首次启动按照使用引导选择本地工作区并连接模型；可跳过或从设置重新打开。包内包含 Electron、Python 3.11、固定版本依赖和 ripgrep，无需预装 Python、Node.js 或 WSL，无需管理员权限。支持中文和含空格路径；不要单独移动 EXE，需保留旁边的 `resources` 和 DLL。
 
 从 v1.3.0 Release 下载桌面 ZIP，并用 `SHA256SUMS-windows-desktop` 校验文件。`ignovate-1.3.0-windows.zip` 是另行提供的 CLI 安装包，并非桌面包。`.github/workflows/windows-desktop.yml` 会在 push / PR 时构建并验证桌面 ZIP，Actions 产物名为 `windows-desktop-release`。当前桌面构建未使用代码签名证书，Windows 可能显示发行者未验证。
 

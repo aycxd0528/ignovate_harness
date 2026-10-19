@@ -1,0 +1,25 @@
+const {chromium}=require('playwright');const assert=require('node:assert/strict');
+const base=process.env.IGNOVATE_GUI_TEST_URL||'http://127.0.0.1:18869';
+(async()=>{const browser=await chromium.launch({headless:true,executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});try{
+ const page=await browser.newPage({viewport:{width:1168,height:795}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ let chooses=0;await page.exposeFunction('cancelPicker',()=>{chooses++;return null;});await page.addInitScript(()=>{window.ignovateDesktop={chooseProject:()=>window.cancelPicker()};});
+ await page.goto(base+'/#token=browser-test-only');const guide=page.getByRole('dialog',{name:'开始使用 Ignovate',exact:true});await guide.waitFor();
+ await page.screenshot({path:'/tmp/ignovate-onboarding-welcome-light.png'});
+ await guide.getByRole('button',{name:'开始设置',exact:true}).click();await guide.getByRole('button',{name:'选择文件夹',exact:true}).click();
+ assert.equal(chooses,1);assert.equal(await guide.getByRole('button',{name:'使用当前工作区',exact:true}).isVisible(),true,'cancel keeps workspace step');
+ await guide.getByRole('button',{name:'使用当前工作区',exact:true}).click();
+ assert.equal(await guide.getByRole('button',{name:'使用已有连接',exact:true}).count(),0);
+ const secret='onboarding-test-key-local-only';await guide.getByLabel('API 地址',{exact:true}).fill('ftp://example.test');await guide.getByLabel('模型 ID',{exact:true}).fill('custom-offline');await guide.getByLabel('API Key',{exact:true}).fill(secret);
+ assert.equal(await guide.getByLabel('API Key',{exact:true}).getAttribute('type'),'password');
+ await guide.getByRole('button',{name:'保存并继续',exact:true}).click();await guide.getByRole('alert').filter({hasText:'HTTP(S)'}).waitFor();
+ assert.doesNotMatch(await guide.innerText(),new RegExp(secret));
+ await guide.getByLabel('API 地址',{exact:true}).fill('https://provider.example.test/v1');await guide.getByRole('button',{name:'保存并继续',exact:true}).click();
+ await guide.getByRole('heading',{name:'准备好开始了',exact:true}).waitFor();
+ await page.screenshot({path:'/tmp/ignovate-onboarding-ready-light.png'});
+ await guide.getByLabel('把「只读了解项目」示例放入输入框').check();await guide.getByRole('button',{name:'进入工作台',exact:true}).click();await guide.waitFor({state:'detached'});
+ assert.match(await page.locator('#composer').inputValue(),/只读查看/);
+ const snapshot=await page.evaluate(async()=>await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer browser-test-only'}})).json());
+ assert.equal(snapshot.onboarding.status,'completed');assert.equal(snapshot.configuration.model,'custom-offline');assert.equal(snapshot.runs.length,0,'finishing guide never runs starter task');assert.doesNotMatch(JSON.stringify(snapshot),new RegExp(secret));
+ assert.doesNotMatch(await page.evaluate(()=>JSON.stringify({...localStorage})),new RegExp(secret));assert.deepEqual(errors,[]);
+ console.log('Fresh missing connection, cancel picker, invalid/retry config, key privacy, draft-only starter and native completion passed.');
+}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

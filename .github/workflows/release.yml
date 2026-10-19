@@ -122,6 +122,7 @@ jobs:
           python scripts/build_macos.py --wheel release-assets/*.whl --output dist/macos --runtime-base "$RUNNER_TEMP/mac-python/python" --python-standalone-build 20260510 --ripgrep "$RUNNER_TEMP/mac-rg/ripgrep-15.2.0-aarch64-apple-darwin/rg" --electron-zip-dir "$RUNNER_TEMP/mac-electron"
           node --test tests/desktop-runtime.test.cjs
           IGNOVATE_APP="$PWD/dist/macos/Ignovate-darwin-arm64/Ignovate.app" NODE_PATH="$RUNNER_TEMP/mac-smoke/node_modules" node tests/gui-packaged.spec.cjs
+          IGNOVATE_APP="$PWD/dist/macos/Ignovate-darwin-arm64/Ignovate.app" NODE_PATH="$RUNNER_TEMP/mac-smoke/node_modules" node tests/gui-first-run-packaged.spec.cjs
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: macos-desktop-release

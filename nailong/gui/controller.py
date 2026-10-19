@@ -226,6 +226,8 @@ class GUIController:
         if not self.runtime_sources.changed():
             self._sync_history()
         configuration = self.configuration()
+        from nailong.gui.onboarding import OnboardingStore
+        onboarding = OnboardingStore().snapshot(self.project)
         from nailong.gui.settings import GUISettings
         try:
             gui_settings = GUISettings(self).preferences()
@@ -264,7 +266,7 @@ class GUIController:
         control = projection(self, branches)
         return self.safe({'schema_version': 1, 'sequence': self.sequence,
                          'project': {'id': self.sessions.root.name, 'path': str(self.project), 'name': self.project.name},
-                         'configuration': configuration, 'gui_settings': gui_settings,
+                         'configuration': configuration, 'onboarding': onboarding, 'gui_settings': gui_settings,
                          'branches': branches, 'nodes': list(nodes.values()),
                          'runs': [self._public_run(run) for run in self.runs.values()], 'paused': self.paused,
                          'approvals': [a['public'] for a in self.approvals.values()], 'layout': self.branches.layout(),
@@ -334,6 +336,24 @@ class GUIController:
             raise ValueError('命令参数必须是对象。')
         if payload.get('project_id', self.sessions.root.name) != self.sessions.root.name:
             raise ValueError('项目已切换，请重新加载后再操作。')
+        if name == 'onboarding':
+            if self.runtime_sources.changed():
+                raise ValueError(SOURCE_UPDATE_MESSAGE)
+            action = payload.get('action')
+            if (set(payload) - {'action', 'project_id'} or not isinstance(action, str)
+                    or action not in {'complete', 'skip'}):
+                raise ValueError('首次使用引导操作无效。')
+            from nailong.gui.onboarding import OnboardingStore
+            store = OnboardingStore()
+            if action == 'complete':
+                if store.workspace_placeholder(self.project):
+                    raise ValueError('请先选择实际工作区，再完成首次使用引导。')
+                if not self.configuration()['configured']:
+                    raise ValueError('请先保存有效的模型连接，再完成首次使用引导。')
+            store.save('completed' if action == 'complete' else 'skipped')
+            result = store.snapshot(self.project)
+            self.emit('onboarding_updated', result)
+            return result
         if name == 'work_control':
             from nailong.gui.work_control import execute
             return await execute(self, payload)

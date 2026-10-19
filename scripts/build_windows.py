@@ -70,7 +70,7 @@ def build_windows(wheel: Path, output: Path, runtime_base: Path, ripgrep: Path,
         shutil.copy2(ripgrep, tools/'rg.exe')
         for name in ('COPYING', 'LICENSE-MIT', 'UNLICENSE'):
             shutil.copy2(ripgrep.parent/name, tools/name)
-        for name in ('main.cjs', 'preload.cjs', 'runtime.cjs', 'package.json'):
+        for name in ('main.cjs', 'preload.cjs', 'runtime.cjs', 'workspace.cjs', 'package.json'):
             shutil.copy2(ROOT/'desktop'/name, sources/name)
         package = json.loads((sources/'package.json').read_text())
         package['version'] = version
