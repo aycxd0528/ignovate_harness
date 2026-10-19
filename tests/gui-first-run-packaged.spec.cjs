@@ -2,6 +2,7 @@ const {_electron:electron}=require('playwright');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
+const realPath=fs.realpathSync.native;
 
 (async()=>{
  const source=process.env.IGNOVATE_APP;assert.ok(source,'Set IGNOVATE_APP to packaged app/directory');
@@ -17,7 +18,10 @@ const {execFileSync}=require('node:child_process');
   async function launch(){app=await electron.launch({executablePath,args,env,timeout:60000});return app.firstWindow();}
   async function snapshot(page){return page.evaluate(async()=>await(await fetch('/api/snapshot',{headers:{Authorization:'Bearer '+sessionStorage.getItem('ignovate-token')}})).json());}
   let page=await launch();
-  const actualUserData=await app.evaluate(({app})=>app.getPath('userData'));assert.ok(path.relative(temp,actualUserData)&&!path.relative(temp,actualUserData).startsWith('..'),'test must use isolated desktop storage');
+  const actualUserData=await app.evaluate(({app})=>app.getPath('userData'));
+  // macOS resolves /var through /private/var; compare the actual directories.
+  const relativeUserData=path.relative(realPath(temp),realPath(actualUserData));
+  assert.ok(relativeUserData&&!relativeUserData.startsWith('..')&&!path.isAbsolute(relativeUserData),'test must use isolated desktop storage');
   const guide=page.getByRole('dialog',{name:'开始使用 Ignovate',exact:true});await guide.waitFor({timeout:30000});
   assert.equal((await snapshot(page)).onboarding.workspace_placeholder,true,'fresh no-argument launch starts with guide, before workspace picker');
   const effects=[];page.on('request',request=>{if(request.url().endsWith('/api/command')){try{effects.push(JSON.parse(request.postData()).name);}catch{}}});
@@ -33,10 +37,10 @@ const {execFileSync}=require('node:child_process');
   await guide.getByRole('button',{name:'进入工作台',exact:true}).click();await guide.waitFor({state:'detached'});
   assert.equal((await snapshot(page)).onboarding.status,'completed');assert.equal((await snapshot(page)).runs.length,0);
   assert.equal(effects.some(name=>['send','verify','test_connection'].includes(name)),false,'setup cannot invoke a model task');
-  assert.equal(JSON.parse(fs.readFileSync(path.join(actualUserData,'workspace.json'),'utf8')).project,fs.realpathSync(project));
+  assert.equal(realPath(JSON.parse(fs.readFileSync(path.join(actualUserData,'workspace.json'),'utf8')).project),realPath(project));
   await app.close();app=null;
   page=await launch();await page.locator('#startup-screen').waitFor({state:'detached'});const resumed=await snapshot(page);
-  assert.equal(resumed.project.path,fs.realpathSync(project));assert.equal(resumed.onboarding.required,false);assert.equal(await page.locator('#onboarding-dialog').count(),0);
+  assert.equal(realPath(resumed.project.path),realPath(project));assert.equal(resumed.onboarding.required,false);assert.equal(await page.locator('#onboarding-dialog').count(),0);
   await app.close();app=null;fs.renameSync(project,path.join(temp,'moved-project'));
   page=await launch();await page.getByRole('dialog',{name:'开始使用 Ignovate',exact:true}).getByRole('heading',{name:'选择你的工作区',exact:true}).waitFor();
   assert.equal((await snapshot(page)).onboarding.workspace_placeholder,true,'missing remembered workspace enters recovery');
