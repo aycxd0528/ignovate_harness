@@ -326,6 +326,24 @@ class NativeAcceptanceTests(unittest.IsolatedAsyncioTestCase):
         for text in ['只汇报最终变更说明，不要运行测试', '整理最终变更说明，但禁止执行命令', '最终变更说明是什么？']:
             self.assertNotEqual(task_request_kind(text), 'report')
 
+    async def test_natural_contract_handoff_can_complete_native_delivery(self):
+        self.factory.model.responses = self.script()
+        events = await self.turn('请按 README 的完整契约完成最终审查并修正遗漏，重新运行原始测试与新增回归。')
+        self.assertEqual([e.data for e in events if e.kind == 'final'][-1]['delivery']['status'], 'verified')
+        self.assertTrue(any(e.kind == 'verification_step' and e.data['ok'] for e in events))
+
+    async def test_handoff_questions_and_explanations_cannot_bind_or_execute(self):
+        self.begin()
+        before = self.tasks.snapshot(self.thread)
+        for text in ['接手这个项目需要哪些准备？', '请按 README 不要修改代码，只解释方案。',
+                '请根据现有实现说明风险。', '请按之前修复的方案解释原因。',
+                '继续修改会导致数据丢失吗？']:
+            with self.subTest(text=text):
+                result = self.bind(text=text)
+                self.assertFalse(result['ok'])
+                self.assertIn('未授权实施', result['error'])
+                self.assertEqual(self.tasks.snapshot(self.thread), before)
+
     async def test_report_no_execution_directives_override_preapproved_commands(self):
         texts = ['整理最终报告，别运行检查。', '整理最终变更说明，只需要汇报。',
             '整理最终变更说明，不要启动任何命令。', '整理最终变更说明，不必重新测试。',
