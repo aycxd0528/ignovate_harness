@@ -130,4 +130,4 @@ python scripts/build_release.py --wheel dist/ignovate_harness-1.3.0-py3-none-any
 uv pip compile requirements.txt --python-version 3.11 --universal --generate-hashes --no-annotate --no-header -o requirements-release.lock
 ```
 
-修改版本后同步此文档中的下载文件名。推送与 `pyproject.toml` 版本一致的 `v*` tag，会运行 `.github/workflows/release.yml`：测试、构建、macOS/Linux 真实安装验证、Windows 原生启动器、实际自动安装及文件/进程工具验证，以及 Mac 桌面包的签名、重定位与启动验证，然后创建 Release 并上传 CLI 安装包、Mac DMG、Windows 桌面 ZIP、wheel 和校验清单。测试失败不发布。
+修改版本后同步此文档中的下载文件名。当前 `.github/workflows/release.yml` 验证 Python 测试、macOS/Linux 真实安装，以及 Mac 桌面包的签名、重定位与启动，再发布 Unix CLI 安装包、Mac DMG、wheel 和校验清单。Windows 验证保留在独立工作流中，不上传 Windows 安装包。测试失败不发布。手动运行可通过 `source_ref` 固定到既有源码标签或提交；手动运行只构建和验证，下载其产物核对来源后再创建预发布 Release。
