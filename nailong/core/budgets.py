@@ -11,6 +11,10 @@ from nailong.core.usage import message_usage
 class CostBudgetExceeded(RuntimeError):
     """The remaining goal budget cannot fund another model call."""
 
+    def __init__(self, message, *, diagnostics=None):
+        super().__init__(message)
+        self.diagnostics = dict(diagnostics or {})
+
 
 active_cost_budget = ContextVar("nailong_cost_budget", default=None)
 active_token_budget = ContextVar("nailong_token_budget", default=None)
@@ -291,6 +295,44 @@ class SharedTokenBudget:
             self._changed.notify_all()
 
 
+class ScopedCostBudget:
+    """Account each goal round locally while enforcing the caller's shared cap."""
+    def __init__(self, local, parent):
+        self.local, self.parent = local, parent
+
+    def __getattr__(self, name):
+        return getattr(self.local, name)
+
+    def preview(self, request):
+        local = self.local.preview(request)
+        preview = getattr(self.parent, 'preview', None)
+        parent = preview(request) if callable(preview) else None
+        return parent if parent is not None and not parent['can_reserve'] else local
+
+    async def reserve(self, request):
+        parent_hold, parent_cap = await self.parent.reserve(request)
+        try:
+            local_hold, local_cap = await self.local.reserve(request)
+        except BaseException:
+            await self.parent.release(parent_hold)
+            raise
+        return (local_hold, parent_hold), min(local_cap, parent_cap)
+
+    async def release(self, reservation):
+        local_hold, parent_hold = reservation
+        try:
+            await self.local.release(local_hold)
+        finally:
+            await self.parent.release(parent_hold)
+
+    async def settle(self, reservation, messages=None):
+        local_hold, parent_hold = reservation
+        try:
+            await self.local.settle(local_hold, messages)
+        finally:
+            await self.parent.settle(parent_hold, messages)
+
+
 class GoalCostBudget:
     def __init__(self, estimator, remaining_usd: float):
         if not estimator.available:
@@ -303,21 +345,39 @@ class GoalCostBudget:
         self.stopped = False
         self._lock = asyncio.Lock()
 
+    def _quote(self, request):
+        inputs, output = _input_bound(request), _configured_output(request)
+        return {'input_tokens_upper_bound': inputs, 'output_tokens': output,
+                'input_usd': self.estimator.estimate({'input_tokens': inputs}),
+                'output_usd': output * self.estimator.price.output_per_million / 1_000_000}
+
+    def _admission(self, quote):
+        remaining = self.limit - self.spent - self.reserved
+        required = quote['input_usd'] + quote['output_usd']
+        return {**quote, 'limit_usd': self.limit, 'spent_usd': self.spent,
+                'reserved_usd': self.reserved, 'remaining_usd': remaining,
+                'required_usd': required, 'stopped': self.stopped,
+                'usage_complete': self.usage_complete,
+                'can_reserve': not self.stopped and remaining > quote['input_usd'] and required <= remaining}
+
+    def preview(self, request):
+        """A non-reserving hint; reserve rechecks admission under the lock."""
+        return self._admission(self._quote(request))
+
     async def reserve(self, request) -> tuple[float, int]:
-        input_cost = self.estimator.estimate({"input_tokens": _input_bound(request)})
-        configured = _configured_output(request)
-        output_cap = min(4_096, configured)
-        output_price = self.estimator.price.output_per_million / 1_000_000
+        quote = self._quote(request)
         async with self._lock:
-            available = self.limit - self.spent - self.reserved - input_cost
-            if output_price > 0:
-                output_cap = min(output_cap, max(0, int(available / output_price)))
-            if self.stopped or available <= 0 or output_cap < min(64, int(configured)):
+            info = self._admission(quote)
+            if not info['can_reserve']:
                 self.stopped = True
-                raise CostBudgetExceeded("剩余目标预算不足以预留下一次模型调用，目标已暂停。")
-            reservation = input_cost + output_cap * output_price
+                info['stopped'] = True
+                raise CostBudgetExceeded(
+                    f"本次成本预算已暂停：已花费约 ${self.spent:.6f}，余额 ${info['remaining_usd']:.6f}，"
+                    f"下一次完整预留需 ${info['required_usd']:.6f}；输出额度未自动缩小。",
+                    diagnostics=info)
+            reservation = info['required_usd']
             self.reserved += reservation
-            return reservation, output_cap
+            return reservation, quote['output_tokens']
 
     async def release(self, reservation: float) -> None:
         async with self._lock:

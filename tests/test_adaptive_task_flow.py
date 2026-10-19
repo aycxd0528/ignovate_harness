@@ -89,6 +89,64 @@ class GoalStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(saved.spent_usd,0)
 
 class NaturalIntakeTests(GoalStreamTests):
+    async def test_directory_scope_is_canonical_before_native_goal_handoff(self):
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        responses=self.natural_file_responses()
+        responses[0].tool_calls[0]['args']['brief']['scope']=['./']
+        self.factory.model.responses=responses
+        events=[e async for e in self.service.stream_turn('请创建 output.txt 并持续推进',
+            {'configurable':{'thread_id':'canonical'}},approval_handler=lambda *a:'approve_once')]
+        self.assertEqual((self.root/'output.txt').read_text(),'native surface')
+        task=self.factory.task_store.snapshot('canonical')
+        self.assertEqual(task['scope'],['.'])
+        self.assertEqual(task['intake']['scope'],['.'])
+        self.assertTrue(any(e.kind=='goal_progress' for e in events))
+
+    async def test_brief_canonicalizes_acceptance_paths_without_changing_input(self):
+        from nailong.core.task_intake import TaskIntake,user_request
+        import copy
+        brief={'objective':'测试 src','scope':['src/'],'acceptance':[{
+            'description':'src 通过测试','step':'unit','paths':['src/']}],
+            'verification':[{'name':'unit','kind':'test','command':'python -m unittest'}]}
+        original=copy.deepcopy(brief)
+        token=user_request.set({'thread_id':'canonical','text':'请测试 src','turn_id':'current'})
+        try:result=TaskIntake(self.factory.task_store,'canonical').prepare(brief)
+        finally:user_request.reset(token)
+        self.assertTrue(result['ok'],result)
+        self.assertEqual(result['brief']['scope'],['src'])
+        self.assertEqual(result['brief']['acceptance'][0]['paths'],['src'])
+        self.assertEqual(brief,original)
+
+    async def test_external_budget_accounts_for_natural_startup_and_goal_calls(self):
+        from nailong.core.budgets import GoalCostBudget
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        self.factory.model.responses=self.natural_file_responses()
+        budget=GoalCostBudget(self.estimator,.5)
+        events=[e async for e in self.service.stream_turn('请创建 output.txt 并持续推进',
+            {'configurable':{'thread_id':'natural'}},cost_budget=budget,
+            approval_handler=lambda *a:'approve_once')]
+        usage=[e.data for e in events if e.kind=='usage']
+        self.assertEqual(len(usage),5)
+        self.assertAlmostEqual(budget.spent,sum(self.estimator.estimate(u) for u in usage))
+        self.assertEqual(budget.reserved,0)
+
+    async def test_paused_natural_goal_cannot_bypass_zero_external_budget(self):
+        from nailong.core.budgets import GoalCostBudget
+        task=self.factory.task_store.begin('stream','研究项目')
+        task['intake']={'objective':'研究项目','scope':['.'],'constraints':[],'acceptance':[],
+            'open_questions':[],'verification':[],'draft_revision':1,'stage':'executing',
+            'presented_turn':'old','pending_start':None,'goal_id':self.goal.id,
+            'task_revision':task['revision']}
+        self.factory.task_store._write('stream',task)
+        self.goals.update(self.goal.id,state='paused',summary='idle',thread_id='stream')
+        budget=GoalCostBudget(self.estimator,0)
+        events=[e async for e in self.service.stream_turn('继续',
+            {'configurable':{'thread_id':'stream'}},cost_budget=budget,
+            approval_handler=lambda *a:'approve_once')]
+        self.assertFalse(any(e.kind=='usage' for e in events))
+        self.assertEqual(budget.spent,0)
+        self.assertEqual(self.goals.get(self.goal.id).state,'paused')
+
     async def test_draft_needs_live_user_authorization_and_current_presented_revision(self):
         from nailong.core.task_intake import TaskIntake, user_request
         intake=TaskIntake(self.factory.task_store,'natural')

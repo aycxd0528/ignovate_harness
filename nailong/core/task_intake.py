@@ -18,6 +18,11 @@ class BriefAcceptance(TypedDict):
     paths: Annotated[list[str], Field(description='验收覆盖的项目内相对文件/目录路径；只填路径，不写说明或命令。')]
 
 
+@with_config(ConfigDict(extra='forbid', strict=True))
+class NativeAcceptance(BriefAcceptance):
+    requirement_ids: Annotated[list[str], Field(description='此条件覆盖的当前任务有效用户要求 ID，如 ["r000001"]；全部条件合起来必须覆盖所有有效要求。')]
+
+
 @with_config(ConfigDict(extra='forbid',strict=True))
 class BriefVerification(TypedDict, total=False):
     name: Required[Annotated[str, Field(description='步骤唯一名称；acceptance.step 必须逐字引用此名称。')]]
@@ -96,16 +101,24 @@ class TaskIntake:
             raise ValueError('仅当前真实用户会话可准备或启动任务。')
         return request
 
+    def bind_acceptance(self, acceptance: list[NativeAcceptance], verification: list[BriefVerification], expected_revision: int) -> dict:
+        """为普通任务绑定必需自动验收与实际检查；不执行、不声明通过，不替用户确认。"""
+        from nailong.core.task_acceptance import bind_acceptance
+        try:
+            return bind_acceptance(self, acceptance, verification, expected_revision)
+        except (ValueError, OSError, RuntimeError) as error:
+            return {'ok': False, 'error': str(error)}
+
     def prepare(self, brief: TaskBrief, expected_revision: int = 0) -> dict:
         """保存需求草案；列明关键疑问和可观察验收。此操作不启动实施。"""
         try:
             request=self._request(); brief=validate_brief(brief)
-            for path in brief['scope']:self.store._relative(path)
+            brief['scope']=[self.store._relative(path) for path in brief['scope']]
             steps={row['name']:row for row in brief['verification']}
             for row in brief['acceptance']:
                 if isinstance(row,dict):
                     if row['step'] not in steps:raise ValueError('验收步骤不存在。')
-                    for path in row['paths']:self.store._relative(path)
+                    row['paths']=[self.store._relative(path) for path in row['paths']]
             with self.store._locked(self.thread_id):
                 task=self.store._read(self.thread_id)
                 previous=(task or {}).get('intake',{})
@@ -113,6 +126,11 @@ class TaskIntake:
                     raise ValueError('需求草案版本已变化，请重新读取。')
                 if task is None:
                     task=self.store.begin(self.thread_id,request['text'])
+                if task.get('acceptance_plan'):
+                    from nailong.core.task_acceptance import merge_verification_steps
+                    from nailong.core.verification import VerificationService
+                    brief['verification'] = merge_verification_steps(task['acceptance_plan']['verification'],
+                        VerificationService(self.store.project_root, self.store.sessions).list_steps(), brief['verification'])
                 goal=bound_goal(self.store,self.thread_id,task)
                 if previous.get('stage')=='executing' and not (goal and goal.state=='paused' or task['lifecycle']=='paused'):
                     raise ValueError('实施中请先暂停，再修订草案。')
@@ -175,6 +193,11 @@ class TaskIntake:
             draft.update(pending_start=None,stage='executing',accepted_turn=request['turn_id'],implementation_started=False)
             task['revision']+=1
             task.update(objective=draft['objective'],scope=draft['scope'] or task['scope'],constraints=draft['constraints'],lifecycle='active')
+            if task.get('acceptance_plan'):
+                from nailong.core.task_acceptance import active_requirement_ids
+                # Preserve ordinary conditions and all their checks during native handoff.
+                task['acceptance_plan']['verification'] = copy.deepcopy(draft['verification'])
+                task['acceptance_plan']['requirement_ids'] = active_requirement_ids(task)
             task['acceptance']=[row for row in task['acceptance'] if not row['id'].startswith('brief:')]
             self.store._invalidate(task,'用户接受需求草案，核对验收。')
             self.store._write(self.thread_id,task)

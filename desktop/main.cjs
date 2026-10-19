@@ -3,6 +3,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
 const { runtimePaths } = require('./runtime.cjs');
+const { createWorkspaceManager } = require('./workspace.cjs');
 const root = path.resolve(__dirname, '..');
 let child, origin, window, selectedProjects = new Set();
 let shuttingDown = false, adapterExited = false;
@@ -13,16 +14,12 @@ function trusted(event) {
 async function launch() {
   app.enableSandbox();
   await app.whenReady();
-  const index = process.argv.indexOf('--project');
-  let projectPath=index >= 0 ? process.argv[index + 1] : process.cwd();
-  if(app.isPackaged&&index<0){
-    const result=await dialog.showOpenDialog({properties:['openDirectory'],title:'选择 Ignovate 工作区',defaultPath:app.getPath('documents')});
-    if(result.canceled){app.quit();return;}projectPath=result.filePaths[0];
-  }
-  const project = fs.realpathSync(projectPath);
+  const workspace = createWorkspaceManager({ packaged: app.isPackaged, argv: process.argv, cwd: process.cwd(), userData: app.getPath('userData') });
+  const project = workspace.project;
   selectedProjects.add(project);
   const {python,pythonArgs}=runtimePaths({packaged:app.isPackaged,resourcesPath:process.resourcesPath,sourceRoot:root});
-  const environment=app.isPackaged?{...process.env,PATH:path.join(process.resourcesPath,'tools')+path.delimiter+(process.env.PATH||'')}:process.env;
+  const environment={...process.env,IGNOVATE_DESKTOP_WELCOME_PROJECT:workspace.welcomeProject};
+  if(app.isPackaged)environment.PATH=path.join(process.resourcesPath,'tools')+path.delimiter+(process.env.PATH||'');
   child = spawn(python, [...pythonArgs,'-m', 'nailong.gui', '--stdio', '--parent-pipe', '--project', project], { cwd: app.isPackaged?project:root, env:environment, stdio: ['pipe','pipe','pipe'], windowsHide: true });
   child.stdin.on('error', () => {}); // Adapter may exit before the close request.
   child.on('exit', () => { adapterExited=true;if(window&&!window.isDestroyed())window.webContents.send('kernel-exited'); });
@@ -45,8 +42,9 @@ async function launch() {
   ipcMain.handle('choose-project', async event => {
     trusted(event);
     const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: '打开本地项目' });
-    if(result.canceled)return null;
-    const selected=fs.realpathSync(result.filePaths[0]);selectedProjects.add(selected);return selected;
+    const selected=workspace.rememberSelection(result);
+    if(selected===null)return null;
+    selectedProjects.add(selected);return selected;
   });
   ipcMain.handle('open-project-file', async (event, projectPath, relative) => {
     trusted(event);

@@ -513,7 +513,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         self._record('context_request',snapshot)
         return request,snapshot
 
-    def _historical_request_view(self, request):
+    def _historical_request_view(self, request, *, cost_pressure=False):
         """Archive closed prior user turns; never shorten the current exchange.
 
         The soft target is a request preference, not a token budget. Failure to
@@ -529,7 +529,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         before=self._report(request.messages,request.system_message,request.tools)['estimated_tokens']
         info={'target_tokens':target,'before_tokens':before,'after_tokens':before,
               'applied':False,'checkpoint_originals_retained':True}
-        if before<=target:
+        if before<=target and not cost_pressure:
             return request,info
         names={tool.get('function',tool).get('name','') if isinstance(tool,dict) else tool.name
                for tool in request.tools}
@@ -563,6 +563,10 @@ class ContextManagerMiddleware(AgentMiddleware):
                 if self.archive.read(self.thread_id,reference,max_chars=1)['archive_truncated']:
                     info['reason']='archive_truncated'
                     return request,info
+                previous=m.additional_kwargs.get('nailong_tool_reference')
+                if previous and self.archive.read(self.thread_id,previous,max_chars=1)['archive_truncated']:
+                    info['reason']='archive_truncated'
+                    return request,info
                 state=m.additional_kwargs.get('nailong_compact_state',{})
                 for previous in state.get('evidence',[]) if isinstance(state,dict) else []:
                     if self.archive.read(self.thread_id,previous,max_chars=1)['archive_truncated']:
@@ -577,8 +581,9 @@ class ContextManagerMiddleware(AgentMiddleware):
             # Restore requirement text which previously relied on a visible
             # older HumanMessage; the projection is never an authorization.
             if self.task_snapshot_provider is not None:
-                projection,_=self._task_projection(request.tools,messages=view)
+                projection,projection_info=self._task_projection(request.tools,messages=view)
                 view=self._task_request_view(view,projection)
+                info['task_projection']=projection_info
             candidate=request.override(messages=view)
             after=self._report(view,request.system_message,request.tools)['estimated_tokens']
             info.update(after_tokens=after,applied=after<before,level='prior_turn_L2')
@@ -623,6 +628,8 @@ class ContextManagerMiddleware(AgentMiddleware):
             request=request.override(messages=self._task_request_view(view,task_projection))
         with self._measure('history_request_view'):
             request,history_info=self._historical_request_view(request)
+        if history_info['applied'] and 'task_projection' in history_info:
+            task_info=history_info['task_projection']
         if history_info['before_tokens']>history_info['target_tokens']:
             self._record('history_compact',history_info)
         if self.profile != 'subagent':
@@ -641,6 +648,27 @@ class ContextManagerMiddleware(AgentMiddleware):
             cap=min(cap,policy['context_window']-policy['safety_margin']-report['estimated_tokens'])
         cap=max(1,cap)
         request=request.override(model_settings={**request.model_settings,'max_tokens':cap})
+        # Cost pressure can arrive before the context-window soft threshold.
+        # Replace only closed earlier turns with recoverable archives; active
+        # thinking/tool messages and the configured output remain unchanged.
+        from nailong.core.budgets import active_cost_budget
+        cost_budget=active_cost_budget.get()
+        preview=getattr(cost_budget,'preview',None)
+        cost_info=None
+        if callable(preview):
+            before_cost=preview(request)
+            if not before_cost['can_reserve'] and not before_cost['stopped']:
+                with self._measure('cost_compaction'):
+                    candidate,history=self._historical_request_view(request,cost_pressure=True)
+                    after_cost=preview(candidate)
+                    applied=history['applied'] and after_cost['can_reserve']
+                    cost_info={'before':before_cost,'after':after_cost,'applied':applied,
+                               'history':history,'checkpoint_originals_retained':True}
+                    if applied:
+                        request=candidate
+                        report=self._report(request.messages,request.system_message,request.tools)
+                        task_info=history.get('task_projection',task_info)
+                    self._record('cost_compact',cost_info)
         # Cumulative pressure is independent of the large context-window
         # threshold. Keep checkpoint originals; only the request view may use
         # archived older results, and only when recovery is actually available.
@@ -681,6 +709,7 @@ class ContextManagerMiddleware(AgentMiddleware):
             'compact_threshold_tokens':policy['trigger_tokens'],'compaction':self.compaction,
             'actual_main_input_tokens':None}
         snapshot['history_compaction']=history_info
+        if cost_info is not None: snapshot['cost_compaction']=cost_info
         if environment is not None:
             snapshot['runtime_environment']=environment
         if self.memory_budget is not None: snapshot['memory_budget']=self.memory_budget

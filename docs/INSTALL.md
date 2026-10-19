@@ -1,10 +1,10 @@
 # 从 GitHub Release 安装 ignovate
 
-下载地址：[GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest)。安装包包含应用 wheel、环境配置脚本、固定版本的依赖清单和 SHA-256 校验清单，不需要预装 Python，也不需要克隆源码。
+下载地址：[v1.3.0 预发布版](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.3.0)，[最新稳定版](https://github.com/aycxd0528/ignovate_harness/releases/latest)。安装包包含应用 wheel、环境配置脚本、固定版本的依赖清单和 SHA-256 校验清单，不需要预装 Python，也不需要克隆源码。
 
 ## macOS 桌面版（macOS 13+，Apple Silicon）
 
-下载 `Ignovate-1.2.3-macos-arm64.dmg`，打开后将 `Ignovate.app` 拖入 `Applications`。从应用程序打开，选择工作区，再在模型设置中配置提供商。安装包包含 Python 3.11、应用依赖和 ripgrep，无需另装 Python 或克隆源码。
+下载 `Ignovate-1.3.0-macos-arm64.dmg`，打开后将 `Ignovate.app` 拖入 `Applications`。首次打开进入四步使用引导：欢迎、选择工作区、连接模型、开始使用。可返回、跳过，或从「设置 → 通用设置 → 使用引导」重新打开；保存配置不发送模型任务，示例只填入草稿。后续启动会记住仍存在的已选工作区。安装包包含 Python 3.11、应用依赖和 ripgrep，无需另装 Python 或克隆源码。
 
 当前 Mac 包采用本地 ad hoc 签名，尚未取得 Developer ID 签名和 Apple 公证，macOS 可能阻止首次打开。公开可信分发需要维护者配置 Apple 开发者签名与公证。此包仅支持 macOS 13 及以上的 Apple Silicon Mac；Intel Mac 可使用下面的 CLI 安装包。
 
@@ -12,7 +12,7 @@
 
 ```sh
 python scripts/build_macos.py \
-  --wheel dist/ignovate_harness-1.2.3-py3-none-any.whl \
+  --wheel dist/ignovate_harness-1.3.0-py3-none-any.whl \
   --output dist/macos \
   --runtime-base /path/to/python \
   --python-standalone-build 20260510 \
@@ -23,9 +23,11 @@ python scripts/build_macos.py \
 
 ## Windows 桌面版（Windows 11 x64）
 
-桌面包名为 `Ignovate-1.2.3-windows-x64.zip`。解压完整目录后双击 `Ignovate.exe`，首次启动选择本地工作区，再在模型设置中配置提供商。包内包含 Electron、Python 3.11、固定版本依赖和 ripgrep，无需预装 Python、Node.js 或 WSL，无需管理员权限。支持中文和含空格路径；不要单独移动 EXE，需保留旁边的 `resources` 和 DLL。
+v1.3.0 预发布版不发布 Windows 桌面或 CLI 安装包。Windows 旧版下载见 [v1.2.3 Release](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.3)。以下为源码构建与本地安装说明。
 
-从 v1.2.3 Release 下载桌面 ZIP，并用 `SHA256SUMS-windows-desktop` 校验文件。`ignovate-1.2.3-windows.zip` 是另行提供的 CLI 安装包，并非桌面包。`.github/workflows/windows-desktop.yml` 会在 push / PR 时构建并验证桌面 ZIP，Actions 产物名为 `windows-desktop-release`。当前桌面构建未使用代码签名证书，Windows 可能显示发行者未验证。
+桌面包名为 `Ignovate-1.3.0-windows-x64.zip`。解压完整目录后双击 `Ignovate.exe`，首次启动按照使用引导选择本地工作区并连接模型；可跳过或从设置重新打开。包内包含 Electron、Python 3.11、固定版本依赖和 ripgrep，无需预装 Python、Node.js 或 WSL，无需管理员权限。支持中文和含空格路径；不要单独移动 EXE，需保留旁边的 `resources` 和 DLL。
+
+源码构建桌面 ZIP 后，可用生成的 `SHA256SUMS-windows-desktop` 校验文件。`scripts/build_release.py` 生成的 `ignovate-1.3.0-windows.zip` 是 CLI 安装包，并非桌面包；本次 Release 不上传这两类 Windows 产物。`.github/workflows/windows-desktop.yml` 保留构建与验证能力，Actions 产物名为 `windows-desktop-release`。当前桌面构建未使用代码签名证书，Windows 可能显示发行者未验证。
 
 升级前关闭应用，将新版解压到新目录后启动；模型设置和项目会话仍使用用户目录中的原有数据。关闭窗口会通过私有父进程管道请求内核清理工具进程并关闭数据库；桌面进程意外退出也会触发同样的清理。
 
@@ -33,7 +35,7 @@ python scripts/build_macos.py \
 
 ```powershell
 python scripts/build_windows.py `
-  --wheel dist/ignovate_harness-1.2.3-py3-none-any.whl `
+  --wheel dist/ignovate_harness-1.3.0-py3-none-any.whl `
   --runtime-base C:/build/python `
   --python-standalone-build 20260510 `
   --ripgrep C:/build/ripgrep-15.2.0-x86_64-pc-windows-msvc/rg.exe `
@@ -44,11 +46,11 @@ python scripts/build_windows.py `
 
 ## macOS / Linux CLI
 
-支持 Apple Silicon、Intel macOS，以及 x86_64 / ARM64 Linux。下载 `ignovate-1.2.3-unix.tar.gz`，解压后执行：
+支持 Apple Silicon、Intel macOS，以及 x86_64 / ARM64 Linux。下载 `ignovate-1.3.0-unix.tar.gz`，解压后执行：
 
 ```sh
-tar -xzf ignovate-1.2.3-unix.tar.gz
-cd ignovate-1.2.3
+tar -xzf ignovate-1.3.0-unix.tar.gz
+cd ignovate-1.3.0
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -76,11 +78,11 @@ ignovate doctor --output-format json
 
 支持 Windows 11 x64 原生运行。无需 WSL、Linux 环境、虚拟化或预装 Python；安装在当前用户目录，无需管理员权限。
 
-下载 `ignovate-1.2.3-windows.zip`，在 PowerShell 中执行：
+本次预发布不提供 Windows CLI 下载。自行运行 `scripts/build_release.py` 构建 `ignovate-1.3.0-windows.zip` 后，可在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.2.3-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.2.3
+Expand-Archive .\ignovate-1.3.0-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.3.0
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -119,7 +121,7 @@ Release 页面同时提供外层 `SHA256SUMS`，可在解压前校验下载文�
 
 ```sh
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/build_release.py --wheel dist/ignovate_harness-1.2.3-py3-none-any.whl
+python scripts/build_release.py --wheel dist/ignovate_harness-1.3.0-py3-none-any.whl
 ```
 
 更新依赖锁定清单时：
@@ -128,4 +130,4 @@ python scripts/build_release.py --wheel dist/ignovate_harness-1.2.3-py3-none-any
 uv pip compile requirements.txt --python-version 3.11 --universal --generate-hashes --no-annotate --no-header -o requirements-release.lock
 ```
 
-修改版本后同步此文档中的下载文件名。推送与 `pyproject.toml` 版本一致的 `v*` tag，会运行 `.github/workflows/release.yml`：测试、构建、macOS/Linux 真实安装验证、Windows 原生启动器、实际自动安装及文件/进程工具验证，以及 Mac 桌面包的签名、重定位与启动验证，然后创建 Release 并上传 CLI 安装包、Mac DMG、Windows 桌面 ZIP、wheel 和校验清单。测试失败不发布。
+修改版本后同步此文档中的下载文件名。当前 `.github/workflows/release.yml` 验证 Python 测试、macOS/Linux 真实安装，以及 Mac 桌面包的签名、重定位与启动，再发布 Unix CLI 安装包、Mac DMG、wheel 和校验清单。Windows 验证保留在独立工作流中，不上传 Windows 安装包。测试失败不发布。手动运行可通过 `source_ref` 固定到既有源码标签或提交；手动运行只构建和验证，下载其产物核对来源后再创建预发布 Release。

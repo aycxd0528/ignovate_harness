@@ -524,7 +524,7 @@ check_config.py  环境变量读取示例
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.2.3-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.3.0-py3-none-any.whl
 ```
 
 GitHub Actions 已启用，在 Ubuntu 24.04、Python 3.11/3.13 上运行完整离线测试和发行包 smoke，支持 push、pull request 与手动触发。配置见 [CI 工作流](../.github/workflows/tests.yml)。

@@ -17,23 +17,64 @@ _STATUS = re.compile(
     re.IGNORECASE,
 )
 _WORK = re.compile(
-    r'^(?:(?:请|帮我|请帮我|现在|开始|麻烦|麻烦你|然后|接下来)\s*)*'
+    r'^(?:(?:请|帮我|请帮我|现在|开始|麻烦|麻烦你|然后|接下来|先|再|继续|重新|并)\s*)*'
+    # A qualified request needs the action immediately after its named basis;
+    # arbitrary text here could swallow "不要" or match a verb inside a noun.
+    r'(?:(?:按|按照|根据|依据)(?:(?!(?:不要|禁止|暂不|先不|不必|无需|不用|不需要|不能|不得|只|仅))'
+    r'[^，,；;。！!？?\n]){0,40}?(?:契约|文档|规范|约定|要求|方案|计划|说明书|README(?:\.md)?)\s*)?'
     r'(?:(?:反复|依次|逐个|分别)\s*)*'
-    r'(?:修复|修改|实现|审查|重构|优化|排查|测试|验证|创建|新增|增加|编辑|删除|重命名|构建|运行|执行|写入|写文件|做)'
+    r'(?:(?:接手|完成|补齐|补充|交付)(?!了|过|的|度)|'
+    r'(?:修复|修改|实现|审查|重构|优化|排查|测试|验证|创建|新增|增加|编辑|删除|重命名|构建|运行|执行|写入|写文件|做)(?!的|过的))'
     r'|^(?:please\s+)?(?:review|debug|implement|refactor|fix|create|edit|rename|build|test|run)\b',
     re.IGNORECASE,
 )
-_QUESTION = re.compile(r'是什么|为什么|怎么样|怎样|如何|是否|能否|可否|了吗|了么|先解释|解释一下|说明一下|\b(?:what|why|how|whether)\b', re.IGNORECASE)
+_QUESTION = re.compile(r'[?？]|谁|哪里|哪儿|什么|为什么|怎么样|怎样|怎么|如何|哪些|多久|多长|多少|何时|几(?:天|小时|分钟|步|次)|是否|是不是|有没有|会不会|能否|可否|能不能|可不可以|需不需要|要不要|吗|么|呢$|先解释|解释一下|说明一下|\b(?:what|why|how|whether)\b', re.IGNORECASE)
+_REPORT = re.compile(r'^(?:请\s*)?(?:整理|输出|提供|总结)\s*(?:最终|本次|本轮|任务|交付|验收|变更).{0,24}(?:说明|报告|总结)', re.IGNORECASE)
+_NO_AUTOMATIC_EXECUTION = re.compile(
+    r'只读|(?:不要|禁止|暂不|先不|先别|别|不必|无需|不用|不需要|不)'
+    r'(?:(?:再|重新|额外|擅自|立即|马上|先|任何|一切|进行)\s*)*'
+    r'(?:运行|执行|测试|验证|启动|操作|做任何操作|做任何事|做任何修改)'
+)
+_REPORT_ONLY = re.compile(r'(?:仅|只)(?:需(?:要)?|要|做)?(?:汇报|说明|输出|报告)')
 _NO_EXECUTION = re.compile(
     r'(?:不要|不需要|禁止|暂不|先不|别)(?:再|先|立即|马上)?(?:恢复|继续)'
     r'|(?:不要|禁止|暂不|先不|别)(?:再)?执行(?:任务|任何操作|任何任务)'
     r'|^(?:请)?(?:仅|只(?:需|要)?)(?:解释|说明|查询)'
 )
+_AUTHORIZED_WORK = re.compile(
+    r'^(?:我\s*)?(?:(?:请|现在|现已|正式|明确)\s*)*'
+    r'(?:授权|批准|同意)\s*(?:你|您)?\s*'
+    r'(?:(?:按|按照|依照|照)\s*(?:你|您)?的?\s*(?:方案|计划)\s*)?'
+    r'(?:(?:开始|继续)\s*)?'
+    r'(?:实现|实施|执行|修改|修复|重构|优化|测试|验证|创建|新增|编辑|构建|运行)'
+)
+
+
+def _live_request_text(message: str) -> str:
+    """Quoted prose, blockquotes and fenced examples cannot authorize work."""
+    lines, fence = [], None
+    for line in message.splitlines():
+        marker = re.match(r'^\s*(`{3,}|~{3,})', line)
+        if marker:
+            delimiter = marker.group(1)
+            if fence is None:
+                fence = (delimiter[0], len(delimiter))
+            elif delimiter[0] == fence[0] and len(delimiter) >= fence[1]:
+                fence = None
+            continue
+        if fence is None and not line.lstrip().startswith('>'):
+            lines.append(line)
+    return re.sub(r'''“[^”]*”|‘[^’]*’|"[^"]*"|'[^']*'|`[^`\n]*`''', '', '\n'.join(lines))
+
+
+def automatic_execution_prohibited(message):
+    return bool(_NO_AUTOMATIC_EXECUTION.search(_live_request_text(message)))
 
 
 def task_request_kind(message: str) -> str:
     """Match whole status questions; a mixed question/change request stays work."""
-    text = message.strip().rstrip('。.!！?？·').strip()
+    live = _live_request_text(message).strip()
+    text = live.rstrip('。.!！?？·').strip()
     if _STATUS.fullmatch(text):
         return 'status'
     if _NO_EXECUTION.search(text):
@@ -41,9 +82,22 @@ def task_request_kind(message: str) -> str:
     if explicit_new_task(text):return 'work'
     if text.casefold() in _RESUME:
         return 'resume'
+    if (_REPORT.search(text) and not _QUESTION.search(text) and not re.search(r'[?？]', text)
+            and not _NO_AUTOMATIC_EXECUTION.search(text) and not _REPORT_ONLY.search(text)):
+        return 'report'
+    clauses = r'[，,；;。！!\n]'
+    if _AUTHORIZED_WORK.search(text) and (_QUESTION.search(re.split(clauses, live)[0]) or re.search(
+        r'吗|么|[?？]|不同意|不授权|未授权|(?:撤回|撤销|取消)授权|(?:不要|暂不|先不)(?:执行|实施)', live)):
+        return 'other'
     # A question about fixing/testing is not permission to resume that work.
-    for clause in re.split(r'[，,；;\n]', text):
-        if _WORK.search(clause.strip()) and not _QUESTION.search(clause):
+    # Chinese sentence boundaries separate context from a following live
+    # imperative. A bare dot stays intact in filenames such as README.md.
+    # Keep question punctuation here: stripping it before recognition would
+    # turn informational "接手…？" questions into implementation authority.
+    for index, clause in enumerate(re.split(clauses, live)):
+        authorization = (index == 0 and _AUTHORIZED_WORK.search(clause.strip())
+            and not re.search(r'吗|么|[?？]', re.split(clauses, live)[0]))
+        if (_WORK.search(clause.strip()) or authorization) and not _QUESTION.search(clause):
             # An imperative may be politely phrased as a question ("请修改…可以吗？").
             if not clause.strip().endswith(('了吗', '了吗？', '了吗?', '了么', '了么？', '了么?')):
                 return 'work'

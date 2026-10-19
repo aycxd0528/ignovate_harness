@@ -64,6 +64,8 @@ jobs:
           $env:NODE_PATH = "$env:RUNNER_TEMP/windows-smoke/node_modules"
           $env:IGNOVATE_SCREENSHOT = "$env:RUNNER_TEMP/ignovate-windows-installed.png"
           node tests/gui-windows-packaged.spec.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged application smoke failed' }
+          node tests/gui-first-run-packaged.spec.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Installed desktop smoke failed' }
       - uses: actions/upload-artifact@v7.0.2
         with:

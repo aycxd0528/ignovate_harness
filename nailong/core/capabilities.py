@@ -25,7 +25,7 @@ GROUPS = {'read': READ, '读取': READ, '搜索': READ, '文件': READ,
           '历史': frozenset({'read_history_result', 'read_task_context'}),
           'session': frozenset({'list_task_sessions','read_session_history','take_session','dispatch_session','coordination_status','pause_coordination'}),
           '会话': frozenset({'list_task_sessions','read_session_history','take_session','dispatch_session','coordination_status','pause_coordination'}),
-          'task': frozenset({'task', 'update_goal', 'prepare_task', 'start_task'}), '子代理': frozenset({'task'})}
+          'task': frozenset({'task', 'update_goal', 'prepare_task', 'start_task', 'bind_task_acceptance'}), '子代理': frozenset({'task'})}
 
 
 def merge_loads(previous, updates):
@@ -107,6 +107,10 @@ class CapabilityCatalog:
             text = str(user.content) if user is not None else ''
             from nailong.core.task_requests import task_request_kind
             task = self.task_provider() if self.task_provider is not None else None
+            if task:
+                names.update({'read_task_context', 'read_history_result'})
+                if not task.get('intake'):
+                    names.add('bind_task_acceptance')
             if task or task_request_kind(text) == 'work' or (user and user.additional_kwargs.get('nailong_pin')):
                 names.update(READ | EDIT)
                 if task and task.get('intake',{}).get('stage') in {'clarifying','ready'}:
@@ -127,10 +131,20 @@ class CapabilityCatalog:
         substantive = bool(names - DISCOVERY)
         if substantive:
             parts = {**self.prompt_builder(names), 'skill_catalog': '', 'fixed_memory': memory}
+            if 'bind_task_acceptance' in names:
+                parts['base_system'] += (
+                    '\n普通工程任务必须在交付前调用 bind_task_acceptance，将本轮及仍有效的用户功能要求绑定实际验证命令与覆盖路径；'
+                    '每项 requirement_ids 明确列出它覆盖的有效用户要求 ID，全部条件必须覆盖全部有效要求；'
+                    'expected_revision 取当前任务快照版本，路径需覆盖任务范围（整个项目可用 ["."]）。'
+                    '新增要求时重新绑定并保留原条件；步骤名已存在时不可改写命令，需新增名称。'
+                    '原生验证器会在交付前实际执行；普通 run_command 测试及文字报告不能替代原生绑定证据。'
+                    '最终变更/交付报告也要核对当前要求并绑定检查，仍需实际命令审批；明确只汇报或禁止执行时不运行。'
+                    '只读调查、计划或解释阶段不运行实施验收；持续目标继续使用 prepare_task/start_task。')
             if {'prepare_task','start_task'} <= names:
                 parts['base_system'] += (
                     '\n普通会话持续任务：模糊需求用 prepare_task 保存目标、验收和关键疑问后追问；不调用 task 子代理来记录需求。'
-                    '多步骤或持续推进的实施请求，先 prepare_task，再以返回的 draft_revision 调用 start_task；'
+                    '用户明确要求持续自主推进的实施请求，先 prepare_task，再以返回的 draft_revision 调用 start_task；'
+                    '普通单轮实施用 bind_task_acceptance 绑定验收后交付，不必仅因涉及多个文件而创建持续目标。'
                     '用户已明确授权且需求清晰时可本轮准备并启动，无需再确认。'
                     'start_task 成功后结束本轮，由原生驱动器在本轮结束后持续实施，不在启动轮重复写入。'
                     '已有 executing 草案的执行轮直接推进，不重复准备或启动。'

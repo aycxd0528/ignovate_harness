@@ -85,6 +85,8 @@ def main():
     (root / '.nailong/settings.json').write_text('{"context_windows":{"deepseek-flash":65536}}')
     def build(project):
         sessions = ProjectSessionStore(project, base_dir=Path(temp.name) / 'data')
+        if __import__('os').environ.get('IGNOVATE_GUI_NO_CONNECTION') == '1':
+            return GUIController(project, sessions=sessions)
         factory = AgentRuntimeFactory(Settings('offline-test-key', 'https://example.test', 'deepseek-flash', Path(project)), session_store=sessions)
         controller = GUIController(project, sessions=sessions, service=AgentService(factory, api_key='offline-test-key'))
         if __import__('os').environ.get('IGNOVATE_GUI_CONTROL_HISTORY') == '1':
@@ -109,11 +111,18 @@ def main():
     def offline_settings():
         from nailong.core.bootstrap import BootstrapStore
         provider = BootstrapStore().read().get('provider', {})
+        if __import__('os').environ.get('IGNOVATE_GUI_NO_CONNECTION') == '1' and not provider:
+            raise ValueError('模型连接尚未配置。')
         model = provider.get('model', 'deepseek-flash')
         return Settings(provider.get('api_key', 'offline-test-key'), provider.get('api_base', 'https://example.test'),
                         model, root, environment_model=model)
     # Keep model construction offline when the native reasoning setting changes.
     with patch('agent.ChatDeepSeek', side_effect=lambda **kwargs: OfflineModel(responses=[])), patch('pathlib.Path.home', return_value=home), patch('config.load_settings', side_effect=offline_settings), patch.dict('os.environ', {'IGNOVATE_CONFIG_DIR':str(home/'config'),'NAILONG_DATA_DIR':str(Path(temp.name).resolve()/'data')}):
+        if __import__('os').environ.get('IGNOVATE_GUI_FIRST_RUN') != '1':
+            from nailong.core.bootstrap import BootstrapStore
+            from nailong.core.preferences import atomic_json
+            bootstrap = BootstrapStore()
+            atomic_json(bootstrap.path.with_name('onboarding.json'), {'version': 1, 'status': 'completed'}, bootstrap.boundary)
         server = GUIServer(root, port=int(__import__('os').environ.get('IGNOVATE_GUI_TEST_PORT', '8767')), token='browser-test-only', controller_factory=build)
         try:
             print('Browser fixture ready on '+server.origin, flush=True)

@@ -115,7 +115,7 @@ class GUIHandler(BaseHTTPRequestHandler):
                          'syntax.css': 'text/css', 'syntax.js': 'text/javascript', 'syntax-engine.js': 'text/javascript',
                          'react-bits.css': 'text/css', 'react-bits.js': 'text/javascript',
                          'react-bits-islands.css': 'text/css', 'react-bits-islands.js': 'text/javascript',
-                         'preferences.js': 'text/javascript', 'rendering.js': 'text/javascript', 'startup.js': 'text/javascript', 'motion.css': 'text/css', 'ui.js': 'text/javascript', 'icons.js': 'text/javascript',
+                         'preferences.js': 'text/javascript', 'rendering.js': 'text/javascript', 'startup.js': 'text/javascript', 'onboarding.js': 'text/javascript', 'motion.css': 'text/css', 'ui.js': 'text/javascript', 'icons.js': 'text/javascript',
                          'markdown-engine.js': 'text/javascript','conversation.js':'text/javascript','plugins.js':'text/javascript','reasoning.js':'text/javascript','sidebar.js':'text/javascript','effort-fire.js':'text/javascript','effort-shaders.js':'text/javascript','model-picker.js':'text/javascript','diff.js':'text/javascript',
                          'usage-details.js':'text/javascript'}
                 if name not in types:

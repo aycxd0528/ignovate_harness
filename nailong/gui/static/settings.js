@@ -5,7 +5,7 @@ const sections=[['general','通用设置','sliders'],['models','模型','cloud']
 let currentDialog;
 
 /** The catalog contains provider metadata only. Keys are entered in child forms. */
-export function showSettings({section='general',read,savePreferences,provider,plugins,onChanged=()=>{},isCurrent=()=>true,isBusy=()=>false,openConfig}) {
+export function showSettings({section='general',read,savePreferences,provider,plugins,onChanged=()=>{},isCurrent=()=>true,isBusy=()=>false,openConfig,openGuide}) {
   const previousOrigin=currentDialog?.settingsOrigin;
   currentDialog?.close();
   const origin=previousOrigin?.isConnected?previousOrigin:document.activeElement;
@@ -117,6 +117,7 @@ export function showSettings({section='general',read,savePreferences,provider,pl
   }
   function renderGeneral(){
     pageHeading('通用设置','设置当前项目的会话默认值与显示方式');
+    if(openGuide){const start=group('开始使用'),entry=row(start,'onboarding','使用引导','重新选择工作区、配置模型，了解第一个任务的运行方式。');entry.control.append(actionButton('重新查看使用引导',()=>{dialog.close();openGuide();},'settings-guide-button'));}
     const chat=group('会话');
     selectRow(chat,'default_permission','新会话默认权限','仅影响新建会话，现有会话保留各自的权限。',[['default','默认权限'],['acceptEdits','自动编辑'],['bypassPermissions','完全访问']]);
     selectRow(chat,'busy_send','运行时发送消息','选择任务执行期间再次发送消息的方式。',[['queue','排队发送'],['draft','保留草稿']]);

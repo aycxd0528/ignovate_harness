@@ -279,6 +279,78 @@ class ManagedDeliveryTests(unittest.TestCase):
         task['evidence'] = [self.evidence(**kwargs)]
         return task
 
+    def file_bound_task(self):
+        task = self.proven_task(kind='test')
+        task['scope'] = ['.']
+        task['changed_paths'] = ['a.py']
+        task['acceptance'][0].update(id='auto:a', kind='test', requirement_ids=['r000001'],
+            verification_binding={'source': 'agent', 'step': 'test-a', 'paths': ['a.py']})
+        task['acceptance_plan'] = {'source': 'agent', 'source_turn': 'turn',
+            'previous_revision': 1, 'revision': 2, 'requirement_ids': ['r000001'],
+            'verification': [{'name': 'test-a', 'kind': 'test', 'command': 'python -m unittest'}]}
+        return task
+
+    def test_file_bound_criteria_collectively_cover_changes_in_broad_task(self):
+        task = self.file_bound_task()
+        task['changed_paths'].append('b.py')
+        task['acceptance'].append({**copy.deepcopy(task['acceptance'][0]), 'id': 'auto:b',
+            'evidence_ids': ['proof-b'], 'verification_binding':
+                {'source': 'agent', 'step': 'test-b', 'paths': ['b.py']}})
+        task['evidence'].append(self.evidence(id='proof-b', kind='test', paths=['b.py']))
+        task['acceptance_plan']['verification'].append(
+            {'name': 'test-b', 'kind': 'test', 'command': 'python -m unittest'})
+        report = build_delivery_report(task, current_input_fingerprint='input-v1')
+        self.assertEqual(report['status'], 'verified', str(report))
+        self.assertEqual(report['goal_coverage']['satisfied'], ['auto:a', 'auto:b'])
+
+    def test_file_binding_cannot_hide_changes_or_omit_requirement_provenance(self):
+        cases = [
+            {'changed_paths': ['a.py', 'uncovered.py']},
+            {'scope': ['other.py'], 'changed_paths': []},
+        ]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                task = self.file_bound_task()
+                task.update(changes)
+                self.assertNotEqual(build_delivery_report(task,
+                    current_input_fingerprint='input-v1')['status'], 'verified')
+        for ids in ([], ['r999999']):
+            with self.subTest(requirement_ids=ids):
+                task = self.file_bound_task()
+                task['acceptance'][0]['requirement_ids'] = ids
+                self.assertNotEqual(build_delivery_report(task,
+                    current_input_fingerprint='input-v1')['status'], 'verified')
+        task = self.file_bound_task()
+        del task['acceptance_plan']
+        self.assertEqual(build_delivery_report(task,
+            current_input_fingerprint='input-v1')['status'], 'unverified')
+
+    def test_configured_success_cannot_cover_an_omitted_functional_change(self):
+        task = self.file_bound_task()
+        task['changed_paths'].append('uncovered.py')
+        task['acceptance'].append({'id': 'verify:test-a', 'description': '命令通过',
+            'kind': 'test', 'required': True, 'status': 'passed', 'evidence_ids': ['configured']})
+        task['evidence'].append(self.evidence(id='configured', kind='test', paths=['.']))
+        report = build_delivery_report(task, current_input_fingerprint='input-v1')
+        self.assertEqual(report['configured_verification']['status'], 'verified')
+        self.assertEqual(report['goal_coverage']['status'], 'unverified')
+        self.assertEqual(report['status'], 'unverified')
+
+    def test_collective_change_coverage_normalizes_evidence_paths(self):
+        task = self.file_bound_task()
+        task['evidence'][0]['paths'] = ['./a.py']
+        self.assertEqual(build_delivery_report(task,
+            current_input_fingerprint='input-v1')['status'], 'verified')
+
+    def test_unbound_and_user_manual_criteria_still_require_whole_task_coverage(self):
+        for kind, source in (('test', 'runtime'), ('manual', 'user')):
+            with self.subTest(kind=kind):
+                task = self.proven_task(kind=kind, source=source)
+                task['scope'] = ['.']
+                task['acceptance'][0]['kind'] = kind
+                self.assertEqual(build_delivery_report(task,
+                    current_input_fingerprint='input-v1')['status'], 'unverified')
+
     def test_native_windows_project_identity_can_prove_delivery(self):
         for root in (r'C:\Users\测试 user\project', 'D:/work/project'):
             with self.subTest(root=root):

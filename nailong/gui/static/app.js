@@ -22,6 +22,7 @@ async function startWorkbench() {
   const {conversationGroups,visibleBranches,relativeTime}=await import('./sidebar.js');
   const {fileChangesReview}=await import('./diff.js');
   const {showSettings}=await import('./settings.js');
+  const {showOnboarding}=await import('./onboarding.js');
   const {effectiveUIPreferences,shortcutMatches}=await import('./preferences.js');
   const {synchronize,patchElement,updateProse}=await import('./rendering.js');
   const {renderQueue}=await import('./queue.js');
@@ -42,7 +43,7 @@ let prunePromise,pruneRetryTimer;
 const pendingLayouts = new Map(),layoutTimers=new Map(),layoutSaves=new Map();
 let draftTimer, pollTimer, menuOrigin, creationPromise, promptUI;
 let workspaceCatalog=[],catalogKey='',catalogLoading=null;
-let settingsDialog,uiPreferences=effectiveUIPreferences();
+let settingsDialog,onboardingDialog,uiPreferences=effectiveUIPreferences();
 let sidebarStamp='';const dirtyStreams=new Set();let streamPaint=0,connectionInterrupted=false;
 const projectBusy=()=>state.snapshot?.runs.some(run=>['queued','running','waiting_approval','stopping'].includes(run.status));
 function applyPreferences(envelope){
@@ -179,6 +180,7 @@ async function reload() {
     }
   }
   state.snapshot=next;
+  onboardingDialog?.refresh(next);
   applyPreferences(next.gui_settings);
   settingsDialog?.updateBusy();
   state.receivedAt=performance.now();
@@ -723,8 +725,8 @@ async function openProject(selectedPath) {
     clearTimeout(draftTimer);for(const timer of layoutTimers.values())clearTimeout(timer);layoutTimers.clear();pendingLayouts.clear();pendingDrafts.clear();state.streams.clear();state.branch=null;state.node=null;
     await reload();$('#inspector').replaceChildren(el('p','muted','选择一个回合查看详情。'));setComposerText(active()?.draft||'');
   };
-  if(typeof selectedPath==='string'){await open(selectedPath);return;}
-  if(window.ignovateDesktop) {const selected=await window.ignovateDesktop.chooseProject();if(selected)await open(selected);return;}
+  if(typeof selectedPath==='string'){await open(selectedPath);return true;}
+  if(window.ignovateDesktop) {const selected=await window.ignovateDesktop.chooseProject();if(selected){await open(selected);return true;}return false;}
   modal('打开工作区',field('目录路径','path',state.snapshot.project.path),'打开',data=>open(data.path));
 }
 function settings(section='general') {
@@ -738,11 +740,18 @@ function settings(section='general') {
     savePreferences:async changes=>catalog(await scoped('settings_update',{changes})),
     provider:async payload=>catalog(await scoped('provider',payload)),
     plugins:{read:()=>scoped('plugins'),mutate:(operation,payload)=>scoped('plugin',{operation,...payload})},
-    onChanged:async()=>{if(current())await reload();},isCurrent:current,isBusy:projectBusy,
+    onChanged:async()=>{if(current())await reload();},isCurrent:current,isBusy:projectBusy,openGuide:()=>onboarding(),
     openConfig:paths=>{const body=el('div');body.append(el('p','muted','设置会自动保存。模型密钥仅保存在本机配置文件中。'));
       for(const [key,label] of [['preferences','界面设置'],['providers','模型提供商'],['configuration','当前连接']]){body.append(el('h3','',label),el('pre','file-preview',paths[key]||'暂无配置路径'));}
       modal('配置文件位置',body,null);
     }});
+}
+function onboarding(){
+  if(onboardingDialog?.open)return;
+  settingsDialog?.close();
+  onboardingDialog=showOnboarding({snapshot:state.snapshot,getSnapshot:()=>state.snapshot,command,chooseProject:openProject,
+    nativePicker:!!window.ignovateDesktop,
+    onFinished:draft=>{if(draft){setComposerText(draft);saveDraft();}$('#composer')?.focus();}});
 }
 async function workspace() {
   const data=await command('workspace',{},false);toggleDetail(true);const inspector=$('#inspector');inspector.replaceChildren();
@@ -801,12 +810,12 @@ function paintStreams(){
 document.addEventListener('keydown',event=>{
   if(document.querySelector('dialog[open]'))return;
   if(event.key==='Escape'){const closed=closeBranchMenu(true);if(!closed&&window.matchMedia('(max-width:900px)').matches&&state.sidebar)toggleSidebar(false);}
-  if(shortcutMatches(event,uiPreferences.shortcuts.commands)){event.preventDefault();const body=el('div','command-list');for(const [label,fn]of [['新会话',createConversation],['打开项目',openProject],['设置',()=>settings()],['模型设置',()=>settings('models')],['环境检查',diagnostics],['当前工作区',workspace],['验证',verify]])body.append(button(label,()=>{$('#dialog').close();return fn();},'command-entry'));modal('操作入口',body,null);}
+  if(shortcutMatches(event,uiPreferences.shortcuts.commands)){event.preventDefault();const body=el('div','command-list');for(const [label,fn]of [['新会话',createConversation],['打开项目',openProject],['设置',()=>settings()],['使用引导',onboarding],['模型设置',()=>settings('models')],['环境检查',diagnostics],['当前工作区',workspace],['验证',verify]])body.append(button(label,()=>{$('#dialog').close();return fn();},'command-entry'));modal('操作入口',body,null);}
   if(shortcutMatches(event,uiPreferences.shortcuts.find)){event.preventDefault();const search=$('.trace-search input')||$('.chat-search')||$('.search');search.hidden=false;search.focus();}
   if(shortcutMatches(event,uiPreferences.shortcuts.new_chat)){event.preventDefault();createConversation().catch(e=>toast(e.message));}
 });
 document.documentElement.dataset.theme=localStorage.getItem('ignovate-theme')||'system';state.view=['chat','map','trace','plugins'].includes(localStorage.getItem('ignovate-view'))?localStorage.getItem('ignovate-view'):'chat';
-shell();reload().then(async()=>{await pruneEmptyConversations(false);if(!active())await reload();setComposerText(active()?.draft||'');resizeComposer();window.ignovateStartup?.ready();if(!state.snapshot.configuration.configured)settings('models');poll();}).catch(e=>{window.ignovateStartup?.fail(e.message);$('#content').replaceChildren(el('div','empty-state',e.message));});
+shell();reload().then(async()=>{await pruneEmptyConversations(false);if(!active())await reload();setComposerText(active()?.draft||'');resizeComposer();window.ignovateStartup?.ready();if(state.snapshot.onboarding?.required)onboarding();else if(!state.snapshot.configuration.configured&&state.snapshot.onboarding?.status!=='skipped')settings('models');poll();}).catch(e=>{window.ignovateStartup?.fail(e.message);$('#content').replaceChildren(el('div','empty-state',e.message));});
 }
 if(location.protocol==='file:') {
   explainEntry('Ignovate GUI 需要启动本地服务','这个 HTML 文件是界面资源。Python 本地服务负责连接内核、会话和工具执行。');

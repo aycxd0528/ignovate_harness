@@ -87,6 +87,10 @@ def _coverage_group(report: dict, *, configured: bool) -> dict:
             group[key].append(row["id"])
             if row["required"]:
                 required[key].append(row)
+    if not configured:
+        sources = {row.get('coverage_declaration', {}).get('source')
+            for key in required for row in required[key]}
+        group['coverage_basis'] = 'agent_declared' if 'agent' in sources else 'user_declared'
     if required["failed"]:
         group["status"] = "failed"
     elif required["pending"] or required["stale"]:
@@ -120,6 +124,29 @@ def _assess_acceptance(item: dict, snapshot: dict, index: dict, duplicates: set,
                        scope: tuple[str, ...], fingerprint: str | None) -> dict:
     row = {"id": item["id"], "description": item["description"], "kind": item["kind"],
            "required": item["required"], "status": "pending", "evidence_ids": [], "reasons": []}
+    binding = item.get('verification_binding')
+    if isinstance(binding, dict) and binding.get('source') in {'agent', 'user'}:
+        row['coverage_declaration'] = {'source': binding['source'], 'requirement_ids': list(item.get('requirement_ids', []))}
+    if isinstance(binding, dict) and binding.get('source') == 'agent':
+        from nailong.core.task_acceptance import current_plan
+        from nailong.core.task_requirements import requirement_records
+        paths = _paths(binding.get('paths'))
+        try:
+            requirements = {entry['id'] for entry in requirement_records(snapshot)}
+            plan = current_plan(snapshot)
+        except (KeyError, TypeError, ValueError):
+            requirements, plan = set(), None
+        requirement_ids = item.get('requirement_ids')
+        if (not paths or not plan or item['kind'] not in {'test', 'build', 'run'}
+                or not isinstance(requirement_ids, list) or not requirement_ids
+                or any(not isinstance(key, str) or key not in requirements for key in requirement_ids)
+                or any(not any(_covers(target, path) for target in scope) for path in paths)):
+            row['reasons'].append('代理验收的路径或用户要求关联无效，不能确认覆盖。')
+            return row
+        # An ordinary task's scope bounds allowed work. Each explicitly bound
+        # criterion declares its own coverage; it need not prove every other
+        # criterion's files. Unbound and user-owned conditions keep global scope.
+        scope = paths
     ids = item.get("evidence_ids")
     if not isinstance(ids, list) or not all(_text(identifier) for identifier in ids):
         row["reasons"].append("验收证据引用无效。")
@@ -291,6 +318,9 @@ def build_delivery_report(snapshot: dict | None, *, current_input_fingerprint: s
         report[bucket].append(row)
     report["configured_verification"] = _coverage_group(report, configured=True)
     report["goal_coverage"] = _coverage_group(report, configured=False)
+    goal_paths = {path for row in report['satisfied'] if not row['id'].startswith('verify:')
+                  for identifier in row['evidence_ids'] for path in _paths(evidence_index[identifier]['paths'])}
+    uncovered_changes = [path for path in changed if not any(_covers(target, path) for target in goal_paths)]
     required_pending = any(row["required"] for name in ("pending", "stale") for row in report[name])
     required_failed = any(row["required"] for row in report["failed"])
     goal_status = report["goal_coverage"]["status"]
@@ -315,6 +345,12 @@ def build_delivery_report(snapshot: dict | None, *, current_input_fingerprint: s
             report["reasons"].append("目标仅经过静态审查；配置流程的实际执行结果另列。")
     else:
         report["reasons"].append("没有以可信证据满足的用户目标必需验收；配置流程通过不能代替功能覆盖。")
+    if uncovered_changes and any(row.get('coverage_declaration', {}).get('source') == 'agent'
+                                 for row in report['satisfied']):
+        report['reasons'].append('用户目标的已通过验收未覆盖全部修改路径。')
+        if report['status'] in {'verified', 'reviewed'}:
+            report['status'] = 'unverified'
+        report['goal_coverage']['status'] = 'unverified'
     if any(not row["required"] for name in ("pending", "failed", "stale") for row in report[name]):
         report["reasons"].append("存在未满足的可选验收；整体状态仅针对必需验收。")
     if any(row.get('source') == 'runtime' and row.get('kind') == 'edit'
@@ -348,6 +384,12 @@ def render_delivery_report(report: dict) -> str:
     status = report.get("status")
     label = labels.get(status, "未验证") if isinstance(status, str) else "未验证"
     lines = ["交付状态：" + label]
+    agent_declared = any(row.get('coverage_declaration', {}).get('source') == 'agent'
+            for key in ('satisfied', 'pending', 'failed', 'stale') for row in report.get(key, []) if isinstance(row, dict))
+    if agent_declared:
+        if status == 'verified':
+            lines[0] = '交付状态：原生检查已验证（覆盖含代理声明）'
+        lines.append('覆盖范围含代理声明的验收条件；执行结果来自原生验证，不等于用户确认或独立功能验收。')
     for key, title in (("configured_verification", "配置验证流程"), ("goal_coverage", "用户目标覆盖")):
         group = report.get(key)
         if isinstance(group, dict):
@@ -355,6 +397,10 @@ def render_delivery_report(report: dict) -> str:
             group_label = labels.get(state, "未验证") if isinstance(state, str) else "未验证"
             if key == "configured_verification" and state == "verified":
                 group_label = "配置执行条件已通过（不代表功能覆盖）"
+            if key == 'goal_coverage' and group.get('coverage_basis') == 'agent_declared':
+                title = '代理声明的目标覆盖'
+                if state == 'verified':
+                    group_label = '绑定的原生检查已通过；语义覆盖需独立验收'
             lines.append(title + "：" + group_label)
     for key, title in (("satisfied", "已满足"), ("pending", "待确认"), ("failed", "失败"),
                        ("stale", "过期"), ("waived", "用户免除（不计为验证通过）")):
@@ -370,6 +416,9 @@ def render_delivery_report(report: dict) -> str:
             description = _display(row.get("description")) or "描述未知"
             optional = "（可选）" if row.get("required") is False else ""
             lines.append(f"- {identifier} {description}{optional}".strip())
+            declaration = row.get('coverage_declaration', {})
+            if declaration.get('source') == 'agent':
+                lines.append('  代理声明覆盖要求：' + '、'.join(_display(key) for key in declaration.get('requirement_ids', [])))
             reasons = row.get("reasons", [])
             if isinstance(reasons, list):
                 lines.extend("  " + text for reason in reasons if (text := _display(reason)))

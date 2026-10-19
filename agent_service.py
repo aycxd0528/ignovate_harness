@@ -376,7 +376,11 @@ class AgentService:
             from nailong.core.verification import VerificationService
             intake=(self.task_store.snapshot(thread_id) or {}).get('intake',{})
             steps = VerificationService(self.permission_engine.project_root, self.session_store,
-                steps_override=intake.get('verification') if intake.get('stage')=='executing' and intake.get('verification') else None).list_steps()
+                task_store=self.task_store,
+                steps_override=intake.get('verification') if intake.get('stage')=='executing' and intake.get('verification') else None).list_steps(thread_id)
+            if (self.task_store.snapshot(thread_id) or {}).get('acceptance_plan') and not steps:
+                # New user requirements must not erase the prior checks or reuse their pass.
+                return self.task_store.snapshot(thread_id)
             self.task_store.configure_verification(thread_id, steps)
         if profile == 'review':
             current = self.task_store.snapshot(thread_id)
@@ -472,6 +476,15 @@ class AgentService:
         before = self.task_store.snapshot(thread_id)
         if before is None or before['task_id'] != turn_task['task_id']:
             return None
+        if name == 'bind_task_acceptance' and ok is True:
+            from nailong.core.task_intake import user_request
+            live = user_request.get()
+            plan = before.get('acceptance_plan', {})
+            if (live and plan.get('source_turn') == live['turn_id']
+                    and body.get('task_id') == turn_task['task_id']
+                    and body.get('previous_revision') == turn_task['revision']
+                    and body.get('task_revision') == before['revision'] == turn_task['revision'] + 1):
+                turn_task['revision'] = before['revision']
         versioned_read = (name == 'read_file' and ok is True and
             isinstance(body.get('version'), str) and body.get('coverage') in {'partial', 'complete'})
         current_input = (await self._task_input_fingerprint(before)
@@ -1160,7 +1173,7 @@ class AgentService:
             budget.outer_used=False
         from nailong.core.task_intake import user_request
         live_request={'thread_id':thread,'text':kwargs.get('history_display') or message,'turn_id':run_id} if kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message') else None
-        stream=self._stream_task_turn(message,config,**kwargs)
+        stream=self._stream_task_turn(message,config,goal_cost_budget=kwargs.get('cost_budget') if budget is None else None,**kwargs)
         finished=False
         try:
             while True:
@@ -1181,7 +1194,7 @@ class AgentService:
                     summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
                     stop_reason='本轮已取消或用量未知。' if not finished or not budget.usage_complete else None)
 
-    async def _stream_task_turn(self, message, config, **kwargs):
+    async def _stream_task_turn(self, message, config, *, goal_cost_budget=None, **kwargs):
         """One outer adapter for GUI, CLI and headless natural task continuation."""
         from nailong.core.project_execution import project_execution
         from nailong.core.task_intake import TaskIntake, user_request
@@ -1218,7 +1231,7 @@ class AgentService:
                     events=stream_goal(self,self.runtime_factory,self.runtime_factory.goal_store,
                         CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),latest,
                         thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),
-                        history_display=kwargs.get('history_display') or message)
+                        history_display=kwargs.get('history_display') or message,cost_budget=goal_cost_budget)
                     try:
                         async for event in events:yield event
                     finally:await events.aclose()
@@ -1281,7 +1294,8 @@ class AgentService:
                 current['intake']['goal_id']=goal.id
                 self.task_store._write(thread_id,current)
             events=stream_goal(self,factory,goals,CostEstimator(factory.settings.model,factory.settings.project_root),goal,
-                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),initial_visible=False)
+                thread_id=thread_id,approval=kwargs.get('approval_handler'),status=kwargs.get('status_handler'),initial_visible=False,
+                cost_budget=goal_cost_budget)
             try:
                 async for event in events:yield event
             finally:await events.aclose()
@@ -1819,6 +1833,25 @@ class AgentService:
                     yield child_usage
                 if review_collector is not None:
                     await self._finish_review(thread_id, participating_task, review_collector)
+                if (profile == 'chat' and not pin_message and participating_task is not None
+                        and (allowed_tools is None or 'run_command' in allowed_tools)):
+                    from nailong.core.task_acceptance import current_plan
+                    current = self.task_store.snapshot(thread_id)
+                    if (current and current['task_id'] == participating_task['task_id']
+                            and current['revision'] == participating_task['revision'] and current_plan(current)):
+                        from nailong.core.verification import VerificationService
+                        verifier = VerificationService(self.permission_engine.project_root, self.session_store,
+                            task_store=self.task_store, api_key=getattr(self.runtime_factory.settings, 'api_key', ''))
+                        from nailong.core.verification import bound_verification_is_current, native_verification_callbacks
+                        if verifier.list_steps(thread_id) and not await bound_verification_is_current(verifier, thread_id):
+                            verification_stream = verifier.stream(thread_id, approval=approval_handler,
+                                permission_engine=self.permission_engine, permission_mode=self.permission_mode,
+                                **native_verification_callbacks(self, approval_handler, profile))
+                            try:
+                                async for event in verification_stream:
+                                    yield self._event(thread_id, event.kind, event.data)
+                            finally:
+                                await verification_stream.aclose()
                 report = (await self.delivery_report(thread_id, expected_task_id=participating_task['task_id'],
                     expected_revision=participating_task['revision']) if participating_task is not None else None)
                 if report is not None:
@@ -1914,8 +1947,41 @@ class AgentService:
             self._pause_turn_task(thread_id)
             self._event(thread_id,'usage_missing',{'scope':'main','reason':'cancelled_or_timed_out'})
             raise
-        except CostBudgetExceeded:
-            self._pause_turn_task(thread_id, '已达到本次成本预算。')
+        except CostBudgetExceeded as error:
+            for event in response_usage():
+                yield event
+            reason = self._redact_secret(str(error))
+            self._pause_turn_task(thread_id, reason)
+            with self._bound_turn_task(thread_id) as bound:
+                saved = dict(bound) if bound is not None else None
+            report = (await self.delivery_report(thread_id,
+                expected_task_id=participating_task['task_id'],
+                expected_revision=participating_task['revision']) if participating_task is not None else None)
+            report = dict(report or {'status': 'unverified'})
+            if report['status'] in {'verified', 'reviewed'}:
+                report['status'] = 'unverified'
+            report['reasons'] = [*report.get('reasons', []), '本轮因费用准入暂停，尚未完成交付收尾。']
+            paths = list((saved or {}).get('changed_paths', []))
+            resume = '确认可用预算后再继续；原任务、已落盘改动和证据保留。'
+            handoff = {key: saved[key] for key in ('task_id', 'revision')} if saved else {}
+            handoff.update(changed_paths=paths, resume_condition=resume)
+            from nailong.core.delivery import render_delivery_report
+            text = reason + '\n' + render_delivery_report(report)
+            if paths:
+                text += '\n已记录改动路径：' + '、'.join(paths[:40])
+                if len(paths) > 40:
+                    text += f'（另有 {len(paths)-40} 项保留在任务记录中）'
+            text += '\n' + resume
+            diagnostics = self._redact_tree(error.diagnostics)
+            yield self._event(thread_id, 'cost_budget_stop', diagnostics)
+            yield self._event(thread_id, 'delivery', {**report, 'text': render_delivery_report(report)})
+            yield self._event(thread_id, 'final', self._redact_tree({
+                'text': text, 'local': True, 'output_status': 'budget_limit',
+                'diagnostics': diagnostics, 'delivery': report, 'handoff': handoff,
+                'stats': {'model_calls': turn_budget.calls, 'model_call_limit': max_model_calls,
+                          'tool_calls': tool_ledger.request_count}}))
+            # Preserve the service exception contract and the callers' budget
+            # status; the local report costs no additional provider request.
             raise
         except Exception:
             self._pause_turn_task(thread_id)

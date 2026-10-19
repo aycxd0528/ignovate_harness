@@ -93,7 +93,7 @@ def build_macos(wheel: Path, output: Path, runtime_base: Path, ripgrep: Path, el
                 raise ValueError('Use the official ripgrep release archive with its license texts')
             shutil.copy2(source,tools/name)
         app_sources=stage/'app';app_sources.mkdir()
-        for name in ('main.cjs','preload.cjs','runtime.cjs','package.json'):
+        for name in ('main.cjs','preload.cjs','runtime.cjs','workspace.cjs','package.json'):
             shutil.copy2(ROOT/'desktop'/name,app_sources/name)
         package=json.loads((app_sources/'package.json').read_text());package['version']=version;package.pop('devDependencies',None)
         (app_sources/'package.json').write_text(json.dumps(package,indent=2)+'\n')

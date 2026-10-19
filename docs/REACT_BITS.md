@@ -1,5 +1,13 @@
 # React Bits 组件接入
 
+## 2026-10-19：首次使用引导
+
+通过现有 shadcn MCP 的 `@react-bits` 注册表检索、查看并获取 [Stepper-JS-CSS](https://reactbits.dev/r/Stepper-JS-CSS.json) 的实际 JSX/CSS。源码保存在 `frontend/src/components/Stepper.jsx` 与 `Stepper.css`；仅为离场面板补充 inert，避免过渡时键盘进入已隐藏表单。保留上游步骤滑块、转场、尺寸跟随及减少动态效果处理。
+
+`Onboarding.jsx` 使用受控 Stepper，串联欢迎、真实工作区选择、原生模型配置和开始使用。`nailong/gui/static/onboarding.js` 负责原生 API 与弹窗生命周期；完成/跳过状态保存在本机原生配置目录的 `onboarding.json`，不依赖会变化的本地端口或浏览器 localStorage。取消、配置失败、工作区切换及组件卸载均保留真实状态，模型密钥不回填、不进入浏览器持久化。
+
+现有许可与本地打包方式沿用下文说明。运行时不需要 Node 或远端组件站点；不自动调用模型测试连接，示例任务只填入草稿。
+
 2026-10-15，根据收藏截图，通过 shadcn MCP 的官方 `@react-bits` 注册表获取组件及源码。本轮按用户反馈，改为实际挂载 **BranchedMenu、PromptBar、ThoughtLine 的 React 源码**，替换上一版相应的原生 DOM 仿制。其余四项保留现有适配。
 
 ## 三处修正

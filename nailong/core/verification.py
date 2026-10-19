@@ -95,15 +95,28 @@ class VerificationService:
         self.tasks=task_store
         self.steps_override=steps_override
 
-    def list_steps(self):
+    def list_steps(self, thread_id=None):
         if self.steps_override is not None:
             return self.validate_steps(self.steps_override,root=self.root)
         config=read_config(self.root/'.nailong/settings.json',self.root)
         verification=config.get('verification',{})
         if not isinstance(verification,dict): raise ValueError('verification 必须是对象。')
         if set(verification)-{'steps'}: raise ValueError('verification 包含未知字段。')
-        steps=verification.get('steps',[])
-        return self.validate_steps(steps,root=self.root)
+        configured = self.validate_steps(verification.get('steps', []), root=self.root)
+        if thread_id and self.tasks is not None:
+            task = self.tasks.snapshot(thread_id)
+            if task and task.get('acceptance_plan'):
+                from nailong.core.task_acceptance import current_plan, merge_verification_steps
+                plan = current_plan(task)
+                if plan:
+                    steps = self.validate_steps(plan['verification'], root=self.root)
+                    try:
+                        if merge_verification_steps(steps, configured) == steps:
+                            return steps
+                    except ValueError:
+                        pass
+                return []  # The caller must bind the changed requirements/configuration.
+        return configured
 
     @staticmethod
     def validate_steps(steps, *, root=None):
@@ -190,9 +203,32 @@ class VerificationService:
         with project_execution(execution_store):
             return await self._run_unlocked(thread_id, name, **kwargs)
 
+    async def stream(self, thread_id, **kwargs):
+        """Stream completed steps under the caller-owned project execution lease."""
+        from nailong.core.project_execution import project_execution
+        from nailong.core.sessions import ProjectSessionStore
+        store = self.store if hasattr(self.store, 'root') else ProjectSessionStore(self.root)
+        with project_execution(store):
+            queue = asyncio.Queue()
+            async def execute():
+                try:
+                    # The parent owns the lease until this worker has fully stopped.
+                    await self._run_unlocked(thread_id, emit=queue.put_nowait, **kwargs)
+                finally:
+                    queue.put_nowait(None)
+            worker = asyncio.create_task(execute())
+            try:
+                while (event := await queue.get()) is not None:
+                    yield event
+                await worker
+            finally:
+                if not worker.done():
+                    worker.cancel()
+                await join_cleanup(worker)
+
     async def _run_unlocked(self, thread_id, name=None, *, approval=None, emit=None,
-                  permission_engine=None, permission_mode='default'):
-        steps=self.list_steps()
+                  permission_engine=None, permission_mode='default', pre_command=None, post_command=None):
+        steps=self.list_steps(thread_id)
         if not steps: raise ValueError('尚未配置验证。请在 .nailong/settings.json 设置 verification.steps，例如：{"verification":{"steps":[{"name":"test","kind":"test","command":"python -m unittest discover -s tests","timeout_seconds":30}]}}。检查命令后重新 /verify。')
         selected=[step for step in steps if name is None or step['name']==name]
         if not selected: raise ValueError('找不到指定的验证步骤。')
@@ -232,9 +268,23 @@ class VerificationService:
                         allowed=choice.kind in {'approve_once','approve_session'}
                         if choice.kind=='approve_session' and choice.rule: engine.grant_session(choice.rule)
                     else: allowed=choice in {'approve','approve_once','approve_session'}
+                hook = None
+                if allowed and pre_command is not None:
+                    hook = await pre_command(action)
+                    if hook.get('feedback') and emit:
+                        from agent_service import TurnEvent
+                        feedback = emit(TurnEvent('hook_feedback', {'event': 'PreToolUse', 'text': hook['feedback']}))
+                        if inspect.isawaitable(feedback): await feedback
+                    if hook.get('blocked'):
+                        allowed = False
+                        if emit:
+                            from agent_service import TurnEvent
+                            blocked = emit(TurnEvent('hook_blocked', {'event': 'PreToolUse', 'name': 'run_command', 'reason': hook.get('reason') or '验证命令被钩子阻止。'}))
+                            if inspect.isawaitable(blocked): await blocked
                 if not allowed:
                     result={'ok':False,'exit_code':None,'output':'未批准，未执行。','timed_out':False,'observed':None,'started':False}
                     if stage_denial:result.update(error_code='stage_restricted',output=stage_denial.get('error','当前用户阶段不允许运行此验证。'))
+                    if hook and hook.get('blocked'):result.update(error_code='hook_blocked',output=hook.get('reason') or '验证命令被钩子阻止。')
                 else:
                     try:
                         from nailong.tools.coordination import project_coordinator
@@ -243,7 +293,7 @@ class VerificationService:
                             current_task=self.tasks.snapshot(thread_id) if self.tasks is not None else None
                             task_matches = (task is None and current_task is None or task is not None and current_task is not None
                                 and (task['task_id'],task['revision'])==(current_task['task_id'],current_task['revision']))
-                            same_configuration = self.list_steps()==steps
+                            same_configuration = self.list_steps(thread_id)==steps
                             current_permission=engine.decide_action('run_command',action['args'],mode=permission_mode)
                             current_stage=compile_stage_policy(current_task).check('run_command',action['args'])
                             still_allowed=(current_permission.decision == Decision.ALLOW or
@@ -265,6 +315,14 @@ class VerificationService:
                 if self.api_key:
                     row={key:(value.replace(self.api_key,'[密钥已隐藏]') if isinstance(value,str) else value) for key,value in row.items()}
                 record['steps'].append(row)
+                # The command has already completed. Keep its receipt even if
+                # a post hook is cancelled or fails before verification closes.
+                if result.get('started') and not result.get('cancelled') and post_command is not None:
+                    post = await post_command(action)
+                    if post.get('feedback') and emit:
+                        from agent_service import TurnEvent
+                        feedback = emit(TurnEvent('hook_feedback', {'event': 'PostToolUse', 'text': post['feedback']}))
+                        if inspect.isawaitable(feedback): await feedback
                 if result.get('cancelled'): raise asyncio.CancelledError()
                 if emit:
                     from agent_service import TurnEvent
@@ -292,6 +350,45 @@ class VerificationService:
                 self.tasks.record_verification(thread_id, record)
             if self.store: self.store.append_event(thread_id,'verification',record)
 
+async def bound_verification_is_current(verifier, thread_id):
+    """Only reuse complete execution proof for this exact revision/configuration/input."""
+    from nailong.core.task_acceptance import current_plan, configuration_fingerprint
+    task = verifier.tasks.snapshot(thread_id)
+    plan = current_plan(task)
+    if plan is None:
+        return False
+    expected = configuration_fingerprint(verifier.list_steps(thread_id))
+    record = next((e['data'] for e in reversed(verifier.store.read_events(thread_id))
+        if e.get('kind') == 'verification'), None)
+    if (not record or record.get('status') != 'passed' or record.get('complete') is not True
+            or record.get('task_id') != task['task_id'] or record.get('task_revision') != task['revision']
+            or record.get('configuration_fingerprint') != expected
+            or record.get('cwd') != str(verifier.root)):
+        return False
+    try:
+        fingerprint = await _owned_worker(input_fingerprint, verifier.root, record.get('generated_paths', []))
+    except (OSError, ValueError):
+        return False
+    current = verifier.tasks.snapshot(thread_id)
+    return bool(current and current['task_id'] == task['task_id'] and current['revision'] == task['revision']
+        and record.get('input_before') == record.get('input_after') == fingerprint)
+
+
+def native_verification_callbacks(service, approval, profile='chat'):
+    """Automatic model-authored checks retain the native command hook boundary."""
+    if not callable(getattr(service, '_run_hook', None)):
+        return {}
+    async def pre(action):
+        hook = await service._run_hook('PreToolUse', name='run_command', args=action['args'],
+            approval_handler=approval, profile=profile)
+        return {'blocked': hook.blocked, 'reason': hook.reason, 'feedback': hook.feedback}
+    async def post(action):
+        hook = await service._run_hook('PostToolUse', name='run_command', args=action['args'],
+            approval_handler=approval, profile=profile)
+        return {'feedback': hook.feedback}
+    return {'pre_command': pre, 'post_command': post}
+
+
 async def verify_goal_if_configured(service,factory,goal,thread_id,*,approval=None,emit=None):
     settings=getattr(factory,'settings',None)
     if settings is None or getattr(factory,'goal_store',None) is None: return None
@@ -313,4 +410,5 @@ async def verify_goal_if_configured(service,factory,goal,thread_id,*,approval=No
                 current.verification_task_id,current.verification_task_revision)
         if valid: return None
     return await verification.run(thread_id,approval=approval,emit=emit,
-        permission_engine=getattr(service,'permission_engine',None),permission_mode=getattr(service,'permission_mode','default'))
+        permission_engine=getattr(service,'permission_engine',None),permission_mode=getattr(service,'permission_mode','default'),
+        **native_verification_callbacks(service, approval))

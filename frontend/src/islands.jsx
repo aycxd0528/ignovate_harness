@@ -6,6 +6,7 @@ import PromptBar from './components/PromptBar.jsx';
 import BranchedMenu from './components/BranchedMenu.jsx';
 import ThoughtLine from './components/ThoughtLine.jsx';
 import IgnovateAvatar from './components/IgnovateAvatar.jsx';
+import Onboarding from './components/Onboarding.jsx';
 
 // React owns only these hosts. The native renderer retains messages and output.
 const mounted=new Set();
@@ -60,4 +61,8 @@ export function mountThoughtLine(host,data){
 
 export function mountAvatar(host,options={}){
   return island(host,options,props=><IgnovateAvatar {...props}/>);
+}
+
+export function mountOnboarding(host,options){
+  return island(host,options,props=><Onboarding {...props}/>);
 }

@@ -58,6 +58,66 @@ class HistoryRequestViewTests(unittest.TestCase):
         self.assertFalse(page['archive_truncated'])
         self.assertTrue(report['history_compaction']['applied'])
 
+    def cost_budget(self):
+        from nailong.core.budgets import GoalCostBudget, active_cost_budget
+        from nailong.core.costs import CostEstimator
+        (self.root/'.nailong/settings.json').write_text(json.dumps({
+            'context':{'history_input_target_tokens':1500000},
+            'pricing':{'private':{'input_per_million':1,'cache_hit_per_million':0,'output_per_million':1}}}))
+        budget=GoalCostBudget(CostEstimator('private',self.root),.08)
+        token=active_cost_budget.set(budget)
+        self.addCleanup(active_cost_budget.reset,token)
+        return budget
+
+    def test_cost_pressure_archives_closed_turns_below_soft_threshold(self):
+        from nailong.core.budgets import _input_bound
+        budget=self.cost_budget()
+        request=self.request().override(model_settings={'max_tokens':1000})
+        before=copy.deepcopy(request.messages)
+        prepared,_=self.manager._prepare_request(request)
+        self.assertLess(_input_bound(prepared)+1000,80000)
+        self.assertEqual(prepared.messages[-3:],self.current)
+        self.assertEqual(prepared.model_settings['max_tokens'],1000)
+        self.assertEqual(request.messages,before)
+        summary=next(m for m in prepared.messages if m.additional_kwargs.get('nailong_compact_summary'))
+        records=[self.archive.load('one',ref) for ref in summary.additional_kwargs['nailong_compact_state']['evidence']]
+        original=next(r['message']['data'] for r in records if r['message']['data'].get('id')=='old-ai')
+        self.assertEqual(original['additional_kwargs']['reasoning_content'],'old reasoning '*5000)
+        self.assertIn('Never alter fixture files.',summary.content)
+        self.assertEqual(budget.spent,0)
+        self.assertEqual(budget.reserved,0)
+        self.assertFalse(budget.stopped)
+
+    def test_cost_pressure_cannot_remove_history_without_recovery_tool(self):
+        self.cost_budget()
+        request=self.request(False).override(model_settings={'max_tokens':1000})
+        prepared,_=self.manager._prepare_request(request)
+        self.assertEqual(prepared.messages,request.messages)
+
+    def test_cost_pressure_keeps_originals_if_archive_is_incomplete(self):
+        self.cost_budget()
+        request=self.request().override(model_settings={'max_tokens':1000})
+        with patch('nailong.core.history_archive.MAX_ARCHIVE_BYTES',4096):
+            prepared,_=self.manager._prepare_request(request)
+        self.assertEqual(prepared.messages,request.messages)
+
+    def test_cost_pressure_rejects_dangling_reused_tool_archive(self):
+        self.cost_budget()
+        request=self.request().override(model_settings={'max_tokens':1000})
+        old=next(m for m in request.messages if m.id=='old-result')
+        old.additional_kwargs.update(nailong_tool_cleared=True,nailong_tool_reference='hist_'+'0'*64)
+        prepared,report=self.manager._prepare_request(request)
+        self.assertEqual(prepared.messages,request.messages)
+        self.assertFalse(report['cost_compaction']['applied'])
+
+    def test_unfundable_current_reasoning_is_never_trimmed(self):
+        self.cost_budget()
+        request=self.request().override(model_settings={'max_tokens':1000})
+        self.current[1].additional_kwargs['reasoning_content']='essential-current-reasoning '*10000
+        before=copy.deepcopy(request.messages)
+        prepared,_=self.manager._prepare_request(request)
+        self.assertEqual(prepared.messages,before)
+
     def test_missing_recovery_tool_keeps_large_originals(self):
         request=self.request(False)
         prepared,_=self.manager._prepare_request(request)
