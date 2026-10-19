@@ -207,7 +207,9 @@ class GUIOnboardingTests(unittest.IsolatedAsyncioTestCase):
         await self.controller.command('onboarding', {'action': 'skip'})
         self.configure()
         previous = self.marker.read_bytes()
-        with patch('nailong.core.preferences.os.replace', side_effect=OSError('private-storage-key')):
+        publish = ('nailong.core._win32_files.publish_same_directory' if os.name == 'nt'
+                   else 'nailong.core.preferences.os.replace')
+        with patch(publish, side_effect=OSError('private-storage-key')):
             with self.assertRaises(ValueError) as error:
                 await self.controller.command('onboarding', {'action': 'complete'})
         self.assertNotIn('private-storage-key', str(error.exception))

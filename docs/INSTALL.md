@@ -1,6 +1,6 @@
 # 从 GitHub Release 安装 ignovate
 
-下载地址：[GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest)。安装包包含应用 wheel、环境配置脚本、固定版本的依赖清单和 SHA-256 校验清单，不需要预装 Python，也不需要克隆源码。
+下载地址：[v1.3.0 预发布版](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.3.0)，[最新稳定版](https://github.com/aycxd0528/ignovate_harness/releases/latest)。安装包包含应用 wheel、环境配置脚本、固定版本的依赖清单和 SHA-256 校验清单，不需要预装 Python，也不需要克隆源码。
 
 ## macOS 桌面版（macOS 13+，Apple Silicon）
 
