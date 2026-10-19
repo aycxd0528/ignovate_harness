@@ -3,6 +3,7 @@ import copy
 import asyncio
 import json
 import hashlib
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +82,32 @@ class NativeAcceptanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(e.kind == 'verification_step' and e.data['started'] for e in events))
         self.assertTrue(any(e['kind'] == 'test' and e['source'] == 'runtime' and e['status'] == 'passed' for e in task['evidence']))
         self.assertTrue(any(c.get('verification_binding', {}).get('source') == 'agent' for c in task['acceptance']))
+
+    async def test_file_bound_ordinary_acceptance_uses_current_native_proof(self):
+        from nailong.core.delivery import build_delivery_report
+        self.criteria[0]['paths'] = ['value.txt']
+        self.factory.model.responses = self.script()
+        events = await self.turn()
+        delivery = [event.data['delivery'] for event in events if event.kind == 'final'][-1]
+        task = self.tasks.snapshot(self.thread)
+        self.assertEqual(task['scope'], ['.'])
+        self.assertEqual(delivery['status'], 'verified', str(delivery))
+        self.assertEqual(delivery['goal_coverage']['status'], 'verified')
+        condition = next(row for row in delivery['satisfied'] if row['id'].startswith('auto:'))
+        self.assertEqual(condition['coverage_declaration'],
+            {'source': 'agent', 'requirement_ids': ['r000001']})
+        self.assertTrue(any(event.kind == 'verification_step' and event.data['exit_code'] == 0
+            for event in events))
+        criterion = next(row for row in task['acceptance'] if row['id'].startswith('auto:'))
+        proof_id = criterion['evidence_ids'][0]
+        for changes in ({'paths': ['other.txt']}, {'coverage': 'partial'},
+                        {'input_fingerprint': 'old-input'}, {'task_revision': task['revision'] - 1},
+                        {'source': 'model'}):
+            with self.subTest(changes=changes):
+                invalid = copy.deepcopy(task)
+                next(row for row in invalid['evidence'] if row['id'] == proof_id).update(changes)
+                self.assertNotEqual(build_delivery_report(invalid,
+                    current_input_fingerprint=task['input_fingerprint'])['status'], 'verified')
 
     async def test_model_completion_text_cannot_hide_a_failed_bound_check(self):
         self.factory.model.responses = self.script(fixed=False)
@@ -212,12 +239,15 @@ class NativeAcceptanceTests(unittest.IsolatedAsyncioTestCase):
     async def test_cancelling_automatic_verification_keeps_interrupted_evidence(self):
         marker = self.root / 'started.marker'
         self.steps[0].update(command=python_command(
-            "from pathlib import Path; import time; Path('started.marker').touch(); time.sleep(30)"),
-            timeout_seconds=30, generated_paths=['started.marker'])
+            "from pathlib import Path; import time; Path('started.marker').touch(); time.sleep(60)"),
+            timeout_seconds=60, generated_paths=['started.marker'])
         self.factory.model.responses = self.script(fixed=False)
         running = asyncio.create_task(self.turn())
         try:
-            async with asyncio.timeout(5):
+            # Cancellation begins only after the real child acknowledges startup.
+            # Windows CI can take longer to launch the interpreter; this bounds
+            # startup readiness without relaxing interrupted-evidence assertions.
+            async with asyncio.timeout(30 if sys.platform == 'win32' else 5):
                 while not marker.exists():
                     if running.done():
                         self.fail(f'Ended before validation process started: {await running}')

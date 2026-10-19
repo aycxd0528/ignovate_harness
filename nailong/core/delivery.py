@@ -127,6 +127,26 @@ def _assess_acceptance(item: dict, snapshot: dict, index: dict, duplicates: set,
     binding = item.get('verification_binding')
     if isinstance(binding, dict) and binding.get('source') in {'agent', 'user'}:
         row['coverage_declaration'] = {'source': binding['source'], 'requirement_ids': list(item.get('requirement_ids', []))}
+    if isinstance(binding, dict) and binding.get('source') == 'agent':
+        from nailong.core.task_acceptance import current_plan
+        from nailong.core.task_requirements import requirement_records
+        paths = _paths(binding.get('paths'))
+        try:
+            requirements = {entry['id'] for entry in requirement_records(snapshot)}
+            plan = current_plan(snapshot)
+        except (KeyError, TypeError, ValueError):
+            requirements, plan = set(), None
+        requirement_ids = item.get('requirement_ids')
+        if (not paths or not plan or item['kind'] not in {'test', 'build', 'run'}
+                or not isinstance(requirement_ids, list) or not requirement_ids
+                or any(not isinstance(key, str) or key not in requirements for key in requirement_ids)
+                or any(not any(_covers(target, path) for target in scope) for path in paths)):
+            row['reasons'].append('代理验收的路径或用户要求关联无效，不能确认覆盖。')
+            return row
+        # An ordinary task's scope bounds allowed work. Each explicitly bound
+        # criterion declares its own coverage; it need not prove every other
+        # criterion's files. Unbound and user-owned conditions keep global scope.
+        scope = paths
     ids = item.get("evidence_ids")
     if not isinstance(ids, list) or not all(_text(identifier) for identifier in ids):
         row["reasons"].append("验收证据引用无效。")
@@ -298,6 +318,9 @@ def build_delivery_report(snapshot: dict | None, *, current_input_fingerprint: s
         report[bucket].append(row)
     report["configured_verification"] = _coverage_group(report, configured=True)
     report["goal_coverage"] = _coverage_group(report, configured=False)
+    goal_paths = {path for row in report['satisfied'] if not row['id'].startswith('verify:')
+                  for identifier in row['evidence_ids'] for path in _paths(evidence_index[identifier]['paths'])}
+    uncovered_changes = [path for path in changed if not any(_covers(target, path) for target in goal_paths)]
     required_pending = any(row["required"] for name in ("pending", "stale") for row in report[name])
     required_failed = any(row["required"] for row in report["failed"])
     goal_status = report["goal_coverage"]["status"]
@@ -322,6 +345,12 @@ def build_delivery_report(snapshot: dict | None, *, current_input_fingerprint: s
             report["reasons"].append("目标仅经过静态审查；配置流程的实际执行结果另列。")
     else:
         report["reasons"].append("没有以可信证据满足的用户目标必需验收；配置流程通过不能代替功能覆盖。")
+    if uncovered_changes and any(row.get('coverage_declaration', {}).get('source') == 'agent'
+                                 for row in report['satisfied']):
+        report['reasons'].append('用户目标的已通过验收未覆盖全部修改路径。')
+        if report['status'] in {'verified', 'reviewed'}:
+            report['status'] = 'unverified'
+        report['goal_coverage']['status'] = 'unverified'
     if any(not row["required"] for name in ("pending", "failed", "stale") for row in report[name]):
         report["reasons"].append("存在未满足的可选验收；整体状态仅针对必需验收。")
     if any(row.get('source') == 'runtime' and row.get('kind') == 'edit'
