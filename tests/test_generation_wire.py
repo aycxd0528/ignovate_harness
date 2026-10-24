@@ -68,8 +68,8 @@ class GenerationWireTests(unittest.IsolatedAsyncioTestCase):
                 'deepseek-flash', self.root,
                 cli_preferences={'model': 'default', 'reasoning_effort': 'max'}),
                 session_store=self.sessions)
-        self.addAsyncCleanup(factory.aclose)
         self.addCleanup(factory.close)
+        self.addAsyncCleanup(factory.aclose)
         return factory
 
     async def test_reasoning_only_length_continuation_preserves_actual_wire_fields_and_single_usage(self):

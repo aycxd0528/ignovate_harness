@@ -25,7 +25,7 @@ GROUPS = {'read': READ, '读取': READ, '搜索': READ, '文件': READ,
           '历史': frozenset({'read_history_result', 'read_task_context'}),
           'session': frozenset({'list_task_sessions','read_session_history','take_session','dispatch_session','coordination_status','pause_coordination'}),
           '会话': frozenset({'list_task_sessions','read_session_history','take_session','dispatch_session','coordination_status','pause_coordination'}),
-          'task': frozenset({'task', 'update_goal', 'prepare_task', 'start_task'}), '子代理': frozenset({'task'})}
+          'task': frozenset({'task', 'task_status', 'update_goal', 'prepare_task', 'start_task'}), '子代理': frozenset({'task','task_status'})}
 
 
 def merge_loads(previous, updates):
@@ -113,9 +113,9 @@ class CapabilityCatalog:
                     names.difference_update(EDIT)
                 names.update({'prepare_task','start_task'})
             if user and user.additional_kwargs.get('nailong_pin') == 'goal':
-                names.update({'update_goal', 'task', 'read_task_context'})
+                names.update({'update_goal', 'task', 'task_status', 'read_task_context'})
             if re.search(r'子代理|subagent|委派', text, re.IGNORECASE):
-                names.add('task')
+                names.update({'task','task_status'})
             for row in (state or {}).get(LOADS, []):
                 if row.get('catalog') == self.digest and user and row.get('turn') == user.id:
                     names.update(row.get('names', []))

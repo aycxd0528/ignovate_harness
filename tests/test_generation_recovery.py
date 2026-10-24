@@ -49,8 +49,8 @@ class GenerationRecoveryTests(unittest.IsolatedAsyncioTestCase):
         with patch('agent.ChatDeepSeek', return_value=self.model):
             self.factory = AgentRuntimeFactory(Settings('fake-key', 'https://example.invalid', 'private', self.root,
                 cli_preferences={'reasoning_effort': 'default'}), session_store=self.sessions)
-        self.addAsyncCleanup(self.factory.aclose)
         self.addCleanup(self.factory.close)
+        self.addAsyncCleanup(self.factory.aclose)
         self.service = AgentService(self.factory)
         return [event async for event in self.service.stream_turn('请修复缓存功能，先只读分析当前项目并给出计划', self.config, **options)]
 

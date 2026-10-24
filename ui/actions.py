@@ -105,9 +105,14 @@ class CommandActions:
                 if goal and goal.thread_id != thread_id:
                     goal = None
                 if task:
-                    from nailong.core.verification import input_fingerprint
+                    from nailong.core.verification import current_evidence, _owned_worker
                     try:
-                        task = {**task, 'current_input_fingerprint': input_fingerprint(root, task.get('verification_generated_paths', []))}
+                        observed = task
+                        current = await _owned_worker(current_evidence, root, observed, tasks.sessions.root)
+                        task = tasks.snapshot(thread_id)
+                        if task != observed:
+                            current = None
+                        task = {**task, 'current_input_fingerprint': current} if task else None
                     except (ValueError, OSError):
                         task = {**task, 'current_input_fingerprint': None}
                 decision = decide_goal_turn(goal, task) if goal else {'action': 'wait' if (task or {}).get('wait_condition') else 'unknown',
@@ -508,7 +513,7 @@ class CommandActions:
             session_actions=SessionActions(root,store,service,api_key=settings.api_key)
             if command=='/recap':
                 if args: raise ValueError('用法：/recap')
-                return CommandResult(session_actions.recap(thread_id))
+                return CommandResult(await session_actions.recap_async(thread_id))
             if len(args)>1: raise ValueError('用法：/export [项目内路径]')
             result=await session_actions.export(thread_id,args[0] if args else None,approval=approval,
                 permission_engine=getattr(service,'permission_engine',None),permission_mode=getattr(service,'permission_mode','default'))

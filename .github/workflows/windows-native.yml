@@ -30,7 +30,9 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
     runs-on: windows-2025
-    timeout-minutes: 20
+    # The full native suite exceeded the old job limit on Python 3.13.
+    # Individual native/async tests retain their 120-second watchdogs.
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -57,5 +59,13 @@ jobs:
           if ((Get-FileHash "$env:RUNNER_TEMP\rg.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne $hash) { throw 'ripgrep checksum failed' }
           Expand-Archive "$env:RUNNER_TEMP\rg.zip" "$env:RUNNER_TEMP\rg"
           "$env:RUNNER_TEMP\rg\ripgrep-15.2.0-x86_64-pc-windows-msvc" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Native verification regressions
+        run: >-
+          python -c "import sys,unittest; sys.path.insert(0,'tests');
+          from scripts.run_native_tests import NativeTestResult,install_async_diagnostics;
+          install_async_diagnostics();
+          suite=unittest.defaultTestLoader.loadTestsFromNames(['test_windows_verification_compatibility','test_output_provenance','test_verification_artifact_evidence','test_long_scenario_commands','test_long_goal_driver','test_long_task_continuation']);
+          result=unittest.TextTestRunner(verbosity=2,resultclass=NativeTestResult).run(suite);
+          sys.exit(not result.wasSuccessful())"
       - name: Native runtime tests
         run: python -u scripts/run_native_tests.py

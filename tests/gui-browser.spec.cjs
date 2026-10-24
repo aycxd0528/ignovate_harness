@@ -42,6 +42,12 @@ const fs = require('node:fs');
       const s = await (await fetch('/api/snapshot', { headers: { Authorization: 'Bearer browser-test-only' } })).json();
       return s.nodes.length === 2;
     });
+    // The persisted node can precede the UI's final snapshot/React commit.
+    // Wait for visible completion before clicking the morphing send/stop button.
+    await page.waitForFunction(() =>
+      document.querySelectorAll('.turn:not(.live)').length === 2 &&
+      !document.querySelector('.turn.live') &&
+      document.querySelector('#send')?.getAttribute('aria-label') === '发送');
     assert.equal(await page.getByRole('button',{name:'比较',exact:true}).count(),0);
     await page.locator('#composer').fill('<img src=x onerror=alert(1)>');
     await page.getByRole('button', { name: '发送', exact: true }).click();

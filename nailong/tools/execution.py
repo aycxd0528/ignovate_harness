@@ -302,6 +302,8 @@ class ToolExecutionContext:
         result = normalize_result(spec.name, result)
         # Execution state belongs to the gate, never to a handler's returned payload.
         result["started"] = started
+        if spec.name.startswith('mcp__') and not started:
+            result['mcp_admitted'] = False
         # Runtime identity is not supplied by the handler or stdout, and does
         # not itself attest handler/process/test success.
         result['tool_result_id']=uuid.uuid4().hex
@@ -333,6 +335,11 @@ class ToolExecutionContext:
             "started": started,
             "tool_result_id": result['tool_result_id'],
         }
+        # The native MCP adapter supplies local SDK admission separately from
+        # gate entry. It is diagnostic evidence, never an authorization flag or
+        # proof that a remote side effect completed. Missing means unknown.
+        if spec.name.startswith('mcp__') and type(result.get('mcp_admitted')) is bool:
+            observation['mcp_admitted'] = result['mcp_admitted']
         return bounded, redact(observation, self.api_key)
 
     @staticmethod

@@ -11,11 +11,15 @@ from ui.theme import load_theme
 def install_plain_interrupt(callback):
     """Schedule Ctrl+C on this loop and restore its previous Python handler."""
     import signal
+    from contextvars import copy_context
     loop = asyncio.get_running_loop()
     previous = signal.getsignal(signal.SIGINT)
+    control_context=copy_context()
     if os.name == 'nt':
         def handler(_signal, _frame):
-            loop.call_soon_threadsafe(callback)
+            # Python may interrupt a business Task. Keep Ctrl+C on the
+            # controller context captured when the handler was installed.
+            loop.call_soon_threadsafe(callback,context=control_context)
         signal.signal(signal.SIGINT, handler)
     else:
         loop.add_signal_handler(signal.SIGINT, callback)

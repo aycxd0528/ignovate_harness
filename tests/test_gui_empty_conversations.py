@@ -133,3 +133,110 @@ class EmptyConversationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['removed'], [])
         self.assertTrue(result.get('retry'))
         self.assertEqual((await self.controller.command('prune_empty', {}))['removed'], [branch['id']])
+
+    def _checkpoint_database(self):
+        from contextlib import closing
+        with closing(sqlite3.connect(self.sessions.database_path)) as db, db:
+            db.execute('CREATE TABLE checkpoints (thread_id TEXT)')
+
+    def _assert_native_closed(self,connections):
+        self.assertTrue(connections)
+        for connection in connections:
+            with self.assertRaises(sqlite3.ProgrammingError):connection.execute('SELECT 1')
+
+    async def test_repeated_checkpoint_checks_close_actual_read_connections_before_return(self):
+        import os
+        from unittest.mock import patch
+        from nailong.gui.empty_conversations import empty_branch_ids
+        self._checkpoint_database()
+        branch=self.controller.branches.create()
+        native=sqlite3.connect;connections=[]
+        def connect(*args,**kwargs):
+            connection=native(*args,**kwargs);connections.append(connection);return connection
+        before=len(os.listdir('/dev/fd')) if Path('/dev/fd').exists() else None
+        try:
+            with patch('nailong.gui.empty_conversations.sqlite3.connect',side_effect=connect):
+                for _ in range(12):self.assertEqual(empty_branch_ids(self.controller),[branch['id']])
+            self.assertEqual(len(connections),12)
+            self._assert_native_closed(connections)
+            if before is not None:self.assertEqual(len(os.listdir('/dev/fd')),before)
+        finally:
+            for connection in connections:connection.close()
+
+    async def test_failed_checkpoint_query_closes_native_connection_and_preserves_branch(self):
+        from unittest.mock import patch
+        from nailong.gui.empty_conversations import empty_branch_ids
+        self._checkpoint_database();branch=self.controller.branches.create()
+        native=sqlite3.connect;connections=[]
+        class BrokenRead(sqlite3.Connection):
+            def execute(self,query,*args,**kwargs):
+                if 'sqlite_master' in query:raise sqlite3.OperationalError('native checkpoint query failed')
+                return super().execute(query,*args,**kwargs)
+        def connect(*args,**kwargs):
+            connection=native(*args,**kwargs,factory=BrokenRead);connections.append(connection);return connection
+        try:
+            with patch('nailong.gui.empty_conversations.sqlite3.connect',side_effect=connect):
+                self.assertEqual(empty_branch_ids(self.controller),[])
+            self._assert_native_closed(connections)
+            self.assertEqual(self.controller.branches.branch(branch['id'])['id'],branch['id'])
+        finally:
+            for connection in connections:connection.close()
+
+    async def test_cancelled_checkpoint_query_closes_native_connection_and_propagates(self):
+        import asyncio
+        from unittest.mock import patch
+        from nailong.gui.empty_conversations import empty_branch_ids
+        self._checkpoint_database();branch=self.controller.branches.create()
+        native=sqlite3.connect;connections=[];cancelled=asyncio.CancelledError('checkpoint read cancelled')
+        class CancelledRead(sqlite3.Connection):
+            def execute(self,query,*args,**kwargs):
+                if 'sqlite_master' in query:raise cancelled
+                return super().execute(query,*args,**kwargs)
+        def connect(*args,**kwargs):
+            connection=native(*args,**kwargs,factory=CancelledRead);connections.append(connection);return connection
+        try:
+            with patch('nailong.gui.empty_conversations.sqlite3.connect',side_effect=connect):
+                with self.assertRaises(asyncio.CancelledError) as caught:empty_branch_ids(self.controller)
+            self.assertIs(caught.exception,cancelled)
+            self._assert_native_closed(connections)
+            self.assertEqual(self.controller.branches.branch(branch['id'])['id'],branch['id'])
+        finally:
+            for connection in connections:connection.close()
+
+    async def test_missing_checkpoint_database_is_not_created_by_empty_check(self):
+        from unittest.mock import patch
+        from nailong.gui.empty_conversations import empty_branch_ids
+        branch=self.controller.branches.create()
+        self.assertFalse(self.sessions.database_path.exists())
+        with patch('nailong.gui.empty_conversations.sqlite3.connect',side_effect=AssertionError('must not open absent database')):
+            self.assertEqual(empty_branch_ids(self.controller),[branch['id']])
+        self.assertFalse(self.sessions.database_path.exists())
+
+    async def test_dangling_checkpoint_link_preserves_conversation_as_unknown(self):
+        branch=self.controller.branches.create()
+        try:self.sessions.database_path.symlink_to('missing-checkpoints.sqlite')
+        except (OSError,NotImplementedError) as error:self.skipTest(f'native symlink unavailable: {error}')
+        self.assertEqual((await self.controller.command('prune_empty',{}))['removed'],[])
+        self.assertEqual(self.controller.branches.branch(branch['id'])['id'],branch['id'])
+        self.assertEqual(self.sessions.database_path.readlink(),Path('missing-checkpoints.sqlite'))
+
+    async def test_cyclic_checkpoint_link_preserves_conversation_as_unknown(self):
+        branch=self.controller.branches.create()
+        try:self.sessions.database_path.symlink_to(self.sessions.database_path.name)
+        except (OSError,NotImplementedError) as error:self.skipTest(f'native symlink unavailable: {error}')
+        self.assertEqual((await self.controller.command('prune_empty',{}))['removed'],[])
+        self.assertEqual(self.controller.branches.branch(branch['id'])['id'],branch['id'])
+        self.assertEqual(self.sessions.database_path.readlink(),Path(self.sessions.database_path.name))
+
+    async def test_readable_checkpoint_link_keeps_its_committed_evidence(self):
+        branch=self.controller.branches.create();target=self.sessions.root/'real-checkpoints.sqlite'
+        with closing(sqlite3.connect(target)) as db, db:
+            db.execute('CREATE TABLE checkpoints(thread_id TEXT)')
+            db.execute('INSERT INTO checkpoints VALUES(?)',(branch['thread_id'],))
+        before=target.read_bytes()
+        try:self.sessions.database_path.symlink_to(target.name)
+        except (OSError,NotImplementedError) as error:self.skipTest(f'native symlink unavailable: {error}')
+        self.assertEqual((await self.controller.command('prune_empty',{}))['removed'],[])
+        self.assertEqual(self.controller.branches.branch(branch['id'])['id'],branch['id'])
+        self.assertEqual(target.read_bytes(),before)
+        self.assertEqual(self.sessions.database_path.readlink(),Path(target.name))

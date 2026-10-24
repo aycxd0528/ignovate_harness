@@ -7,6 +7,13 @@ import stat
 from nailong.core.safe_files import _path, pinned_directory
 
 
+def _open_posix_lock(directory,name):
+    """Create atomically; concurrent first opens must not race O_CREAT alone."""
+    flags=os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK
+    try:return os.open(name,flags|os.O_CREAT|os.O_EXCL,0o600,dir_fd=directory)
+    except FileExistsError:return os.open(name,flags,dir_fd=directory)
+
+
 @contextmanager
 def file_lock(path, *, blocking=True):
     """Hold an exclusive lock; a busy nonblocking attempt raises BlockingIOError."""
@@ -34,8 +41,7 @@ def file_lock(path, *, blocking=True):
                 CloseHandle(handle)
         else:
             import fcntl
-            descriptor = os.open(path.name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
-                                 0o600, dir_fd=directory)
+            descriptor = _open_posix_lock(directory,path.name)
             try:
                 if not stat.S_ISREG(os.fstat(descriptor).st_mode):
                     raise ValueError('文件锁必须使用普通文件。')

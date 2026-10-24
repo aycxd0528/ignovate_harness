@@ -125,6 +125,7 @@ class CompactionBehaviorTests(unittest.TestCase):
     def test_command_failure_retains_exit_code_error_and_archive_reference(self):
         class Archive:
             def save(self,thread_id,message,arguments=None): return 'result-ref'
+            def read(self,thread_id,reference,max_chars=1):return {'archive_truncated':False}
         payload={'ok':False,'exit_code':7,'timed_out':False,'output_truncated':True,'output':'build log\n'*1000+'ImportError: missing dependency'}
         messages=[HumanMessage(content='检查')]+exchange(1,name='run_command',payload=payload)+exchange(2)
         result=compact_messages(messages,min_gain=0,archive=Archive(),thread_id='one')

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 
@@ -291,8 +292,15 @@ class SharedTokenBudget:
             self._changed.notify_all()
 
 
+class _CostReservation(float):
+    def __new__(cls,amount,identity):
+        value=super().__new__(cls,amount)
+        value.identity=identity
+        return value
+
+
 class GoalCostBudget:
-    def __init__(self, estimator, remaining_usd: float):
+    def __init__(self, estimator, remaining_usd: float, *, goal_store=None,goal_id=None,round_id=None,allow_paused=False):
         if not estimator.available:
             raise ValueError("模型未配置价格，不能启动目标成本控制。")
         self.estimator = estimator
@@ -302,6 +310,35 @@ class GoalCostBudget:
         self.usage_complete = True
         self.stopped = False
         self._lock = asyncio.Lock()
+        if any(value is not None for value in (goal_store,goal_id,round_id)) and any(
+                value is None for value in (goal_store,goal_id,round_id)):
+            raise ValueError('持久费用预算需要完整目标和轮次身份。')
+        self._store,self._goal_id=goal_store,goal_id
+        self.goal_round_id=round_id
+        self._allow_paused=allow_paused
+        self._lease=None;self._closed=False;self._holds={}
+
+    def close(self):
+        """Call only after owned provider calls have finished their cleanup."""
+        self._closed=True
+        if self._lease is not None:
+            lease,self._lease=self._lease,None
+            lease.__exit__(None,None,None)
+
+    def _persist(self,method,*args,**kwargs):
+        if self._store is None:return
+        try:
+            if self._lease is None:
+                # Reusing a persisted ID must not make an orphan look live by
+                # acquiring its lease before recovery has inspected it.
+                if self._store.costs.recover(self._goal_id):
+                    raise ValueError('已恢复中断轮次费用，请核对后显式恢复。')
+                lease=self._store.costs.lease(self._goal_id,self.goal_round_id)
+                lease.__enter__();self._lease=lease
+            getattr(self._store.costs,method)(self._goal_id,self.goal_round_id,*args,**kwargs)
+        except (OSError,ValueError) as error:
+            self.stopped=True
+            raise CostBudgetExceeded('目标费用记录无法安全更新或恢复待核对，已停止模型调用。') from error
 
     async def reserve(self, request) -> tuple[float, int]:
         input_cost = self.estimator.estimate({"input_tokens": _input_bound(request)})
@@ -312,15 +349,25 @@ class GoalCostBudget:
             available = self.limit - self.spent - self.reserved - input_cost
             if output_price > 0:
                 output_cap = min(output_cap, max(0, int(available / output_price)))
-            if self.stopped or available <= 0 or output_cap < min(64, int(configured)):
+            if self._closed or self.stopped or available <= 0 or output_cap < min(64, int(configured)):
                 self.stopped = True
                 raise CostBudgetExceeded("剩余目标预算不足以预留下一次模型调用，目标已暂停。")
             reservation = input_cost + output_cap * output_price
+            if self._store is not None:
+                reservation=_CostReservation(reservation,uuid.uuid4().hex)
+                self._persist('reserve',reservation.identity,float(reservation),allow_paused=self._allow_paused)
+                self._holds[reservation.identity]=float(reservation)
             self.reserved += reservation
             return reservation, output_cap
 
     async def release(self, reservation: float) -> None:
         async with self._lock:
+            if self._store is not None:
+                identity=getattr(reservation,'identity',None)
+                if self._closed or identity not in self._holds or self._holds[identity]!=float(reservation):
+                    raise ValueError('目标费用预留身份已失效。')
+                self._persist('release',identity)
+                del self._holds[identity]
             self.reserved = max(0.0, self.reserved - reservation)
 
     async def settle(self, reservation: float, messages=None) -> None:
@@ -328,6 +375,15 @@ class GoalCostBudget:
         known = bool(usages) and all(usage is not None for usage in usages)
         cost = sum(self.estimator.estimate(usage) for usage in usages) if known else reservation
         async with self._lock:
+            if self._store is not None:
+                identity=getattr(reservation,'identity',None)
+                if self._closed or identity not in self._holds or self._holds[identity]!=float(reservation):
+                    raise ValueError('目标费用预留身份已失效。')
+                try:self._persist('settle',identity,float(cost),complete=known)
+                except CostBudgetExceeded:
+                    self.usage_complete=False
+                    raise
+                del self._holds[identity]
             self.reserved = max(0.0, self.reserved - reservation)
             self.spent += cost
             self.usage_complete = self.usage_complete and known

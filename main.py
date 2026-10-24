@@ -266,42 +266,36 @@ def run_cli(
         return
 
     runtime_factory = getattr(agent, "_nailong_runtime_factory", None)
-    session_store = getattr(runtime_factory, "session_store", None)
-    sessions = session_store.list_sessions() if session_store is not None else []
-    thread_id = uuid.uuid4().hex
+    factories = [runtime_factory] if runtime_factory is not None else []
+    runner_started = False
     try:
-        if resume_session is not None:
-            if session_store is None:
-                raise ValueError("当前运行时不支持恢复持久会话。")
-            thread_id = session_store.resolve_session(resume_session)
-        elif continue_session and sessions:
-            thread_id = sessions[0]["thread_id"]
-    except ValueError as error:
-        output_fn(str(error))
-        if runtime_factory is not None:
-            runtime_factory.close()
-        return
-
-    # The model's async HTTP client and async SQLite saver share this event loop.
-    active_factory = runtime_factory
-    try:
+        # Keep startup and every exceptional REPL exit inside the same loop
+        # which will own model transports and asynchronous SQLite.
         with ExitStack() as project_roots, asyncio.Runner() as runner:
-            project_roots.enter_context(local_tools.use_project_root(settings.project_root))
-            active_factory = _run_cli_session(
-                agent,
-                settings,
-                input_fn,
-                output_fn,
-                runner,
-                permission_mode,
-                thread_id,
-                project_roots=project_roots,
-            )
-            if active_factory is not None:
-                runner.run(active_factory.aclose())
+            runner_started = True
+            try:
+                session_store = getattr(runtime_factory, "session_store", None)
+                sessions = session_store.list_sessions() if session_store is not None else []
+                thread_id = uuid.uuid4().hex
+                try:
+                    if resume_session is not None:
+                        if session_store is None:
+                            raise ValueError("当前运行时不支持恢复持久会话。")
+                        thread_id = session_store.resolve_session(resume_session)
+                    elif continue_session and sessions:
+                        thread_id = sessions[0]["thread_id"]
+                except ValueError as error:
+                    output_fn(str(error))
+                    return
+                project_roots.enter_context(local_tools.use_project_root(settings.project_root))
+                _run_cli_session(agent, settings, input_fn, output_fn, runner, permission_mode,
+                    thread_id, project_roots=project_roots, owned_factories=factories)
+            finally:
+                from nailong.core.runtime_resources import close_runtime_factories
+                runner.run(close_runtime_factories(factories))
     finally:
-        if active_factory is not None:
-            active_factory.close()
+        if not runner_started and runtime_factory is not None:
+            runtime_factory.close()
 
 
 def _run_cli_session(
@@ -312,7 +306,7 @@ def _run_cli_session(
     runner: asyncio.Runner,
     permission_mode: str = "default",
     initial_thread_id: str | None = None,
-    *, project_roots: ExitStack | None = None,
+    *, project_roots: ExitStack | None = None, owned_factories=None,
 ):
     thread_id = initial_thread_id or uuid.uuid4().hex
     completed_turns = 0
@@ -460,31 +454,47 @@ def _run_cli_session(
             if not raw_path:
                 output_fn("用法：/project <项目目录>")
                 continue
+            candidate = None
             try:
                 new_root = select_project_root(raw_path)
                 new_settings = replace(settings, project_root=new_root)
                 new_agent = create_agent_runtime(new_settings)
+                candidate = getattr(new_agent, "_nailong_runtime_factory", None)
+                if candidate is not None and owned_factories is not None:
+                    owned_factories.append(candidate)
+                new_settings = getattr(candidate, 'settings', None) or new_settings
+                new_service = AgentService(candidate or (lambda **_kwargs: new_agent),
+                    api_key=new_settings.api_key, permission_engine=PermissionEngine(new_root),
+                    permission_mode=permission_mode)
+                new_controller = CommandController(new_settings)
+                new_actions = CommandActions(new_controller)
+                if project_roots is not None:
+                    project_roots.enter_context(local_tools.use_project_root(new_root))
             except Exception as error:
+                if candidate is not None:
+                    from nailong.core.runtime_resources import close_runtime_factories
+                    try:
+                        runner.run(close_runtime_factories([candidate]))
+                    except Exception as cleanup_error:
+                        output_fn(f"清理候选项目失败：{_friendly_error(cleanup_error, settings.api_key)}")
+                    else:
+                        if owned_factories is not None:
+                            owned_factories.remove(candidate)
                 output_fn(f"切换项目失败：{_friendly_error(error, settings.api_key)}")
                 continue
             old_factory = runtime_factory
-            if old_factory is not None:
-                runner.run(old_factory.aclose())
-                old_factory.close()
-            settings = new_settings
-            agent = new_agent
-            runtime_factory = getattr(agent, "_nailong_runtime_factory", None)
-            service = AgentService(
-                runtime_factory or (lambda **_kwargs: agent),
-                api_key=settings.api_key,
-                permission_engine=PermissionEngine(new_root),
-                permission_mode=permission_mode,
-            )
-            controller = CommandController(settings)
-            actions = CommandActions(controller)
-            if project_roots is not None:
-                project_roots.enter_context(local_tools.use_project_root(new_root))
+            settings, agent, runtime_factory = new_settings, new_agent, candidate
+            service, controller, actions = new_service, new_controller, new_actions
             thread_id = uuid.uuid4().hex
+            if old_factory is not None:
+                from nailong.core.runtime_resources import close_runtime_factories
+                try:
+                    runner.run(close_runtime_factories([old_factory]))
+                except Exception as error:
+                    output_fn(f"已切换项目；清理旧会话失败：{_friendly_error(error, settings.api_key)}")
+                else:
+                    if owned_factories is not None and old_factory in owned_factories:
+                        owned_factories.remove(old_factory)
             output_fn(f"已切换到项目：{new_root}。已开始新的会话。")
             continue
         if request.command == "/compact":

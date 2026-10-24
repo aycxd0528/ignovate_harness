@@ -163,6 +163,28 @@ for index in range(8):
 
 @unittest.skipUnless(os.name == 'nt', 'requires actual Win32 handles and NTFS junctions')
 class WindowsHandleTests(NativeFileBackendTests):
+    def test_input_snapshot_detects_restored_mtime_edits_to_an_earlier_file(self):
+        from contextlib import contextmanager
+        import local_tools
+        from nailong.core.verification import input_fingerprint
+        earlier = self.root / 'a.txt'
+        earlier.write_bytes(b'before')
+        (self.root / 'z.txt').write_bytes(b'trigger')
+        version = earlier.stat()
+        original = local_tools.open_regular_file
+
+        @contextmanager
+        def mutate(path, *args, **kwargs):
+            if Path(path).name == 'z.txt':
+                earlier.write_bytes(b'after!')
+                os.utime(earlier, ns=(version.st_atime_ns, version.st_mtime_ns))
+            with original(path, *args, **kwargs) as stream:
+                yield stream
+
+        with patch('local_tools.open_regular_file', mutate):
+            with self.assertRaisesRegex(ValueError, '修改|变化'):
+                input_fingerprint(self.root)
+
     def trustees(self, target):
         """Read actual ACE SIDs, avoiding SDDL aliases such as LA for RID 500."""
         import ctypes

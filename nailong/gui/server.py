@@ -21,27 +21,60 @@ class GUIServer(ThreadingHTTPServer):
     def __init__(self, project, *, port=0, token=None, controller_factory=GUIController):
         self.token = token or secrets.token_urlsafe(32)
         self.loop = asyncio.new_event_loop()
+        self._server_close_lock = threading.Lock()
+        self._call_admission_lock = threading.Lock()
+        self._calls_closing = False
+        self._calls = set()
         ready = threading.Event()
+        abandoned = threading.Event()
+        startup_lock = threading.Lock()
         failure = []
         def run():
             asyncio.set_event_loop(self.loop)
             try:
-                self.controller = controller_factory(project)
-            except Exception as error:
-                failure.append(error)
-                ready.set()
-                return
-            ready.set()
-            self.loop.run_forever()
-            self.loop.close()
+                try:
+                    self.controller = controller_factory(project)
+                except BaseException as error:
+                    failure.append(error)
+                    ready.set()
+                    return
+                if abandoned.is_set():
+                    self.loop.run_until_complete(self.controller.close())
+                    return
+                # Successful startup is published only once the loop runs.
+                async def close_abandoned():
+                    try:
+                        await self.controller.close()
+                    finally:
+                        self.loop.stop()
+                def publish():
+                    with startup_lock:
+                        if abandoned.is_set():
+                            self.loop.create_task(close_abandoned())
+                        else:
+                            ready.set()
+                self.loop.call_soon(publish)
+                self.loop.run_forever()
+            finally:
+                self.loop.close()
         self.loop_thread = threading.Thread(target=run, daemon=True)
         self.loop_thread.start()
         ready.wait(10)
         if failure:
+            self.loop_thread.join()
             raise failure[0]
-        if not ready.is_set():
-            raise RuntimeError('本地内核初始化超时。')
-        super().__init__(('127.0.0.1', port), GUIHandler)
+        with startup_lock:
+            if not ready.is_set():
+                abandoned.set()
+                raise RuntimeError('本地内核初始化超时。')
+        try:
+            super().__init__(('127.0.0.1', port), GUIHandler)
+        except BaseException as error:
+            try:
+                self.server_close()
+            except BaseException as cleanup_error:
+                raise error from cleanup_error
+            raise
         self.origin = f'http://127.0.0.1:{self.server_port}'
 
     @property
@@ -50,20 +83,61 @@ class GUIServer(ThreadingHTTPServer):
 
     def call(self, function, *args, timeout=60):
         async def invoke():
-            value = function(*args)
-            if hasattr(value, '__await__'):
-                return await value
-            return value
-        return asyncio.run_coroutine_threadsafe(invoke(), self.loop).result(timeout=timeout)
+            task = asyncio.current_task()
+            self._calls.add(task)
+            try:
+                value = function(*args)
+                if hasattr(value, '__await__'):
+                    return await value
+                return value
+            finally:
+                self._calls.discard(task)
+        with self._call_admission_lock:
+            if self._calls_closing and function != self._shutdown:
+                raise RuntimeError('GUI server is closing or closed.')
+            if not self.loop.is_running():
+                raise RuntimeError('GUI server loop is not running.')
+            pending = asyncio.run_coroutine_threadsafe(invoke(), self.loop)
+        try:
+            return pending.result(timeout=timeout)
+        except TimeoutError:
+            # The loop retains cleanup ownership, including joining cancelled
+            # snapshot workers, after the HTTP caller has stopped waiting.
+            pending.cancel()
+            raise
 
     def server_close(self):
-        super().server_close()
-        if self.loop.is_running():
-            try:
-                self.call(self.controller.close)
-            finally:
+        if threading.current_thread() is self.loop_thread:
+            raise RuntimeError('GUI server cannot join its own event loop.')
+        with self._server_close_lock:
+            # Seal scheduling before enqueuing shutdown. Every previously
+            # admitted invoke is queued ahead of the shutdown owner.
+            with self._call_admission_lock:
+                self._calls_closing = True
+            if getattr(self, 'socket', None) is not None:
+                super().server_close()
+            if self.loop.is_running():
+                # HTTP response deadlines must not stop the resource owner.
+                # On cleanup failure retain the loop for an explicit retry.
+                self.call(self._shutdown, timeout=None)
                 self.loop.call_soon_threadsafe(self.loop.stop)
-                self.loop_thread.join(5)
+                self.loop_thread.join()
+
+    async def _shutdown(self):
+        from nailong.core.runtime_resources import raise_cleanup_errors
+        errors = []
+        current = asyncio.current_task()
+        calls = [task for task in self._calls if task is not current and not task.done()]
+        for task in calls:
+            if not task.cancelling():
+                task.cancel()
+        if calls:
+            await asyncio.gather(*calls, return_exceptions=True)
+        try:
+            await self.controller.close()
+        except BaseException as error:
+            errors.append(error)
+        raise_cleanup_errors(errors)
 
 
 class GUIHandler(BaseHTTPRequestHandler):
@@ -102,7 +176,7 @@ class GUIHandler(BaseHTTPRequestHandler):
             return
         try:
             if url.path == '/api/snapshot':
-                self.respond(200, self.server.call(self.server.controller.snapshot))
+                self.respond(200, self.server.call(self.server.controller.snapshot_async))
             elif url.path == '/api/events':
                 after = int(parse_qs(url.query).get('after', ['0'])[0])
                 self.respond(200, self.server.call(self.server.controller.events, after))

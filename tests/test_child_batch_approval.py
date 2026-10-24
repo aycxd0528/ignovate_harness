@@ -56,8 +56,8 @@ class ParentChildPermitBoundaries(unittest.IsolatedAsyncioTestCase):
         with patch('agent.ChatDeepSeek', return_value=model):
             factory = AgentRuntimeFactory(settings,
                 session_store=ProjectSessionStore(root, base_dir=base / 'private'))
-        self.addAsyncCleanup(factory.aclose)
         self.addCleanup(factory.close)
+        self.addAsyncCleanup(factory.aclose)
         service = AgentService(factory, api_key='offline-key')
         if external:
             native = factory.tool_execution_context.approval_handler

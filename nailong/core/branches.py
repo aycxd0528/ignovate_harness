@@ -160,6 +160,17 @@ def project_turn(node, events):
 
 class BranchStore:
     def __init__(self, sessions):
+        self.db = self.view = None
+        try:
+            self._initialize(sessions)
+        except BaseException as error:
+            try:
+                self.close()
+            except BaseException as cleanup_error:
+                raise error from cleanup_error
+            raise
+
+    def _initialize(self, sessions):
         self.sessions = sessions
         sessions.ensure_directories()
         self.db = sqlite3.connect(sessions.root / 'branches.sqlite')
@@ -197,8 +208,15 @@ class BranchStore:
                 os.chmod(sessions.root / name, 0o600)
 
     def close(self):
-        self.db.close()
-        self.view.close()
+        from nailong.core.runtime_resources import raise_cleanup_errors
+        errors = []
+        for connection in (self.db, self.view):
+            if connection is not None:
+                try:
+                    connection.close()
+                except BaseException as error:
+                    errors.append(error)
+        raise_cleanup_errors(errors)
 
     def branch(self, identity):
         row = self.db.execute('SELECT * FROM branches WHERE id=?', (identity,)).fetchone()

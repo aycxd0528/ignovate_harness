@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import codecs
+import contextvars
+import functools
 import io
 import os
 import shlex
@@ -20,13 +22,22 @@ def command_environment():
     return {key: value for key, value in os.environ.items() if key != 'DEEPSEEK_API_KEY'}
 
 
-def shell_command(command: str):
+def shell_command(command: str, *, cwd=None):
     """Use the platform's native shell without changing POSIX shell semantics."""
     if os.name != 'nt':
         return command, True
     # EncodedCommand preserves quotes, Unicode and newlines through CreateProcess.
     # Reset LASTEXITCODE so a successful PowerShell-only command exits with zero.
-    script = ("$ProgressPreference = 'SilentlyContinue'; "
+    # Windows PowerShell expands its initial provider location before launching
+    # native children. The device prefix keeps that verified short alias from
+    # being expanded by the legacy .NET path normalizer in Windows PowerShell.
+    location = ''
+    if cwd is not None:
+        directory='\\\\?\\'+os.fspath(cwd)
+        if len(directory.encode('utf-16-le','surrogatepass'))//2>=260:
+            raise ValueError('Windows shell需要连同设备前缀仍短于MAX_PATH的工作目录别名。')
+        location="Set-Location -LiteralPath '"+directory.replace("'","''")+"' -ErrorAction Stop; "
+    script = (location + "$ProgressPreference = 'SilentlyContinue'; "
               "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
               "$OutputEncoding = [Console]::OutputEncoding; $global:LASTEXITCODE = 0; "
               + command + "\nif (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit $LASTEXITCODE")
@@ -67,14 +78,28 @@ class OwnedProcess:
     def __init__(self, command, *, cwd=None, env=None, shell=False, **kwargs):
         self.job = None
         self.process = None
+        self.guard = None
+        shell_cwd = None
+        if os.name == 'nt':
+            if cwd is not None:
+                from nailong.core.safe_files import _path
+                absolute=_path(cwd)
+                # Win32 counts wide-character units, after relative expansion.
+                if len(os.fspath(absolute).encode('utf-16-le','surrogatepass'))//2 >= 260:
+                    from nailong.core._win32_files import short_directory
+                    cwd=short_directory(absolute)
+                    shell_cwd=cwd
         if shell:
-            command, shell = shell_command(command)
+            command, shell = shell_command(command,cwd=shell_cwd)
         if os.name == 'nt':
             from nailong.core._windows_process import WindowsJob
             self.job = WindowsJob()
             kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x4  # CREATE_SUSPENDED
         else:
-            kwargs['start_new_session'] = True
+            from nailong.core.posix_process import PosixProcessGuard
+            self.guard=PosixProcessGuard(command,cwd=cwd,env=env,shell=shell,**kwargs)
+            self.process=self.guard.process
+            return
         try:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, shell=shell, **kwargs)
             if self.job:
@@ -92,7 +117,9 @@ class OwnedProcess:
             raise
 
     def terminate(self, *, force=True):
-        if self.job:
+        if self.guard is not None:
+            self.guard.terminate(force=force)
+        elif self.job:
             self.job.terminate()
         else:
             chosen_signal = signal.SIGKILL if force else signal.SIGTERM
@@ -114,6 +141,9 @@ class OwnedProcess:
                 pass
 
     def close(self):
+        if self.guard is not None:
+            self.guard.close()
+            return
         try:
             self.terminate()
             try:
@@ -161,13 +191,20 @@ class PipeCapture:
         self.stderr = buffer_class(max_output_chars)
         self.threads = []
         self.errors = []
-        for stream, output, callback in ((self.process.stdout, self.stdout, on_stdout),
-                                         (self.process.stderr, self.stderr, None)):
-            if stream is None:
-                continue
-            thread = threading.Thread(target=self._read, args=(stream, output, callback), daemon=True)
-            thread.start()
-            self.threads.append(thread)
+        try:
+            for stream, output, callback in ((self.process.stdout, self.stdout, on_stdout),
+                                             (self.process.stderr, self.stderr, None)):
+                if stream is None:
+                    continue
+                thread = threading.Thread(target=self._read, args=(stream, output, callback), daemon=True)
+                thread.start()
+                self.threads.append(thread)
+        except BaseException:
+            try:self.close()
+            finally:
+                for stream in (self.process.stdin,self.process.stdout,self.process.stderr):
+                    if stream is not None:stream.close()
+            raise
 
     def _read(self, stream, output, callback):
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
@@ -296,3 +333,21 @@ async def join_cleanup(task):
             cancelled = True
     task.result()
     return cancelled
+
+
+async def prepare_owned(factory,*args,**kwargs):
+    """Join background creation; caller must close the result even if cancelled."""
+    context=contextvars.copy_context()
+    # A Future is not in asyncio.run's cancel-all-Tasks snapshot. Keep the
+    # eventual resource retrievable while its consumer handles loop shutdown.
+    creation=asyncio.get_running_loop().run_in_executor(None,context.run,functools.partial(factory,*args,**kwargs))
+    cancelled=False
+    while not creation.done():
+        try:await asyncio.shield(creation)
+        except asyncio.CancelledError:cancelled=True
+        except BaseException:break
+    try:value=creation.result()
+    except BaseException as error:
+        if cancelled:raise asyncio.CancelledError from error
+        raise
+    return value,cancelled

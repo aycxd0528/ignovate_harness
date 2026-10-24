@@ -76,6 +76,26 @@ class BudgetContextTests(unittest.TestCase):
         self.assertEqual(prepared.messages, request.messages)
         self.assertGreater(_input_bound(prepared)+1000, 12000)
 
+    def test_budget_pressure_keeps_large_archived_tail_available_through_native_tool(self):
+        import json
+        from tools import build_tools
+        from nailong.tools.files import FileSession
+        from nailong.core.history_archive import MAX_ARCHIVE_BYTES
+        request = self.request()
+        original = next(message for message in request.messages if message.id == 'old')
+        original.content = 'x' * (MAX_ARCHIVE_BYTES + 4000) + 'TOOL_TAIL'
+        before = copy.deepcopy(request.messages)
+        prepared, _ = self.manager._prepare_request(request)
+        self.assertLessEqual(_input_bound(prepared)+1000, 12000)
+        self.assertEqual(request.messages, before)
+        cleared = next(message for message in prepared.messages if message.id == 'old')
+        reference = cleared.additional_kwargs['nailong_tool_reference']
+        native = next(tool for tool in build_tools(file_session=FileSession(self.root),
+            history_archive=self.archive, thread_id='one') if tool.name == 'read_history_result')
+        page = json.loads(native.invoke({'reference':reference,'offset':len(original.content)-9}))
+        self.assertTrue(page['ok'], page); self.assertEqual(page['content'], 'TOOL_TAIL')
+        self.assertFalse(page['archive_truncated']); self.assertIsNone(page['next_offset'])
+
     def test_unresolved_latest_call_is_preserved(self):
         request = self.request(incomplete=True)
         prepared, report = self.manager._prepare_request(request)
@@ -83,8 +103,14 @@ class BudgetContextTests(unittest.TestCase):
         self.assertEqual(prepared.messages[-1].content, 'latest')
 
     def test_truncated_archive_cannot_replace_an_original_result(self):
+        from test_complete_history_archive import legacy_partial
         request = self.request()
-        with patch('nailong.core.history_archive.MAX_ARCHIVE_BYTES', 4096):
+        old=next(message for message in request.messages if message.id=='old')
+        reference=legacy_partial(self.archive,'one',old,{'path':'large.py'})
+        original_save=self.archive.save
+        def save(thread,message,arguments=None):
+            return reference if message.id=='old' else original_save(thread,message,arguments)
+        with patch.object(self.archive,'save',side_effect=save):
             prepared, report = self.manager._prepare_request(request)
         self.assertEqual(prepared.messages, request.messages)
         self.assertGreater(_input_bound(prepared)+1000, 12000)

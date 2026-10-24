@@ -274,15 +274,16 @@ class ApprovalBoundaryTests(WorkflowFixture):
             while True:
                 ticks += 1
                 await asyncio.sleep(.005)
-        def slow_fingerprint(*args):
+        from nailong.core.verification import snapshot_identity
+        def slow_fingerprint(*args, **kwargs):
             before = ticks
             time.sleep(.08)  # Controlled filesystem latency; compute the real hash afterward.
             during_scans.append(ticks > before)
-            return input_fingerprint(*args)
+            return snapshot_identity(*args, **kwargs)
         monitor = asyncio.create_task(heartbeat())
         try:
             await asyncio.sleep(.01)
-            with patch('nailong.core.verification.input_fingerprint', slow_fingerprint):
+            with patch('nailong.core.verification.snapshot_identity', slow_fingerprint):
                 result = await self.verify()
             self.assertEqual(result['status'], 'passed')
             self.assertTrue(during_scans)

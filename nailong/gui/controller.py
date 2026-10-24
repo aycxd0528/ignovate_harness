@@ -15,8 +15,23 @@ from nailong.core.sessions import ProjectSessionStore
 from nailong.gui.runtime_sources import RuntimeSources, SOURCE_UPDATE_MESSAGE
 
 
+_UNOBSERVED = object()
+
+
 class GUIController:
     def __init__(self, project, *, sessions=None, service=None, runtime_sources=None):
+        self.branches = None
+        try:
+            self._initialize(project, sessions=sessions, service=service, runtime_sources=runtime_sources)
+        except BaseException as error:
+            if self.branches is not None:
+                try:
+                    self.branches.close()
+                except BaseException as cleanup_error:
+                    raise error from cleanup_error
+            raise
+
+    def _initialize(self, project, *, sessions, service, runtime_sources):
         self.runtime_sources = runtime_sources if runtime_sources is not None else RuntimeSources()
         self._runtime_update_emitted = False
         from config import select_project_root
@@ -30,6 +45,9 @@ class GUIController:
         self.paused = False
         self.worker = None
         self.current_task = None
+        self._close_task = None
+        self._closing = False
+        self._retired_controllers = []
         self.events_log = []
         self.sequence = 0
         self.plans = {}
@@ -148,7 +166,7 @@ class GUIController:
             # Read existing DB without loading a model or making a request.
             if not self.sessions.database_path.exists():
                 return None
-            from langgraph.checkpoint.sqlite import SqliteSaver
+            from nailong.core.sqlite_saver import RuntimeSqliteSaver as SqliteSaver
             with SqliteSaver.from_conn_string(str(self.sessions.database_path)) as source:
                 saved = source.get_tuple({'configurable': {'thread_id': thread_id, 'checkpoint_ns': ''}})
         else:
@@ -156,6 +174,8 @@ class GUIController:
         return saved.checkpoint['id'] if saved and not saved.pending_writes else None
 
     def ensure_service(self):
+        if self._closing:
+            raise RuntimeError('GUI controller is closing or closed.')
         if self.service is not None:
             return self.service
         from agent import AgentRuntimeFactory
@@ -163,20 +183,28 @@ class GUIController:
         from config import load_settings
         settings = replace(load_settings(), project_root=self.project)
         self.sessions.api_key = settings.api_key
-        self.factory = AgentRuntimeFactory(settings, session_store=self.sessions)
-        self.service = AgentService(self.factory, api_key=settings.api_key)
-        # Shared project memory is read-only to exploratory GUI branches.
-        execution = self.factory.tool_execution_context
-        native_pre_tool = execution.pre_tool_hook
-        def guarded(action):
-            args = action.get('args') or {}
-            path = str(args.get('path', '')).replace('\\', '/')
-            memory_path = path.endswith('/context.md') or path == '.nailong/context.md' or '/.nailong/memory' in '/'+path
-            if action.get('name') in {'write_file', 'edit_file'} and memory_path:
-                return {'blocked': True, 'reason': 'GUI 分支不能直接提升共享记忆，请保留在分支草稿中。'}
-            return native_pre_tool(action)
-        execution.pre_tool_hook = guarded
-        return self.service
+        factory = AgentRuntimeFactory(settings, session_store=self.sessions)
+        try:
+            service = AgentService(factory, api_key=settings.api_key)
+            # Shared project memory is read-only to exploratory GUI branches.
+            execution = factory.tool_execution_context
+            native_pre_tool = execution.pre_tool_hook
+            def guarded(action):
+                args = action.get('args') or {}
+                path = str(args.get('path', '')).replace('\\', '/')
+                memory_path = path.endswith('/context.md') or path == '.nailong/context.md' or '/.nailong/memory' in '/'+path
+                if action.get('name') in {'write_file', 'edit_file'} and memory_path:
+                    return {'blocked': True, 'reason': 'GUI 分支不能直接提升共享记忆，请保留在分支草稿中。'}
+                return native_pre_tool(action)
+            execution.pre_tool_hook = guarded
+        except BaseException as error:
+            try:
+                factory.close()
+            except BaseException as cleanup_error:
+                raise error from cleanup_error
+            raise
+        self.factory, self.service = factory, service
+        return service
 
     def configuration(self):
         from config import load_settings
@@ -222,7 +250,23 @@ class GUIController:
         finally:
             self.last_history_sync = time.monotonic()
 
-    def snapshot(self):
+    def _project_identity(self):
+        return self.project, self.sessions, self.branches
+
+    def _check_project_identity(self, identity):
+        if self._project_identity() != identity:
+            raise ValueError('项目已切换，请重新加载后再操作。')
+
+    async def snapshot_async(self):
+        """HTTP snapshot: only pure input hashing leaves the GUI event loop."""
+        from nailong.gui.work_control import projection_async
+        identity = self._project_identity()
+        control = await projection_async(self)
+        self._check_project_identity(identity)
+        return self.snapshot(_control=control)
+
+    def snapshot(self, *, _control=None):
+        """Synchronous Python API; input observations may block its caller."""
         if not self.runtime_sources.changed():
             self._sync_history()
         configuration = self.configuration()
@@ -261,7 +305,7 @@ class GUIController:
             if source_run:
                 node['progress'] = source_run.get('progress')
                 node['continuation'] = source_run.get('continuation')
-        control = projection(self, branches)
+        control = projection(self, branches) if _control is None else _control
         return self.safe({'schema_version': 1, 'sequence': self.sequence,
                          'project': {'id': self.sessions.root.name, 'path': str(self.project), 'name': self.project.name},
                          'configuration': configuration, 'gui_settings': gui_settings,
@@ -315,8 +359,19 @@ class GUIController:
                                      run.get('start_index'), run.get('node_id')))
 
     async def command(self, name, payload):
+        self._validate_command_payload(payload)
+        if name == 'work_control':
+            from nailong.gui.work_control import execute
+            return await execute(self, payload)
+        if name in {'node', 'export'}:
+            return await self._detail_command(name, payload)
         async with self.command_lock:
-            return await self._command_unlocked(name, payload)
+            result = await self._command_unlocked(name, payload)
+            identity = self._project_identity()
+        if name == 'open_project':
+            result = await self.snapshot_async()
+            self._check_project_identity(identity)
+        return result
 
     def _set_branch_mode(self, identity, mode):
         with self.branches.db:
@@ -329,14 +384,14 @@ class GUIController:
             from nailong.core.session_coordination import SessionCoordination
             SessionCoordination(self.factory,thread).intervene(thread)
 
-    async def _command_unlocked(self, name, payload):
+    def _validate_command_payload(self, payload):
         if not isinstance(payload, dict):
             raise ValueError('命令参数必须是对象。')
         if payload.get('project_id', self.sessions.root.name) != self.sessions.root.name:
             raise ValueError('项目已切换，请重新加载后再操作。')
-        if name == 'work_control':
-            from nailong.gui.work_control import execute
-            return await execute(self, payload)
+
+    async def _command_unlocked(self, name, payload):
+        self._validate_command_payload(payload)
         if name in {'settings', 'settings_update', 'provider'}:
             from nailong.gui.settings import GUISettings
             settings = GUISettings(self)
@@ -372,17 +427,33 @@ class GUIController:
             from nailong.gui.controls import workspace_catalog
             return self.safe(workspace_catalog(self, payload.get('paths', [])))
         if name == 'open_project':
+            if self._closing:
+                raise RuntimeError('GUI controller is closing or closed.')
             if self.current_task or self.queue:
                 raise ValueError('请先停止运行并移除队列，再切换项目。')
+            await self._close_retired_controllers()
             candidate = GUIController(payload['path'], runtime_sources=self.runtime_sources)
             sequence = self.sequence
             command_lock = self.command_lock
-            await self.close()
+            # Retire a separate owner. Updating this object's state while a
+            # close coroutine still references it could close the new project.
+            old = object.__new__(type(self))
+            old.__dict__.update(self.__dict__)
+            old_key = old.sessions.api_key or getattr(getattr(old.factory, 'settings', None), 'api_key', '')
             self.__dict__.update(candidate.__dict__)
             self.command_lock = command_lock
             self.sequence = sequence
+            self._retired_controllers.append(old)
             self.emit('project_opened', {'path': str(self.project)})
-            return self.snapshot()
+            try:
+                await self._close_retired_controllers()
+            except Exception as error:
+                detail = old.safe(str(error))
+                if old_key:
+                    detail = detail.replace(old_key, '[密钥已隐藏]')
+                self.error = '已切换项目；清理旧会话失败：' + detail
+                self.emit('project_cleanup_failed', {'notice': self.error})
+            return None  # command() observes the new project after releasing its lock.
         if name in {'send', 'verify'}:
             return self._enqueue(payload, verify=name == 'verify')
         if name in {'queue_edit', 'queue_remove'}:
@@ -495,12 +566,6 @@ class GUIController:
                 common += 1
             return self.safe({'shared_count': common, 'left': a[common:], 'right': b[common:],
                               'usage': self.branches.usage(left['conversation_id']), 'workspace': '当前共享工作区；没有历史分支文件快照'})
-        if name == 'node':
-            return self._node_detail(payload['node_id'])
-        if name == 'export':
-            branch = self.branches.branch(payload['branch_id'])
-            return {'filename': 'ignovate-'+branch['id'][:8]+'.json', 'text': json.dumps(self.safe({'project': str(self.project), 'branch': branch,
-                    'path': [self._node_detail(n['id']) for n in self.branches.path(branch['id'])]}), ensure_ascii=False, indent=2)}
         if name == 'configuration':
             if self.current_task or self.queue:
                 raise ValueError('请先完成或停止运行再修改模型。')
@@ -562,7 +627,7 @@ class GUIController:
             if self.current_task:
                 raise ValueError('请等待当前运行结束后批准计划。')
             if self.factory.plan_store.get(run['plan_id']) is None:
-                run['plan_id'] = self.factory.plan_store.stage(self._node_detail(run['node_id'])['answer'])
+                run['plan_id'] = self.factory.plan_store.stage(self._node_detail(run['node_id'], fingerprint=None)['answer'])
             from nailong.core.project_execution import project_execution
             with project_execution(self.sessions):
                 approved = self.factory.plan_store.approve(run.pop('plan_id'))
@@ -625,7 +690,7 @@ class GUIController:
             return json.loads(existing['result'])
         if self.runtime_sources.changed():
             raise ValueError(SOURCE_UPDATE_MESSAGE)
-        if self.current_task or self.queue:
+        if (self.current_task is not None and not self.current_task.done()) or self.queue:
             raise ValueError('请等待当前运行与队列结束，再从地图继续。')
         branch = self.branches.branch(payload['branch_id'])
         kind = payload.get('kind')
@@ -675,6 +740,8 @@ class GUIController:
         return result
 
     def _enqueue(self, payload, *, verify=False, request_fingerprint=None, permission_override=None):
+        if self._closing:
+            raise RuntimeError('GUI controller is closing or closed.')
         identity = payload.get('request_id')
         if not isinstance(identity, str) or not 1 <= len(identity) <= 128:
             raise ValueError('请求须有稳定 request_id。')
@@ -890,7 +957,44 @@ class GUIController:
             self._save_run(run)
             self.emit('run', self._public_run(run), run)
 
-    def _node_detail(self, node_id):
+    async def _detail_command(self, name, payload):
+        async with self.command_lock:
+            self._validate_command_payload(payload)
+            identity = self._project_identity()
+            branch = self.branches.branch(payload['branch_id']) if name == 'export' else None
+            nodes = ([self.branches.node(node['id']) for node in self.branches.path(branch['id'])]
+                     if branch else [self.branches.node(payload['node_id'])])
+            # SQLite/checkpoint reads stay on their owning event loop thread.
+            details = [self._node_detail(node['id'], fingerprint=None) for node in nodes]
+        from nailong.core.verification import _owned_worker, current_evidence
+        for result in details:
+            verification = result['delivery'].get('verification')
+            if not verification or verification.get('status') != 'passed':
+                continue
+            try:
+                current = await _owned_worker(current_evidence, identity[0], verification, self.sessions.root)
+            except (ValueError, OSError):
+                current = None
+            self._check_project_identity(identity)
+            # Each result was first rendered with unknown current inputs. Apply
+            # the real observation to that immutable historical turn only.
+            if current is not None:
+                result['delivery']['status'] = verification['status'] if current == verification.get('input_after') else 'stale'
+                from nailong.gui.presentation import artifact_cards
+                result['artifacts'] = artifact_cards(result)
+        async with self.command_lock:
+            self._check_project_identity(identity)
+            self._validate_command_payload(payload)
+            if any(self.branches.node(node['id']) != node for node in nodes):
+                raise ValueError('来源回合已变化，请重新核对。')
+            if name == 'node':
+                return self.safe(details[0])
+            if self.branches.branch(branch['id']) != branch:
+                raise ValueError('来源会话已变化，请重新核对。')
+            return {'filename': 'ignovate-'+branch['id'][:8]+'.json', 'text': json.dumps(self.safe({
+                'project': str(self.project), 'branch': branch, 'path': details}), ensure_ascii=False, indent=2)}
+
+    def _node_detail(self, node_id, *, fingerprint=_UNOBSERVED):
         node = self.branches.node(node_id)
         events = self.branches.node_events(node)
         from nailong.core.branches import project_turn
@@ -903,7 +1007,7 @@ class GUIController:
             if saver:
                 saved = saver.get_tuple(config)
             elif self.sessions.database_path.exists():
-                from langgraph.checkpoint.sqlite import SqliteSaver
+                from nailong.core.sqlite_saver import RuntimeSqliteSaver as SqliteSaver
                 with SqliteSaver.from_conn_string(str(self.sessions.database_path)) as source:
                     saved = source.get_tuple(config)
             if saved:
@@ -915,10 +1019,13 @@ class GUIController:
                         break
         verification = result['delivery'].get('verification')
         if verification and verification.get('status') == 'passed':
-            from nailong.core.verification import input_fingerprint
+            from nailong.core.verification import current_evidence
             try:
-                current = input_fingerprint(self.project, verification.get('generated_paths', []))
-                if current != verification.get('input_after'):
+                current = (current_evidence(self.project, verification, self.sessions.root)
+                           if fingerprint is _UNOBSERVED else fingerprint)
+                if current is None:
+                    result['delivery']['status'] = 'unknown'
+                elif current != verification.get('input_after'):
                     result['delivery']['status'] = 'stale'
             except (ValueError, OSError):
                 result['delivery']['status'] = 'unknown'
@@ -934,7 +1041,7 @@ class GUIController:
         if node is None or not node['recoverable'] or node['status'] != 'completed':
             raise ValueError('该回合不能精确恢复，请选择更早完整回合。')
         self.ensure_service()
-        if self.current_task:
+        if self.current_task is not None and not self.current_task.done():
             raise ValueError('请等待当前项目运行结束后分叉。')
         before = bool(payload.get('before'))
         ancestor = self.branches.node(node['parent_id']) if before and node['parent_id'] else None
@@ -965,19 +1072,69 @@ class GUIController:
 
     async def _close_factory(self):
         if self.factory:
-            close = getattr(self.factory, 'aclose', None)
-            if close:
-                await close()
-            elif getattr(self.factory, 'close', None):
-                self.factory.close()
+            from nailong.core.runtime_resources import close_runtime_factories
+            await close_runtime_factories([self.factory])
         self.factory = self.service = None
         self.branch_permissions.clear()
 
+    async def _close_retired_controllers(self):
+        from nailong.core.runtime_resources import raise_cleanup_errors
+        errors = []
+        for controller in list(self._retired_controllers):
+            # A retired project's provider key differs from the selected
+            # project's key. Capture it before close may clear the factory.
+            key = controller.sessions.api_key or getattr(
+                getattr(controller.factory, 'settings', None), 'api_key', '')
+            try:
+                await controller.close()
+            except BaseException as error:
+                detail = str(error)
+                safe_detail = controller.safe(detail)
+                if key:
+                    safe_detail = safe_detail.replace(key, '[密钥已隐藏]')
+                if isinstance(error, Exception) and detail != safe_detail:
+                    redacted = RuntimeError(safe_detail)
+                    redacted.__cause__ = error
+                    errors.append(redacted)
+                else:
+                    errors.append(error)
+            else:
+                self._retired_controllers.remove(controller)
+        raise_cleanup_errors(errors)
+
     async def close(self):
-        self.paused = True
-        if self.current_task:
-            self.current_task.cancel()
-        if self.worker:
-            await self.worker
-        await self._close_factory()
-        self.branches.close()
+        from nailong.core.runtime_resources import await_owned, raise_cleanup_errors
+        caller = asyncio.current_task()
+        if caller in (self.worker, self.current_task, self._close_task):
+            raise RuntimeError('GUI runtime cleanup cannot wait for itself.')
+        task = self._close_task
+        if task is None or task.done() and (task.cancelled() or task.exception() is not None):
+            self._closing = self.paused = True
+            if self.current_task is not None and not self.current_task.done():
+                self.current_task.cancel()
+            worker = self.worker
+
+            async def finish():
+                errors = []
+                if worker is not None:
+                    try:
+                        await worker
+                    except BaseException as error:
+                        errors.append(error)
+                try:
+                    await self._close_factory()
+                except BaseException as error:
+                    errors.append(error)
+                try:
+                    self.branches.close()
+                except BaseException as error:
+                    errors.append(error)
+                try:
+                    await self._close_retired_controllers()
+                except BaseException as error:
+                    errors.append(error)
+                raise_cleanup_errors(errors)
+
+            task = asyncio.create_task(finish(), name='gui:close-runtime')
+            self._close_task = task
+        await await_owned(task)

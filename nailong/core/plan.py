@@ -136,7 +136,9 @@ async def edit_plan_with_editor_async(markdown: str) -> str:
             if os.name == 'nt':
                 private_file_permissions(path)
             output.write(markdown)
-        owner = OwnedProcess([*command, str(path)], env=command_environment())
+        from nailong.core.process_io import prepare_owned
+        owner,startup_cancelled = await prepare_owned(OwnedProcess,[*command,str(path)],env=command_environment())
+        if startup_cancelled:raise asyncio.CancelledError
         while owner.process.poll() is None:
             await asyncio.sleep(.025)
         if owner.process.returncode:

@@ -56,6 +56,16 @@ async def pause(seconds: float) -> str:
 
 
 @server.tool()
+async def hold(started: str, release: str, completed: str) -> str:
+    """File gates let the client tests observe actual remote execution."""
+    Path(started).write_text(str(os.getpid()), encoding='utf-8')
+    while not Path(release).exists():
+        await asyncio.sleep(.01)
+    Path(completed).write_text('completed', encoding='utf-8')
+    return 'done'
+
+
+@server.tool()
 def fail() -> str:
     raise ValueError('test service failure')
 
