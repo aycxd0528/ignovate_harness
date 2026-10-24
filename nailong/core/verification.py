@@ -69,8 +69,15 @@ def _git(root, *args):
         base=['git','--no-pager','-c','core.fsmonitor=false']
         cwd=root
         if os.name=='nt':
-            base.extend(['-c','core.longpaths=true','-C',str(root)])
-            cwd=root.anchor
+            base.extend(['-c','core.longpaths=true'])
+            if len(str(root).encode('utf-16-le','surrogatepass'))//2>=260:
+                if _non_repository(root):return b''
+                from nailong.core.safe_files import _path
+                from nailong.core._win32_files import short_directory
+                cwd=short_directory(_path(root))
+            else:
+                base.extend(['-C',str(root)])
+                cwd=root.anchor
         result=subprocess.run([*base,*args],cwd=cwd,
             capture_output=True,timeout=3)
         if result.returncode==0: return result.stdout

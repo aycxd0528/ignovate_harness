@@ -65,6 +65,8 @@ CreateFile = _bind(kernel, 'CreateFileW', [wintypes.LPCWSTR, wintypes.DWORD, win
 CloseHandle = _bind(kernel, 'CloseHandle', [wintypes.HANDLE], wintypes.BOOL)
 GetInformation = _bind(kernel, 'GetFileInformationByHandle', [wintypes.HANDLE, ctypes.POINTER(FileInformation)], wintypes.BOOL)
 GetFileType = _bind(kernel, 'GetFileType', [wintypes.HANDLE], wintypes.DWORD)
+GetShortPathName = _bind(kernel, 'GetShortPathNameW',
+    [wintypes.LPCWSTR,wintypes.LPWSTR,wintypes.DWORD],wintypes.DWORD)
 CreateDirectory = _bind(kernel, 'CreateDirectoryW', [wintypes.LPCWSTR, ctypes.POINTER(SecurityAttributes)], wintypes.BOOL)
 SetInformation = _bind(kernel, 'SetFileInformationByHandle', [wintypes.HANDLE,
     ctypes.c_int, wintypes.LPVOID, wintypes.DWORD], wintypes.BOOL)
@@ -107,6 +109,26 @@ def _error(path=None):
 def extended(path):
     # Public callers validate the ordinary drive path before adding this prefix.
     return '\\\\?\\' + os.fspath(path)
+
+
+def short_directory(path):
+    """Use an existing filesystem alias; never rename or map a user directory."""
+    size=GetShortPathName(extended(path),None,0)
+    if not size:raise _error(path)
+    if size>32768:raise ValueError('Windows短目录名超过可核对长度。')
+    buffer=ctypes.create_unicode_buffer(size)
+    length=GetShortPathName(extended(path),buffer,size)
+    if not length:raise _error(path)
+    if length>=size:raise ValueError('Windows短目录名在读取期间变化。')
+    short=buffer.value
+    if short.startswith('\\\\?\\'):short=short[4:]
+    if len(short.encode('utf-16-le','surrogatepass'))//2>=260:
+        raise ValueError('当前Windows卷没有足够短的目录别名，无法在该长工作目录启动进程。')
+    with pin_directory(path) as original,pin_directory(type(path)(short)) as alias:
+        first,second=information(original),information(alias)
+        if (first.volume,first.index_high,first.index_low)!=(second.volume,second.index_high,second.index_low):
+            raise ValueError('Windows短目录别名身份已变化。')
+    return short
 
 
 @lru_cache(maxsize=1)

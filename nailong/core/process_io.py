@@ -79,8 +79,8 @@ class OwnedProcess:
                 absolute=_path(cwd)
                 # Win32 counts wide-character units, after relative expansion.
                 if len(os.fspath(absolute).encode('utf-16-le','surrogatepass'))//2 >= 260:
-                    from nailong.core._win32_files import extended
-                    cwd=extended(absolute)
+                    from nailong.core._win32_files import short_directory
+                    cwd=short_directory(absolute)
             self.job = WindowsJob()
             kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x4  # CREATE_SUSPENDED
         else:

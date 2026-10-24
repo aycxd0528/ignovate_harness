@@ -206,7 +206,15 @@ class ArtifactEvidenceTests(WorkflowFixture):
         self.configure(self.steps)
         self.begin(scope=['sources/input.txt'])
         if os.name == 'nt':
-            self.assertEqual((await self.verify())['status'], 'invalidated')
+            record=await self.verify()
+            # Native pins prevent the attempted move before any false input
+            # can be tested; this is a failed command, not a changed snapshot.
+            self.assertEqual(record['status'], 'failed')
+            self.assertNotEqual(record['steps'][0]['exit_code'],0)
+            self.assertEqual((self.root/'sources/input.txt').read_text(),'original untested input')
+            self.assertFalse((self.root/'__pycache__/hold').exists())
+            self.assertFalse((self.root/'sources/generated.txt').exists())
+            self.assertFalse((self.root/'bundle').exists())
         else:
             with self.assertRaises(ValueError):
                 await self.verify()

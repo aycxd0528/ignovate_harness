@@ -9,6 +9,40 @@ from unittest.mock import Mock, patch
 
 
 class VerificationCompatibilityTests(unittest.TestCase):
+    def test_short_alias_checks_length_and_native_directory_identity(self):
+        import ast
+        import ctypes
+        from contextlib import contextmanager
+        source=Path(__file__).resolve().parents[1]/'nailong/core/_win32_files.py'
+        tree=ast.parse(source.read_text())
+        functions=[node for node in tree.body if isinstance(node,ast.FunctionDef)
+                   and node.name in {'extended','short_directory'}]
+        state={'short':'\\\\?\\C:\\SHORT','mismatch':False}
+        pins=[]
+        @contextmanager
+        def pin(path):
+            pins.append(('enter',str(path)))
+            try:yield str(path)
+            finally:pins.append(('exit',str(path)))
+        original=PureWindowsPath('C:/project').joinpath(*(['long-component']*25))
+        def get_short(path,buffer,size):
+            if buffer is None:return len(state['short'])+1
+            buffer.value=state['short']
+            return len(state['short'])
+        def info(handle):
+            return SimpleNamespace(volume=1,index_high=0,
+                index_low=2 if state['mismatch'] and handle!=str(original) else 1)
+        namespace={'os':os,'ctypes':ctypes,'GetShortPathName':get_short,
+                   'pin_directory':pin,'information':info,'_error':lambda path:OSError('native error')}
+        exec(compile(ast.Module(body=functions,type_ignores=[]),str(source),'exec'),namespace)
+        self.assertEqual(namespace['short_directory'](original),'C:\\SHORT')
+        self.assertEqual(len([x for x in pins if x[0]=='enter']),2)
+        self.assertEqual(len([x for x in pins if x[0]=='exit']),2)
+        state['mismatch']=True
+        with self.assertRaises(ValueError):namespace['short_directory'](original)
+        state['short']=str(original)
+        with self.assertRaises(ValueError):namespace['short_directory'](original)
+
     def test_long_cwd_dispatch_counts_absolute_utf16_units(self):
         import sys
         import nailong.core.process_io as process_io
@@ -21,13 +55,13 @@ class VerificationCompatibilityTests(unittest.TestCase):
                 process=Mock(stdin=None,stdout=None,stderr=None)
                 job=Mock()
                 modules={'nailong.core._windows_process':SimpleNamespace(WindowsJob=lambda:job),
-                         'nailong.core._win32_files':SimpleNamespace(extended=lambda path:'\\\\?\\'+str(path))}
+                         'nailong.core._win32_files':SimpleNamespace(short_directory=lambda path:'C:\\short')}
                 with patch.dict(sys.modules,modules), \
                         patch.object(process_io,'os',SimpleNamespace(name='nt',fspath=os.fspath)), \
                         patch('nailong.core.safe_files._path',return_value=absolute), \
                         patch.object(process_io.subprocess,'Popen',return_value=process) as popen:
                     owner=process_io.OwnedProcess(['child'],cwd=raw)
-                    try:self.assertEqual(popen.call_args.kwargs['cwd'],'\\\\?\\'+str(absolute))
+                    try:self.assertEqual(popen.call_args.kwargs['cwd'],'C:\\short')
                     finally:owner.close()
 
     def test_empty_git_identity_variables_are_explicit_and_refused(self):
@@ -77,15 +111,19 @@ class VerificationCompatibilityTests(unittest.TestCase):
                 with self.assertRaises(ValueError):verification._git(root, 'rev-parse', 'HEAD')
 
     def test_windows_git_uses_short_process_cwd_and_explicit_project(self):
+        import sys
         import nailong.core.verification as verification
         root=PureWindowsPath('C:/project')/('deep'*80)
         with patch.object(verification, 'os', SimpleNamespace(name='nt', environ={})), \
+                patch.object(verification,'_non_repository',return_value=False), \
+                patch('nailong.core.safe_files._path',return_value=root), \
+                patch.dict(sys.modules,{'nailong.core._win32_files':SimpleNamespace(short_directory=lambda path:'C:\\short')}), \
                 patch.object(verification.subprocess, 'run', return_value=
                              subprocess.CompletedProcess([], 0, b'identity', b'')) as run:
             self.assertEqual(verification._git(root, 'rev-parse', 'HEAD'), b'identity')
-        self.assertEqual(run.call_args.kwargs['cwd'], root.anchor)
+        self.assertEqual(run.call_args.kwargs['cwd'], 'C:\\short')
         command=run.call_args.args[0]
-        self.assertEqual(command[command.index('-C')+1], str(root))
+        self.assertNotIn('-C',command)
 
 
 @unittest.skipUnless(os.name=='nt', 'requires actual Win32 directory sharing')
