@@ -23,10 +23,14 @@ class DirectoryGuard:
         self.fd = None
 
     def start(self, root, paths):
-        if sys.platform != 'darwin' and not sys.platform.startswith('linux'):
+        if os.name != 'nt' and sys.platform != 'darwin' and not sys.platform.startswith('linux'):
             return
         try:
-            if sys.platform == 'darwin':
+            if os.name == 'nt':
+                # The existing native pin denies write/delete sharing for the
+                # directory and every ancestor, while allowing child outputs.
+                pass
+            elif sys.platform == 'darwin':
                 self.queue = select.kqueue()
                 self.stack.callback(self.queue.close)
             else:
@@ -47,7 +51,9 @@ class DirectoryGuard:
                     handle = self.stack.enter_context(pinned_directory(Path(root) / path))
                 except FileNotFoundError:
                     continue
-                if self.queue is not None:
+                if os.name == 'nt':
+                    pass
+                elif self.queue is not None:
                     event = select.kevent(handle, filter=select.KQ_FILTER_VNODE,
                         flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
                         fflags=select.KQ_NOTE_RENAME | select.KQ_NOTE_DELETE | select.KQ_NOTE_REVOKE | select.KQ_NOTE_ATTRIB)
@@ -64,6 +70,13 @@ class DirectoryGuard:
             raise
 
     def check(self):
+        if os.name == 'nt':
+            from nailong.core._win32_files import information, DIRECTORY, REPARSE_POINT
+            for handle in self.handles:
+                value=information(handle)
+                if not value.attributes & DIRECTORY or value.attributes & REPARSE_POINT or not value.links:
+                    raise ValueError('验证期间输入目录身份失效。')
+            return
         if self.queue is not None:
             if self.queue.control(None, 1, 0):
                 raise ValueError('验证期间输入目录被移动、删除、改变属性或撤销，证据失效。')

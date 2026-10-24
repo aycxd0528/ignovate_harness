@@ -27,8 +27,9 @@ def _json(value):
 
 
 def _path(raw):
-    if (not isinstance(raw, str) or not raw or '\0' in raw or Path(raw).is_absolute()
-            or not Path(raw).parts or '..' in Path(raw).parts or str(Path(raw)) != raw
+    if (not isinstance(raw, str) or not raw or '\0' in raw or Path(raw).anchor
+            or not Path(raw).parts or '..' in Path(raw).parts
+            or raw not in {str(Path(raw)), Path(raw).as_posix()}
             or any(FileSession._is_protected(p) for p in Path(raw).parts)
             or Path(raw).parts[0] in {'.nailong', 'AGENTS.md', 'CLAUDE.md'}):
         raise ValueError('产物清单路径无效。')

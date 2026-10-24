@@ -1,0 +1,63 @@
+{
+  "wheel_sha256": "302156ef206f211505f60c51008439641feccc632ff55e2e2d21e94fbbceca88",
+  "base": "91315a0961f21d7d168b5fdfb5ea81c1db494974",
+  "gates": {
+    "full311": {
+      "tests": 2222,
+      "skipped": 52,
+      "seconds": 388.067,
+      "exit_code": 0,
+      "log": "/tmp/ignovate-pr5-windows-accepted-full311.log",
+      "sha256": "258f78ca8ded9e5d523d2cfbd492dfc316b8a14df13a89813d545230b864291f"
+    },
+    "full313": {
+      "tests": 2222,
+      "skipped": 53,
+      "seconds": 392.827,
+      "exit_code": 0,
+      "log": "/tmp/ignovate-pr5-windows-accepted-full313.log",
+      "sha256": "9305d3a9eb1d5e30378273ea20aa49d220060b3d4a9603e726f32fb14c712a76"
+    },
+    "installed311": {
+      "tests": 815,
+      "skipped": 8,
+      "seconds": 233.484,
+      "exit_code": 0,
+      "log": "/tmp/ignovate-pr5-windows-accepted-installed311.log",
+      "sha256": "b121edd4e5da97741f35211e3ed04386002d70f9f9db50a86bbfe7f25602e4f5"
+    },
+    "installed313": {
+      "tests": 815,
+      "skipped": 8,
+      "seconds": 236.638,
+      "exit_code": 0,
+      "log": "/tmp/ignovate-pr5-windows-accepted-installed313.log",
+      "sha256": "9bf4e762f225f510381575204978ff8582bb91f248142bc455cd51bfdaf4982b"
+    },
+    "js": {
+      "log": "/tmp/ignovate-pr5-windows-accepted-js.log",
+      "sha256": "ecede5b4a44e573f157f6a9906ca95f3b508b454e49f4867b94cc74315a0036a",
+      "exit_code": 0
+    },
+    "desktop": {
+      "log": "/tmp/ignovate-pr5-windows-accepted-desktop.log",
+      "sha256": "4baa96ced2038452002d95cf98f0a563bdc6c84ce01204f75c3661dee0ac0ff8",
+      "exit_code": 0
+    },
+    "smoke": {
+      "log": "/tmp/ignovate-pr5-windows-accepted-smoke.log",
+      "sha256": "aec0598995df76ae4ae197e456c1d622c8b0cae09cc981a5d03aff9163d330fd",
+      "exit_code": 0
+    }
+  },
+  "native_ci": "pending at commit creation",
+  "integrity313": {
+    "python": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/bin/python",
+    "distributions": 77,
+    "files": 5616,
+    "issues": []
+  },
+  "python_files": 159,
+  "gui_assets": 39,
+  "installed_origins_each": 48
+}

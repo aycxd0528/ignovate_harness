@@ -74,6 +74,13 @@ class OwnedProcess:
             command, shell = shell_command(command)
         if os.name == 'nt':
             from nailong.core._windows_process import WindowsJob
+            if cwd is not None:
+                from nailong.core.safe_files import _path
+                absolute=_path(cwd)
+                # Win32 counts wide-character units, after relative expansion.
+                if len(os.fspath(absolute).encode('utf-16-le','surrogatepass'))//2 >= 260:
+                    from nailong.core._win32_files import extended
+                    cwd=extended(absolute)
             self.job = WindowsJob()
             kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x4  # CREATE_SUSPENDED
         else:

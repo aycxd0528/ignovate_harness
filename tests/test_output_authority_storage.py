@@ -31,4 +31,4 @@ class AuthorityMembershipTests(unittest.TestCase):
         with artifact_index() as index:
             for path in ('a','a/file','ab/file','a0','b/a/file'):index.add(Path(path))
             remove_scope(index,Path('a'))
-            self.assertEqual([str(p) for p in index],['a0','ab/file','b/a/file'])
+            self.assertEqual([p.as_posix() for p in index],['a0','ab/file','b/a/file'])

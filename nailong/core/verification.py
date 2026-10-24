@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 import os
+import shutil
 import subprocess
 import uuid
 from datetime import datetime, timezone
@@ -40,14 +41,42 @@ async def _owned_worker(function, *args):
         raise
 
 
+def _non_repository(root):
+    """Missing Git is optional only when no repository boundary is possible."""
+    if any(key in os.environ for key in ('GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE')):
+        return False
+    root=Path(root)
+    if not root.is_dir():
+        return False
+    for parent in (root,*root.parents):
+        try:
+            (parent/'.git').lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            return False
+        if all((parent/name).exists() for name in ('HEAD','objects','refs')):
+            return False
+    return True
+
+
 def _git(root, *args):
     try:
-        result=subprocess.run(['git','--no-pager','-c','core.fsmonitor=false',*args],cwd=root,
+        if shutil.which('git') is None and _non_repository(root):
+            return b''
+        # Win32 process startup cannot use an ordinary over-MAX_PATH cwd.
+        # Let Git resolve its explicit project path from a short native cwd.
+        base=['git','--no-pager','-c','core.fsmonitor=false']
+        cwd=root
+        if os.name=='nt':
+            base.extend(['-c','core.longpaths=true','-C',str(root)])
+            cwd=root.anchor
+        result=subprocess.run([*base,*args],cwd=cwd,
             capture_output=True,timeout=3)
         if result.returncode==0: return result.stdout
         if b'not a git repository' in result.stderr: return b''
         if args==('rev-parse','HEAD'):
-            unborn=subprocess.run(['git','rev-parse','--verify','--quiet','HEAD'],cwd=root,capture_output=True,timeout=3)
+            unborn=subprocess.run([*base,'rev-parse','--verify','--quiet','HEAD'],cwd=cwd,capture_output=True,timeout=3)
             if unborn.returncode==1: return b''
         raise ValueError('无法完整读取 Git 验证状态。')
     except (OSError, subprocess.TimeoutExpired) as error:
