@@ -29,9 +29,14 @@ def shell_command(command: str, *, cwd=None):
     # EncodedCommand preserves quotes, Unicode and newlines through CreateProcess.
     # Reset LASTEXITCODE so a successful PowerShell-only command exits with zero.
     # Windows PowerShell expands its initial provider location before launching
-    # native children. Keep the already verified short alias as that location.
-    location = ("Set-Location -LiteralPath '" + os.fspath(cwd).replace("'", "''")
-                + "' -ErrorAction Stop; ") if cwd is not None else ''
+    # native children. The device prefix keeps that verified short alias from
+    # being expanded by the legacy .NET path normalizer in Windows PowerShell.
+    location = ''
+    if cwd is not None:
+        directory='\\\\?\\'+os.fspath(cwd)
+        if len(directory.encode('utf-16-le','surrogatepass'))//2>=260:
+            raise ValueError('Windows shell需要连同设备前缀仍短于MAX_PATH的工作目录别名。')
+        location="Set-Location -LiteralPath '"+directory.replace("'","''")+"' -ErrorAction Stop; "
     script = (location + "$ProgressPreference = 'SilentlyContinue'; "
               "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
               "$OutputEncoding = [Console]::OutputEncoding; $global:LASTEXITCODE = 0; "

@@ -25,3 +25,15 @@ R4. Ruling: 本新增shell两路径相对e91ec4d一次fresh只读review、作者
 作者处置另补一个先前R2尚未由真实平台覆盖的native长中文Git仓库身份回归：同一校验短名建库、真实HEAD/index读取及空提交后HEAD变化，不改产品代码。Cost: 真实Git长仓库必须最终Windows执行，不能用纯mock把该路径称为已认证；macOS只skip。此为有明确旧需求的覆盖补齐，不新增第二次review。补后14项/5native skip/0.066s通过。
 
 冻结产品b454293相关100项/6skip/47.101s通过。最终包SHA256 `3df85e992a7106a6e37fb12b4df1d80a28cae7f79172cdf1a13f433262df5319`；159Python/39GUI逐字节匹配，77 distributions/5616 files RECORD无问题，19JS及desktop/CLI/JSON doctor smoke通过。两版源码和工作区外安装全量正在执行，真实CI仍待当前最终head。最终结果通过PR5说明和merge commit记录，不为补写平台结果再制造新head循环。
+
+## 实际平台失败后的同一作者处置
+
+b454真实Windows313的63项/197.222s仍2FAIL；普通Set-Location把8.3前缀展开成长ProviderPath，Python子进程继续267。6120额外Git用例的init也报`unable to get current working directory: Filename too long`。不把这些候选称为修复成功。b454产品本地源码各2227项/53和54skip、383.585s/387.672s，实装各820项/9skip、231.233s/237.380s均通过，但不能替代该Windows失败。
+
+079148c的真实313有界对照 `/tmp/ignovate-pr5-079-native313.log`：legacy普通短名status1且打印完整展开长ProviderPath；legacy设备前缀+已校验短名status0，并成功运行同一写文件子命令；pwsh普通短名也status0，pwsh设备前缀却有Set-Location错误，不能因其退出0便称正确。由此采纳原Windows PowerShell设备前缀短名方案，不新增PowerShell7依赖、不创建目录入口。另一个8ccc目录联接对照仅作诊断，不纳入产品或最终测试路径。
+
+Ruling R1修正：仅在已核验短名上加内部设备前缀，LiteralPath/单引号/EncodedCommand仍保留，连同前缀再按UTF-16严格短于260，否则明确拒绝。Cost: 仍须有足够短的既存alias，不支持全部卷；真实命令重新执行前不宣称最终通过。前缀portable断言修前1FAIL、修后14项/5skip通过，含ASCII/emoji长度边界。
+
+Ruling R2边界澄清：实际Git for Windows的 [mingw_getcwd源码](https://github.com/git-for-windows/git/blob/main/compat/mingw.c) 用固定MAX_PATH缓冲区取得最终路径，再尝试GetLongPathName；已证实某些真实长仓库即使初始8.3 cwd也无法运行。这一平台能力未实现，不假装支持。产品继续真实Git读取失败就ValueError，禁止空Git身份。新增native门改为先在普通短目录真实建库/提交并取得HEAD/index，再把同一完整仓库移到长中文目录，要求返回完整原身份或明确ValueError并保持source/.git完整；这验证fail-closed契约，**不是认证长Git仓库可用**。Cost: 受影响Git仓库须使用较短项目位置；通用长Git读写支持留在持续goal，不以新增映射盘/目录联接规避本次边界。
+
+作者删除仅失败时运行的候选对照，保持最终测试只走真实产品路径。所有旧失败/对照日志保留；这仍是同一shell作者处置pass，没有第二次历史review。最后产品包和实际CI以PR5最终head为准。

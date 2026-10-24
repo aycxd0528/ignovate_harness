@@ -36,8 +36,12 @@ class VerificationCompatibilityTests(unittest.TestCase):
             command,shell=process_io.shell_command('user-command',cwd="C:\\SHORT'S\\PROJECT")
         self.assertFalse(shell)
         script=base64.b64decode(command[-1]).decode('utf-16-le')
-        self.assertIn("Set-Location -LiteralPath 'C:\\SHORT''S\\PROJECT' -ErrorAction Stop;",script)
+        self.assertIn("Set-Location -LiteralPath '\\\\?\\C:\\SHORT''S\\PROJECT' -ErrorAction Stop;",script)
         self.assertLess(script.index('Set-Location'),script.index('user-command'))
+        with patch.object(process_io,'os',SimpleNamespace(name='nt',environ={},fspath=os.fspath)):
+            for path in ('C:\\'+'a'*253,'C:\\'+'😀'*126+'a'):
+                with self.subTest(path=path),self.assertRaises(ValueError):
+                    process_io.shell_command('user-command',cwd=path)
 
     def test_short_alias_checks_length_and_native_directory_identity(self):
         import ast
@@ -168,29 +172,32 @@ class VerificationCompatibilityTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name=='nt', 'requires actual Win32 directory sharing')
 class NativeWindowsDirectoryGuardTests(unittest.TestCase):
-    def test_git_identity_is_read_from_a_native_long_repository(self):
-        from nailong.core.safe_files import _path
-        from nailong.core._win32_files import short_directory
-        from nailong.core.verification import _git
+    def test_native_long_repository_preserves_identity_or_refuses(self):
+        from nailong.core.verification import _git,_non_repository
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary).joinpath(*(['工程目录'*3]*20))
-            root.mkdir(parents=True)
-            alias=short_directory(_path(root))
+            original=Path(temporary)/'repository'
+            original.mkdir()
             def git(*args):
                 result=subprocess.run(['git','-c','core.longpaths=true','-c','user.name=Native Test',
-                    '-c','user.email=native@example.invalid',*args],cwd=alias,capture_output=True,timeout=20)
+                    '-c','user.email=native@example.invalid',*args],cwd=original,capture_output=True,timeout=20)
                 self.assertEqual(result.returncode,0,result.stderr)
                 return result.stdout
             git('init')
-            (root/'source.txt').write_text('source')
+            (original/'source.txt').write_text('source')
             git('add','source.txt')
             git('commit','-m','initial')
-            first=_git(root,'rev-parse','HEAD')
-            self.assertEqual(first,git('rev-parse','HEAD'))
-            self.assertTrue(first.strip())
-            self.assertIn(b'source.txt',_git(root,'ls-files','--stage','-z'))
-            git('commit','--allow-empty','-m','next')
-            self.assertNotEqual(_git(root,'rev-parse','HEAD'),first)
+            expected={args:git(*args) for args in (('rev-parse','HEAD'),('ls-files','--stage','-z'))}
+            self.assertTrue(all(expected.values()))
+            root=Path(temporary).joinpath(*(['工程目录'*3]*20))
+            root.parent.mkdir(parents=True)
+            original.rename(root)
+            self.assertFalse(_non_repository(root))
+            for args,identity in expected.items():
+                try:observed=_git(root,*args)
+                except ValueError:continue  # Explicit refusal is the documented platform boundary.
+                self.assertEqual(observed,identity)  # A real repository must never become empty identity.
+            self.assertEqual((root/'source.txt').read_text(),'source')
+            self.assertTrue((root/'.git/HEAD').is_file())
 
     def test_shell_child_runs_in_deep_unicode_directory(self):
         import asyncio
@@ -201,54 +208,6 @@ class NativeWindowsDirectoryGuardTests(unittest.TestCase):
             root.mkdir(parents=True)
             command=python_command("from pathlib import Path;Path('shell-proof').write_text('native shell cwd')")
             result=asyncio.run(execute_process(command,root,timeout=20))
-            if not result['ok']:
-                import base64
-                import shutil
-                from nailong.core.process_io import capture_bytes,shell_command
-                from nailong.core.safe_files import _path
-                from nailong.core._win32_files import short_directory
-                alias=short_directory(_path(root))
-                arguments,_=shell_command(command,cwd=alias)
-                script=base64.b64decode(arguments[-1]).decode('utf-16-le')
-                diagnostics={}
-                for name,executable,location in (
-                        ('legacy',arguments[0],alias),
-                        ('legacy-extended',arguments[0],'\\\\?\\'+alias),
-                        ('pwsh',shutil.which('pwsh'),alias),
-                        ('pwsh-extended',shutil.which('pwsh'),'\\\\?\\'+alias)):
-                    if executable is None:
-                        diagnostics[name]='unavailable'
-                        continue
-                    probe=script.replace(alias.replace("'","''"),location.replace("'","''"))
-                    prefix="Write-Output ('provider='+(Get-Location).ProviderPath); "
-                    position=probe.index("$ProgressPreference")
-                    probe=probe[:position]+prefix+probe[position:]
-                    argv=[executable,*arguments[1:-1],base64.b64encode(probe.encode('utf-16-le')).decode('ascii')]
-                    try:
-                        output,status,overflow=capture_bytes(argv,cwd=alias,timeout=10,max_output_bytes=8000)
-                        diagnostics[name]={'status':status,'output':output.decode('utf-8',errors='replace'),'overflow':overflow}
-                    except Exception as error:diagnostics[name]=repr(error)
-                with tempfile.TemporaryDirectory() as aliases:
-                    import _winapi
-                    from nailong.core import _win32_files as native
-                    junction=Path(aliases)/'cwd'
-                    _winapi.CreateJunction(str(root),str(junction))
-                    handle=native.CreateFile(native.extended(junction),native.DELETE|native.READ_ATTRIBUTES,
-                        7,None,native.OPEN_EXISTING,native.BACKUP_SEMANTICS|native.OPEN_REPARSE_POINT|0x04000000,None)
-                    if handle==native.INVALID_HANDLE_VALUE:raise native._error(junction)
-                    try:
-                        probe=script.replace(alias.replace("'","''"),str(junction).replace("'","''"))
-                        argv=[*arguments[:-1],base64.b64encode(probe.encode('utf-16-le')).decode('ascii')]
-                        for name,argv in (('junction-shell',argv),('junction-git',['git','-c','core.longpaths=true','init'])):
-                            try:
-                                output,status,overflow=capture_bytes(argv,cwd=junction,timeout=10,max_output_bytes=8000)
-                                diagnostics[name]={'status':status,'output':output.decode('utf-8',errors='replace'),'overflow':overflow}
-                            except Exception as error:diagnostics[name]=repr(error)
-                    finally:
-                        native.CloseHandle(handle)
-                        diagnostics['junction-cleanup']={'alias_exists':os.path.lexists(junction),'target_exists':root.is_dir()}
-                        if os.path.lexists(junction):os.rmdir(junction)
-                result['native_shell_diagnostics']=diagnostics
             self.assertTrue(result['ok'],result)
             self.assertEqual((root/'shell-proof').read_text(),'native shell cwd')
 
