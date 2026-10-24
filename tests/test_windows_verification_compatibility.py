@@ -201,6 +201,34 @@ class NativeWindowsDirectoryGuardTests(unittest.TestCase):
             root.mkdir(parents=True)
             command=python_command("from pathlib import Path;Path('shell-proof').write_text('native shell cwd')")
             result=asyncio.run(execute_process(command,root,timeout=20))
+            if not result['ok']:
+                import base64
+                import shutil
+                from nailong.core.process_io import capture_bytes,shell_command
+                from nailong.core.safe_files import _path
+                from nailong.core._win32_files import short_directory
+                alias=short_directory(_path(root))
+                arguments,_=shell_command(command,cwd=alias)
+                script=base64.b64decode(arguments[-1]).decode('utf-16-le')
+                diagnostics={}
+                for name,executable,location in (
+                        ('legacy',arguments[0],alias),
+                        ('legacy-extended',arguments[0],'\\\\?\\'+alias),
+                        ('pwsh',shutil.which('pwsh'),alias),
+                        ('pwsh-extended',shutil.which('pwsh'),'\\\\?\\'+alias)):
+                    if executable is None:
+                        diagnostics[name]='unavailable'
+                        continue
+                    probe=script.replace(alias.replace("'","''"),location.replace("'","''"))
+                    prefix="Write-Output ('provider='+(Get-Location).ProviderPath); "
+                    position=probe.index("$ProgressPreference")
+                    probe=probe[:position]+prefix+probe[position:]
+                    argv=[executable,*arguments[1:-1],base64.b64encode(probe.encode('utf-16-le')).decode('ascii')]
+                    try:
+                        output,status,overflow=capture_bytes(argv,cwd=alias,timeout=10,max_output_bytes=8000)
+                        diagnostics[name]={'status':status,'output':output.decode('utf-8',errors='replace'),'overflow':overflow}
+                    except Exception as error:diagnostics[name]=repr(error)
+                result['native_shell_diagnostics']=diagnostics
             self.assertTrue(result['ok'],result)
             self.assertEqual((root/'shell-proof').read_text(),'native shell cwd')
 
