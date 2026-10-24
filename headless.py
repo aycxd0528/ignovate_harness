@@ -85,6 +85,7 @@ async def run_print(
     delivery = None
     workflow_handled = False
     goal_driver = ExitStack()
+    active_goal_budget = None
 
     def emit_event(kind: str, data: dict) -> None:
         if output_format == "stream-json":
@@ -191,7 +192,9 @@ async def run_print(
                         "只有当前需求和输入版本的真实验证与目标验收均满足后，才能调用 update_goal(state='complete')。"
                         "验收条件缺失或等待人工确认时交付未验证结果并暂停，不能代替用户确认。"
                     )
-                budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd) if goal_mode else None
+                budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd,
+                    goal_store=goal_store,goal_id=goal.id,round_id=round_id) if goal_mode else None
+                active_goal_budget=budget
                 round_stop = None
                 cancellation = None
                 try:
@@ -311,16 +314,18 @@ async def run_print(
                     round_cost = max(cost_estimator.estimate(round_usage), budget.spent)
                 except ValueError:
                     round_cost = goal.max_cost_usd
-                goal = goal_store.record_round(
-                    goal.id,
-                    cost_usd=round_cost,
-                    files_changed=files_changed,
-                    tool_calls=round_tool_calls,
-                    summary=result_text[:1_000],
-                    unattended_approval=unattended_approval,
-                    round_id=round_id,
-                    stop_reason=round_stop or ("模型未提供完整用量；已保守计费并暂停目标。" if not budget.usage_complete else ""),
-                ) or goal
+                try:
+                    goal = goal_store.record_round(
+                        goal.id,
+                        cost_usd=round_cost,
+                        files_changed=files_changed,
+                        tool_calls=round_tool_calls,
+                        summary=result_text[:1_000],
+                        unattended_approval=unattended_approval,
+                        round_id=round_id,
+                        stop_reason=round_stop or ("模型未提供完整用量；已保守计费并暂停目标。" if not budget.usage_complete else ""),
+                    ) or goal
+                finally:budget.close()
                 if cancellation is not None:
                     raise cancellation
                 if round_stop or not budget.usage_complete:
@@ -370,27 +375,37 @@ async def run_print(
         status = "error"
         error_text = f"{type(error).__name__}: {error}"
     finally:
-        goal_driver.close()
-        if service is not None and thread_id and (getattr(service,'last_turn_task_id',None)
-                or delivery is not None or prompt.split(' ',1)[0] in {'/task','/status','/verify'}):
-            try:
-                delivery=await service.delivery_report(thread_id)
-            except (OSError, ValueError):
-                # Never fall back to an earlier positive status on failed refresh.
-                delivery={'status':'unverified','reasons':['当前交付状态无法重新核实。']}
-        if factory is not None:
-            aclose = getattr(factory, "aclose", None)
-            if callable(aclose):
-                try:
-                    await aclose()
-                except Exception:
-                    pass
-            close = getattr(factory, "close", None)
-            if callable(close):
+        from nailong.core.runtime_resources import await_owned, close_runtime_factories, raise_cleanup_errors
+
+        async def finish_resources():
+            nonlocal delivery
+            errors = []
+            for close in ((active_goal_budget.close,) if active_goal_budget is not None else ()) + (goal_driver.close,):
                 try:
                     close()
-                except Exception:
-                    pass
+                except BaseException as error:
+                    errors.append(error)
+            if service is not None and thread_id and (getattr(service,'last_turn_task_id',None)
+                    or delivery is not None or prompt.split(' ',1)[0] in {'/task','/status','/verify'}):
+                try:
+                    delivery = await service.delivery_report(thread_id)
+                except BaseException as error:
+                    # Never retain an earlier positive delivery after a failed refresh.
+                    delivery = {'status':'unverified','reasons':['当前交付状态无法重新核实。']}
+                    if not isinstance(error, (OSError, ValueError)):
+                        errors.append(error)
+            try:
+                await close_runtime_factories([factory] if factory is not None else [])
+            except BaseException as error:
+                errors.append(error)
+            raise_cleanup_errors(errors)
+
+        try:
+            await await_owned(asyncio.create_task(finish_resources(), name='headless:close-resources'))
+        except Exception as error:
+            status = 'error'
+            cleanup_text = f'清理失败：{type(error).__name__}: {error}'
+            error_text = f'{error_text}；{cleanup_text}' if error_text else cleanup_text
 
     exit_code = {
         "success": 0,

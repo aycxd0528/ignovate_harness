@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from nailong.core.budgets import (
     SharedTokenBudget, TokenBudgetExceeded, active_token_admission, active_token_budget,
@@ -21,6 +21,29 @@ from nailong.core.usage import collect_model_usage
 
 
 READONLY_RESEARCH_TOOLS = frozenset({"list_files", "read_file", "glob", "grep", "read_tool_result"})
+
+
+def child_tool_evidence(message):
+    """Extract metadata from a native result; never store tool content as proof."""
+    if not isinstance(message,ToolMessage):return None
+    try:body=json.loads(message.content)
+    except (ValueError,TypeError):return None
+    if not isinstance(body,dict):return None
+    return {'tool':message.name,'call_id':message.tool_call_id,
+        **{key:body[key] for key in ('ok','path','offset','content_offset','next_offset','next_char_offset',
+            'truncated','read_complete','version','reference','tool_result_id') if key in body}}
+
+
+class ChildProgressMiddleware(AgentMiddleware):
+    """Save each native observation before allowing the child graph to advance."""
+    async def awrap_tool_call(self,request,handler):
+        result=await handler(request)
+        from nailong.core.child_continuations import active_child_result
+        sink=active_child_result.get()
+        evidence=child_tool_evidence(result)
+        if sink is not None and evidence is not None and sink.get('record_tool') is not None:
+            sink['record_tool'](evidence)
+        return result
 
 
 def readonly_prompt_parts(project_root, tool_names, permission_mode="default"):
@@ -201,6 +224,19 @@ class ReadOnlyTaskRunner:
                 if sink is not None:sink.update(result=ChildTaskResult(str(error),budget_failure=error.diagnostics),usage=self._empty_usage(),usage_complete=True)
                 return str(error)
             admission.task_key = fingerprint[:16]
+            from nailong.core.child_continuations import active_child_result
+            sink=active_child_result.get()
+            if sink is not None and sink.get('start_guard') is not None:
+                try:sink['start_guard']()
+                except BaseException:
+                    # No worker/provider attempt has begun. Release its
+                    # admission estimate without charging unknown usage.
+                    usage=self._empty_usage()
+                    sink.update(usage=usage,usage_complete=True)
+                    from nailong.core.process_io import join_cleanup
+                    cleanup=asyncio.create_task(budget.settle_admission(admission,usage,complete=True))
+                    if await join_cleanup(cleanup):raise asyncio.CancelledError()
+                    raise
             budget_token = active_token_budget.set(budget)
             admission_token = active_token_admission.set(admission)
             result = None

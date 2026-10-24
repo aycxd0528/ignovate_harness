@@ -1,0 +1,220 @@
+{
+  "wheel_sha256": "25e5d283e1c266f6c231285c869a16056a4401003a7a461027601f5b0caad919",
+  "base_commit": "4260136927f1ee8d1a8b2f3437e417fe083be3c0",
+  "branch": "codex/long-task-reliability",
+  "gates": {
+    "full311": {
+      "tests": 2214,
+      "skipped": 49,
+      "seconds": 413.133,
+      "log": "/tmp/ignovate-github-final-full311.log",
+      "sha256": "52e78af23f4e5f1e692b2dacc350149a4f33e2149d87902dd7a4ac3e25daf9a1",
+      "observed_exit_code": 0
+    },
+    "full313": {
+      "tests": 2214,
+      "skipped": 50,
+      "seconds": 416.471,
+      "log": "/tmp/ignovate-github-final-full313.log",
+      "sha256": "99d77c9b30dcb34441e1fccc455023fb8f3fcb9b0842446eddac2e21e25bdfdd",
+      "observed_exit_code": 0
+    },
+    "installed311": {
+      "tests": 807,
+      "skipped": 5,
+      "seconds": 249.343,
+      "log": "/tmp/ignovate-github-final-installed311.log",
+      "sha256": "819e4094f82c781f20def5135e8b94557b6a2b7a3f6116d626216837d9f53314",
+      "observed_exit_code": 0
+    },
+    "installed313": {
+      "tests": 807,
+      "skipped": 5,
+      "seconds": 248.517,
+      "log": "/tmp/ignovate-github-final-installed313.log",
+      "sha256": "dc71184a69cebae8c104514e7f0065e003bdd5d5901a19b957f801b329628340",
+      "observed_exit_code": 0
+    },
+    "js-all": {
+      "log": "/tmp/ignovate-github-final-js-all.log",
+      "sha256": "74adfd38469e4c1d2af832edc9f9e8dbefeba42697fc7aab93cce4875f42c9c8"
+    },
+    "desktop": {
+      "log": "/tmp/ignovate-github-final-desktop.log",
+      "sha256": "4baa96ced2038452002d95cf98f0a563bdc6c84ce01204f75c3661dee0ac0ff8"
+    },
+    "smoke": {
+      "log": "/tmp/ignovate-github-final-smoke.log",
+      "sha256": "aec0598995df76ae4ae197e456c1d622c8b0cae09cc981a5d03aff9163d330fd"
+    }
+  },
+  "integrity": {
+    "python": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/bin/python",
+    "distributions": 77,
+    "files": 5616,
+    "issues": []
+  },
+  "browsers": [
+    {
+      "case": "chat",
+      "result": {
+        "case": "chat",
+        "attempt": "github34",
+        "evidence": "/tmp/ignovate-browser-acceptance-evidence/chat-github34",
+        "server": {
+          "origin": "http://127.0.0.1:52613",
+          "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-8awvi7v2/tmply82froh/data/projects/d6e5998d4408/checkpoints.sqlite",
+          "controller_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/nailong/gui/controller.py",
+          "agent_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/agent.py"
+        },
+        "browser_exit_code": 0,
+        "server_descendants_after_browser": [],
+        "server_exit_code": 0,
+        "remaining_owned_entries": [],
+        "footprint": {
+          "fd_before": 5,
+          "fd_after": 5,
+          "new_threads": []
+        }
+      },
+      "result_sha256": "5f24ff5341e33015f917e52dc54c1ad7e79fc28c6003c7fb9cba0925d2046353",
+      "browser_log_sha256": "6378a0c449ab4fb01ade4efe8b64019ec185ae43bc5d69144758a02739bc2598"
+    },
+    {
+      "case": "work-control",
+      "result": {
+        "case": "work-control",
+        "attempt": "github34",
+        "evidence": "/tmp/ignovate-browser-acceptance-evidence/work-control-github34",
+        "server": {
+          "origin": "http://127.0.0.1:52615",
+          "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-sz74tg93/tmp78pmezh_/data/projects/b81fdc33bd86/checkpoints.sqlite",
+          "controller_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/nailong/gui/controller.py",
+          "agent_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/agent.py"
+        },
+        "browser_exit_code": 0,
+        "server_descendants_after_browser": [],
+        "server_exit_code": 0,
+        "remaining_owned_entries": [],
+        "footprint": {
+          "fd_before": 5,
+          "fd_after": 5,
+          "new_threads": []
+        }
+      },
+      "result_sha256": "07fb0046fe80bcfa320bb497fc5e230a48c6a87d57a4c5a2358e139e0f64280b",
+      "browser_log_sha256": "8f402142b49b0cc2530ce94734cfd8c59f0c4e674f3bee28ab7fcb982d194637"
+    },
+    {
+      "case": "lazy-long",
+      "result": {
+        "case": "lazy-long",
+        "attempt": "github34",
+        "evidence": "/tmp/ignovate-browser-acceptance-evidence/lazy-long-github34",
+        "server": {
+          "origin": "http://127.0.0.1:52617",
+          "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-u3lo9q9d/lazy-long-7y5ty_70/private/projects/be7e33b17e7c/checkpoints.sqlite",
+          "controller_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/nailong/gui/controller.py",
+          "agent_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/agent.py"
+        },
+        "browser_exit_code": 0,
+        "server_descendants_after_browser": [],
+        "server_exit_code": 0,
+        "remaining_owned_entries": [],
+        "footprint": {
+          "fd_before": 5,
+          "fd_after": 5,
+          "new_threads": []
+        }
+      },
+      "result_sha256": "a56155720def794a4e641ad28e974ce15f22b36194c2bb11e53aaeb6ab9b7ced",
+      "browser_log_sha256": "c23f2c234da0203d76ffdeb65ccedc9f8363a01babb08a89358169805ee75d71"
+    },
+    {
+      "case": "tools",
+      "result": {
+        "case": "tools",
+        "attempt": "github34",
+        "evidence": "/tmp/ignovate-browser-acceptance-evidence/tools-github34",
+        "server": {
+          "origin": "http://127.0.0.1:53453",
+          "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-uqsaex19/tmpdw8k69z5/data/projects/a7c4a8a15f42/checkpoints.sqlite",
+          "controller_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/nailong/gui/controller.py",
+          "agent_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/agent.py"
+        },
+        "browser_exit_code": 0,
+        "server_descendants_after_browser": [],
+        "server_exit_code": 0,
+        "remaining_owned_entries": [],
+        "footprint": {
+          "fd_before": 5,
+          "fd_after": 5,
+          "new_threads": []
+        }
+      },
+      "result_sha256": "df19ccb67904fae44ec58ea6101901f48795d9d27f61e30e1924dd85a1507d82",
+      "browser_log_sha256": "bd48180aa197fa0dc47548594b07db0c0f06ec0545bf7748f874c353b031b525"
+    },
+    {
+      "case": "conversation",
+      "result": {
+        "case": "conversation",
+        "attempt": "github34",
+        "evidence": "/tmp/ignovate-browser-acceptance-evidence/conversation-github34",
+        "server": {
+          "origin": "http://127.0.0.1:53451",
+          "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-typp216o/tmpheq___di/data/projects/4b0f8422c9cd/checkpoints.sqlite",
+          "controller_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/nailong/gui/controller.py",
+          "agent_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/agent.py"
+        },
+        "browser_exit_code": 0,
+        "server_descendants_after_browser": [],
+        "server_exit_code": 0,
+        "remaining_owned_entries": [],
+        "footprint": {
+          "fd_before": 5,
+          "fd_after": 5,
+          "new_threads": []
+        }
+      },
+      "result_sha256": "a26a3d59ca2d82385f93a9bd37a8befb1ec890321c8d33ae0074e35c0484aef8",
+      "browser_log_sha256": "6035a219f83d195c8144fc36907eda8d7caa5fbe62295a40dbaa8cd917f33754"
+    },
+    {
+      "case": "map-live",
+      "result": {
+        "case": "map-live",
+        "attempt": "github34",
+        "evidence": "/tmp/ignovate-browser-acceptance-evidence/map-live-github34",
+        "server": {
+          "origin": "http://127.0.0.1:53452",
+          "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-ubkz1cgz/tmpoz4pbl27/data/projects/a8842f0bfd90/checkpoints.sqlite",
+          "controller_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/nailong/gui/controller.py",
+          "agent_origin": "/Users/aycxd/.codex/tmp/ignovate-matrix313-sdlbf64_/venv/lib/python3.13/site-packages/agent.py"
+        },
+        "browser_exit_code": 0,
+        "server_descendants_after_browser": [],
+        "server_exit_code": 0,
+        "remaining_owned_entries": [],
+        "footprint": {
+          "fd_before": 5,
+          "fd_after": 5,
+          "new_threads": []
+        }
+      },
+      "result_sha256": "89dadc600da484261789a5241494fe30773dc7d8dc206b8ef0e22a0c41d90132",
+      "browser_log_sha256": "5ce1e9e15f241a95ee13bc93eb652965e0759363bfbebcba1d110f595b8971fb"
+    }
+  ],
+  "python_files": 159,
+  "gui_assets": 39,
+  "origins_each": 48,
+  "review": {
+    "sha256": "ef377f485e0e281049b359c2d78d08f0be095f2fcb7a0ccbc36d1a7a40773399",
+    "critical": 0,
+    "important": 1,
+    "minor": 0,
+    "important_fixed_in_author_pass": true,
+    "rereview": false
+  }
+}

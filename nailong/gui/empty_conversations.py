@@ -19,7 +19,12 @@ def empty_branch_ids(controller):
             task_threads.update(task.get('associated_thread_ids') or [task['thread_id']])
             task_threads.add(task['thread_id'])
         checkpoint_threads = set()
-        if sessions.database_path.exists():
+        # A broken checkpoint link is unknown evidence, not an absent database.
+        try:
+            sessions.database_path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
             with closing(sqlite3.connect(sessions.database_path.as_uri() + '?mode=ro', uri=True)) as db:
                 if db.execute("SELECT 1 FROM sqlite_master WHERE name='checkpoints'").fetchone():
                     checkpoint_threads.update(row[0] for row in db.execute('SELECT DISTINCT thread_id FROM checkpoints'))

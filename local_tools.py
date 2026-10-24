@@ -423,7 +423,7 @@ def run_command(command: str = "", timeout_seconds: int = 30, *, argv=None,
 async def run_command_async(command: str = "", timeout_seconds: int = 30, *, argv=None,
                             expected_exit_code: int = 0) -> dict:
     """Cancellable equivalent; join owned process cleanup before propagating cancellation."""
-    from nailong.core.process_io import join_cleanup
+    from nailong.core.process_io import join_cleanup, prepare_owned
     from nailong.core.processes import ProcessCancelled
     invocation, error = _command_input(command, argv, expected_exit_code)
     if error:
@@ -434,13 +434,13 @@ async def run_command_async(command: str = "", timeout_seconds: int = 30, *, arg
         return _command_failure("timeout_seconds 必须是有限数值。", expected_exit_code)
     mode = "argv" if argv is not None else "shell"
     try:
-        capture, output = _start_command_capture(invocation, mode)
+        (capture, output), cancelled = await prepare_owned(_start_command_capture,invocation,mode)
     except (OSError, subprocess.SubprocessError):
         return _command_failure("命令未能启动。", expected_exit_code, code="command_start_failed")
     deadline = time.monotonic() + timeout
-    timed_out, cancelled = False, False
+    timed_out = False
     try:
-        while not capture.finished:
+        while not cancelled and not capture.finished:
             if time.monotonic() >= deadline:
                 timed_out = True
                 break

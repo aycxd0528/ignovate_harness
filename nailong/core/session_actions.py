@@ -28,7 +28,18 @@ class SessionActions:
         try: value=json.loads(text)
         except (ValueError,TypeError): return False
         return isinstance(value,list) and bool(value) and all(isinstance(item,dict) and 'name' in item and 'args' in item for item in value)
-    def recap(self,thread_id):
+    async def recap_async(self,thread_id):
+        from nailong.core.verification import _owned_worker,current_evidence
+        verification=[event.get('data',{}) for event in self.store.read_events(thread_id)
+                      if event.get('kind')=='verification']
+        latest=verification[-1] if verification else None
+        current=None
+        if latest and latest.get('status')=='passed' and latest.get('input_after'):
+            try:current=await _owned_worker(current_evidence,self.root,latest,self.store.root)
+            except (ValueError,OSError):pass
+        return self.recap(thread_id,_observation=(latest,current))
+
+    def recap(self,thread_id,*,_observation=None):
         events=self.store.read_events(thread_id)
         finals=[text for role,text in self.history(thread_id) if role=='assistant' and text]
         verification=[event.get('data',{}) for event in events if event.get('kind')=='verification']
@@ -48,9 +59,13 @@ class SessionActions:
         if verification:
             latest=verification[-1]
             if latest.get('status')=='passed' and latest.get('input_after'):
-                from nailong.core.verification import input_fingerprint
-                try: valid=input_fingerprint(self.root,latest.get('generated_paths',[]))==latest['input_after']
-                except (ValueError,OSError): valid=False
+                if _observation is None:
+                    from nailong.core.verification import current_evidence
+                    try: valid=current_evidence(self.root,latest,self.store.root)==latest['input_after']
+                    except (ValueError,OSError): valid=False
+                else:
+                    observed,current=_observation
+                    valid=observed==latest and bool(current) and current==latest['input_after']
             lines.append('最近验证：'+str(latest.get('status','未知')))
             lines.extend(f"  {step.get('name','?')} · {'通过' if step.get('ok') else '未通过'}" for step in latest.get('steps',[]))
         if not valid:
@@ -73,7 +88,7 @@ class SessionActions:
             lines.append('## '+('用户' if role=='user' else 'ignovate harness')+'\n\n'+text+'\n')
         usage=usage_snapshot(self.store,thread_id)
         lines.extend(['## 用量\n',f"已知 {usage['total_tokens']} tokens；费用 "+(f"${usage['cost_usd']:.6f}" if usage['cost_complete'] else '不完整/未知'),
-                      '\n## 验证与待办\n',self.recap(thread_id)])
+                      '\n## 验证与待办\n',await self.recap_async(thread_id)])
         content='\n'.join(lines)+'\n'
         if self.api_key: content=content.replace(self.api_key,'[密钥已隐藏]')
         old=destination.read_text(encoding='utf-8') if destination.exists() else None

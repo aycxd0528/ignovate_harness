@@ -20,7 +20,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 import local_tools
 from nailong.core.permissions import ApprovalDecision, Decision, PermissionEngine
 from nailong.core.sessions import ProjectSessionStore, StreamingRedactor
-from nailong.core.compact import compact_messages
+from nailong.core.compact import CompactResult, compact_messages, summary_character_limit
 from nailong.core.tool_events import TurnToolLedger
 from nailong.core.usage import message_usage
 from nailong.core.budgets import active_cost_budget, GoalCostBudget, CostBudgetExceeded
@@ -426,10 +426,10 @@ class AgentService:
         return result
 
     async def _task_input_fingerprint(self, task):
-        from nailong.core.verification import input_fingerprint
+        from nailong.core.verification import current_evidence, _owned_worker
         try:
-            return await asyncio.to_thread(input_fingerprint, self.permission_engine.project_root,
-                task.get('verification_generated_paths', []))
+            return await _owned_worker(current_evidence, self.permission_engine.project_root,
+                task, self.task_store.sessions.root)
         except (OSError, ValueError):
             return None
 
@@ -573,6 +573,10 @@ class AgentService:
             if bound is None:
                 latest = self.task_store.snapshot(thread_id)
                 return None if expected_task_id is not None else build_delivery_report(latest)
+            if bound != task:
+                # A newer verification can keep the requirements revision.
+                # An older unknown observation must not erase its evidence.
+                return build_delivery_report(bound)
             if bound.get('input_fingerprint'):
                 bound = self.task_store.reconcile(thread_id, current_input_fingerprint=current)
             return build_delivery_report(bound, current_input_fingerprint=current)
@@ -701,6 +705,7 @@ class AgentService:
 
     async def _compact_state(self, agent, config: dict, *, force: bool = False):
         get_state = getattr(agent, "aget_state", None)
+        asynchronous = callable(get_state)
         if callable(get_state):
             state = await get_state(config)
         else:
@@ -714,9 +719,25 @@ class AgentService:
         current_tokens = sum(len(str(getattr(item, "content", ""))) for item in messages) // 4
         if not force and current_tokens < self.compact_threshold_tokens:
             return None
-        result = compact_messages(messages,archive=getattr(self.runtime_factory,'history_archive',None),thread_id=config.get('configurable',{}).get('thread_id'))
+        from nailong.core.verification import _owned_worker
+        def prepare():
+            from nailong.core.context import configured_context_window, context_budget
+            settings=getattr(self.runtime_factory,'settings',None)
+            model=getattr(settings,'model',None);root=getattr(settings,'project_root',None)
+            window=configured_context_window(model,root) if isinstance(model,str) and root is not None else None
+            return compact_messages(messages,archive=getattr(self.runtime_factory,'history_archive',None),
+                thread_id=config.get('configurable',{}).get('thread_id'),
+                summary_max_chars=summary_character_limit(context_budget(window)['input_limit']))
+        result = await _owned_worker(prepare)
         if not result.compacted:
             return result
+        # Native callers hold project execution while preparing. Recheck the
+        # checkpoint as well, so a direct graph update during the worker cannot
+        # be erased by replacing a sequence observed before the wait.
+        current = await get_state(config) if asynchronous else get_state(config)
+        if (getattr(current,'config',None)!=getattr(state,'config',None)
+                or getattr(current,'values',{})!=getattr(state,'values',{})):
+            return CompactResult(list(messages),False,result.before_tokens,result.before_tokens,'checkpoint_changed')
         update = getattr(agent, "aupdate_state", None)
         # Replacing the whole sequence preserves chronology. Removing old IDs
         # first and then adding the summary would append it after recent turns.
@@ -779,6 +800,11 @@ class AgentService:
 
     async def compact_context(self, thread_id: str, *, force: bool = True) -> dict:
         """Compact eligible old tool output in a saved thread."""
+        from nailong.core.project_execution import project_execution
+        with project_execution(self.session_store):
+            return await self._compact_context_unlocked(thread_id,force=force)
+
+    async def _compact_context_unlocked(self, thread_id: str, *, force: bool = True) -> dict:
         config = {
             "configurable": {"thread_id": thread_id},
             "recursion_limit": MAX_TURN_GRAPH_STEPS,
@@ -1148,16 +1174,39 @@ class AgentService:
             yield self._event(thread,'notice',{'text':goals._limit_reason(associated)+' 原任务与费用已保留；如需独立额度，请明确输入“新目标：…”创建新的任务。'})
             return
         goal=(associated or goals.active()) if goals and ordinary and kwargs.get('cost_budget') is None else None
-        owned=goal is not None and goal.thread_id==thread and (associated and substantive or task_request_kind(message) in {'work','resume'} or bool(re.search(r'接管|协调|coordinate',message,re.I)))
+        if (goals and ordinary and kwargs.get('cost_budget') is None and not new_objective
+                and associated is None and (goal is None or goal.thread_id!=thread)):
+            recovering=goals.costs.recovery_goals(thread)
+            if len(recovering)>1 and task:
+                matching=[row for row in recovering if row.objective==task['objective']]
+                if len(matching)==1:recovering=matching
+            if len(recovering)>1:
+                yield self._event(thread,'notice',{'text':'当前会话有多个待核对的费用账本，请先核对并明确恢复目标；独立任务请明确输入“新目标：…”。'})
+                return
+            if recovering:goal=recovering[0]
+        if goal and goal.thread_id==thread and goal.cost_recovery_required and substantive:
+            if task_request_kind(message)=='resume':
+                ok,reason,goal=goals.resume(goal.id,thread_id=thread)
+                if not ok:
+                    yield self._event(thread,'notice',{'text':reason})
+                    return
+            else:
+                yield self._event(thread,'notice',{'text':goal.pause_reason+' 核对后输入“继续”恢复原目标；独立任务请明确输入“新目标：…”。'})
+                return
+        owned=goal is not None and goal.thread_id==thread and substantive
+        run_id=uuid.uuid4().hex
         budget=None
         if owned:
             from nailong.core.costs import CostEstimator
-            budget=GoalCostBudget(CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),goal.max_cost_usd-goal.spent_usd)
+            budget=GoalCostBudget(CostEstimator(self.runtime_factory.settings.model,self.runtime_factory.settings.project_root),
+                goal.max_cost_usd-goal.spent_usd,goal_store=goals,goal_id=goal.id,round_id='outer:'+run_id,
+                allow_paused=bool(associated and associated.state=='paused'))
             kwargs={**kwargs,'cost_budget':budget}
-        run_id=uuid.uuid4().hex
         if budget is not None:
             budget.goal_round_id='outer:'+run_id
             budget.outer_used=False
+            budget.outer_tool_calls=0
+            budget.outer_files_changed=False
         from nailong.core.task_intake import user_request
         live_request={'thread_id':thread,'text':kwargs.get('history_display') or message,'turn_id':run_id} if kwargs.get('profile','chat')=='chat' and not kwargs.get('pin_message') else None
         stream=self._stream_task_turn(message,config,**kwargs)
@@ -1170,16 +1219,31 @@ class AgentService:
                 finally:user_request.reset(token)
                 if budget is not None and event.kind in {'usage','usage_missing'} and event.data.get('turn_id')==run_id:
                     budget.outer_used=True
+                if budget is not None:
+                    if event.kind == 'tool_start':
+                        budget.outer_tool_calls += 1
+                    elif (event.kind == 'tool_end' and event.data.get('ok')
+                          and event.data.get('name') in {'write_file', 'edit_file'}):
+                        budget.outer_files_changed = True
                 yield event
             finished=True
         finally:
-            token=user_request.set(live_request)
-            try:await stream.aclose()
-            finally:user_request.reset(token)
-            if budget is not None and (budget.outer_used or budget.spent or not budget.usage_complete):
-                goals.record_round(goal.id,cost_usd=budget.spent,files_changed=False,tool_calls=0,
-                    summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
-                    stop_reason='本轮已取消或用量未知。' if not finished or not budget.usage_complete else None)
+            try:
+                token=user_request.set(live_request)
+                try:await stream.aclose()
+                except BaseException:
+                    finished=False
+                    raise
+                finally:user_request.reset(token)
+            finally:
+                try:
+                    if budget is not None and (budget.outer_used or budget.spent or not budget.usage_complete):
+                        goals.record_round(goal.id,cost_usd=budget.spent,
+                            files_changed=budget.outer_files_changed,tool_calls=budget.outer_tool_calls,
+                            summary='同会话持续任务与协调轮次',round_id='outer:'+run_id,
+                            stop_reason='本轮已取消或用量未知。' if not finished or not budget.usage_complete else None)
+                finally:
+                    if budget is not None:budget.close()
 
     async def _stream_task_turn(self, message, config, **kwargs):
         """One outer adapter for GUI, CLI and headless natural task continuation."""
@@ -1259,7 +1323,8 @@ class AgentService:
             if intent.get('goal_id'):
                 setup_budget=kwargs.get('cost_budget')
                 if setup_budget is not None and getattr(setup_budget,'goal_round_id','').startswith('outer:'):
-                    goals.record_round(intent['goal_id'],cost_usd=setup_budget.spent,files_changed=False,tool_calls=0,
+                    goals.record_round(intent['goal_id'],cost_usd=setup_budget.spent,
+                        files_changed=setup_budget.outer_files_changed,tool_calls=setup_budget.outer_tool_calls,
                         summary='需求修订与重新确认',round_id=setup_budget.goal_round_id,
                         stop_reason='用量未知。' if not setup_budget.usage_complete else None)
                 ok,reason,goal=goals.resume(intent['goal_id'],thread_id=thread_id)

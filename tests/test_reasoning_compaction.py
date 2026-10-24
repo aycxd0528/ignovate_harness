@@ -72,8 +72,7 @@ class ReasoningCompactionTests(unittest.TestCase):
             compact_messages(messages, level='L2', keep_turns=1, hard=True,
                              archive=FailingArchive(), thread_id='one')
 
-    def test_incomplete_assistant_archive_preserves_original_messages(self):
-        # Metadata above the archive limit must not silently lose reasoning.
+    def test_large_assistant_metadata_remains_complete_after_compaction(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = HistoryArchive(Path(directory).resolve())
             messages = [HumanMessage(content='old'), AIMessage(content='',
@@ -81,8 +80,12 @@ class ReasoningCompactionTests(unittest.TestCase):
                 HumanMessage(content='current')]
             result = compact_messages(messages, level='L2', keep_turns=1, hard=True,
                                       archive=archive, thread_id='one')
-            self.assertFalse(result.compacted)
-            self.assertEqual(result.messages, messages)
+            self.assertTrue(result.compacted)
+            summary=next(m for m in result.messages if m.additional_kwargs.get('nailong_compact_summary'))
+            records=[archive.load('one',ref) for ref in summary.additional_kwargs['nailong_compact_state']['evidence']]
+            assistant=next(record for record in records if record['kind']=='ai')
+            self.assertEqual(assistant['message']['data']['additional_kwargs']['reasoning_content'],'r'*(3*1024*1024))
+            self.assertFalse(assistant['archive_truncated'])
 
     def test_tool_clearing_keeps_test_failure_even_when_shell_tail_says_done(self):
         failure = 'Ran 4 tests in 0.12s\n\nFAILED (failures=1)\n'

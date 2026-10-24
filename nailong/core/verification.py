@@ -6,7 +6,6 @@ import inspect
 import json
 import os
 import subprocess
-import stat
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,10 +19,18 @@ from nailong.tools.files import FileSession
 
 async def _owned_worker(function, *args):
     """Propagate cancellation only after background work releases its resources."""
-    worker = asyncio.create_task(asyncio.to_thread(function, *args))
+    import threading
+    from nailong.core.input_snapshot import active_snapshot_cancellation
+    cancellation = threading.Event()
+    token = active_snapshot_cancellation.set(cancellation)
+    try:
+        worker = asyncio.create_task(asyncio.to_thread(function, *args))
+    finally:
+        active_snapshot_cancellation.reset(token)
     try:
         return await asyncio.shield(worker)
     except asyncio.CancelledError as cancelled:
+        cancellation.set()
         try:
             await join_cleanup(worker)
         except Exception as error:
@@ -49,43 +56,35 @@ def _git(root, *args):
 
 def input_fingerprint(root, generated=()):
     """Hash all safe input files and Git HEAD/index; unknown coverage fails closed."""
+    from nailong.core.input_snapshot import fingerprint
     root=Path(root).resolve()
-    exclusions={Path(item) for item in generated}
-    digest=hashlib.sha256()
-    count=total=0
-    def walk_error(error): raise error
-    for base, directories, files in os.walk(root,followlinks=False,onerror=walk_error):
-        directory=Path(base)
-        relative=directory.relative_to(root)
-        def excluded(path):
-            return path in exclusions or path.parts[:2]==('.nailong','exports')
-        for name in list(directories):
-            path=directory/name
-            if FileSession._is_protected(name) or excluded(path.relative_to(root)):
-                directories.remove(name)
-            elif path.is_symlink():
-                raise ValueError('验证摘要无法覆盖符号链接目录。')
-        directories.sort()
-        for name in sorted(files):
-            path=directory/name
-            rel=path.relative_to(root)
-            if FileSession._is_protected(name) or excluded(rel): continue
-            safe_config_path(path,root)
-            before=path.stat()
-            if not path.is_file(): raise ValueError('验证摘要包含非普通文件。')
-            count+=1; total+=before.st_size
-            if count>5000 or total>50*1024*1024: raise ValueError('项目超过完整验证摘要的上限（5000 文件/50 MiB）。')
-            file_hash=hashlib.sha256()
-            import local_tools
-            with local_tools.open_regular_file(path) as source:
-                for chunk in iter(lambda:source.read(65536),b''): file_hash.update(chunk)
-            after=path.stat()
-            if (before.st_mtime_ns,before.st_size,before.st_ino,before.st_mode)!=(after.st_mtime_ns,after.st_size,after.st_ino,after.st_mode):
-                raise ValueError('生成验证摘要期间输入被修改。')
-            digest.update(os.fsencode(rel)+b'\0'+str(stat.S_IMODE(before.st_mode)).encode()+b'\0'+file_hash.digest())
-    digest.update(_git(root,'rev-parse','HEAD'))
-    digest.update(_git(root,'ls-files','--stage','-z'))
-    return digest.hexdigest()
+    return fingerprint(root, generated,
+        lambda: (_git(root,'rev-parse','HEAD'), _git(root,'ls-files','--stage','-z')))
+
+
+def snapshot_identity(root, generated=(), artifact_sink=None, *, extra_exclusions=(), mutable_directories=()):
+    from nailong.core.input_snapshot import snapshot
+    root = Path(root).resolve()
+    return snapshot(root, generated,
+        lambda: (_git(root,'rev-parse','HEAD'), _git(root,'ls-files','--stage','-z')), artifact_sink,
+        extra_exclusions=extra_exclusions, mutable_directories=mutable_directories)
+
+
+def current_evidence(root, record, boundary, extra_generated=()):
+    """Observe source and complete artifacts together, under a fixed private store."""
+    from nailong.core.verification_artifacts import artifact_index, load_manifest, evidence_identity
+    reference = record.get('verification_manifest', record.get('artifact_manifest'))
+    paths = record.get('verification_generated_paths', record.get('generated_paths', []))
+    if reference is None:
+        if paths:
+            raise ValueError('旧生成物记录缺少完整产物证明，请重新验证。')
+        return input_fingerprint(root, extra_generated)
+    with artifact_index() as index:
+        header = load_manifest(boundary, reference, root, index)
+        observed = snapshot_identity(root, index, extra_exclusions=extra_generated)
+        if observed.artifacts != header['artifacts'] or observed.artifact_count != header['count']:
+            raise ValueError('验证产物已变化或缺失，请重新验证。')
+        return evidence_identity(observed.inputs, header['artifacts'])
 
 
 class VerificationService:
@@ -141,57 +140,120 @@ class VerificationService:
                     raise ValueError('生成物必须是项目内相对路径。')
                 if not Path(raw).parts or Path(raw).parts[0] in {'.','.nailong','AGENTS.md','CLAUDE.md'} or FileSession._is_protected(Path(raw).parts[0]):
                     raise ValueError('生成物不能排除配置或记忆。')
-                if root is not None:safe_config_path(Path(root)/raw,Path(root))
+                if root is not None:
+                    # The output entry may itself be a registered link. Its
+                    # parent must stay inside the safe, non-link boundary.
+                    safe_config_path((Path(root)/raw).parent, Path(root))
             validated.append({**step,'timeout_seconds':timeout,'generated_paths':generated})
         return validated
 
-    def _validate_generated(self, generated):
+    def _validate_generated(self, generated, guard):
         if not generated:
-            return
+            return (*self._scan(generated, None, guard, ()), (), [], None)
+        from nailong.core.verification_artifacts import artifact_index, enumerate_generated, add_generated_parents
+        from nailong.core.output_migration import migrate_outputs
         tracked={os.fsdecode(item) for item in _git(self.root,'ls-files','-z').split(b'\0') if item}
-        # Existing generated outputs may be ignored only when prior successful evidence declared them.
-        prior=set()
-        if self.store:
-            for session in self.store.list_sessions():
-                for event in self.store.read_events(session['thread_id']):
-                    data=event.get('data',{})
-                    if event.get('kind')=='verification' and data.get('status')=='passed':
-                        prior.update(data.get('generated_paths',[]))
-        for raw in generated:
-            parts=Path(raw).parts
-            if any(Path(path).parts[:len(parts)]==parts for path in tracked):
-                raise ValueError('生成物不能匹配已跟踪的输入文件。')
-            path=self.root/raw
-            existing=self._generated_files([raw])
-            if path.exists() and not set(existing).issubset(prior):
-                raise ValueError('生成物不能排除本次已有输入；请使用尚未生成的专用路径。')
-            if path.is_dir():
-                for base, dirs, files in os.walk(path,followlinks=False):
-                    for name in dirs+files: safe_config_path(Path(base)/name,self.root)
+        with artifact_index() as prior, artifact_index() as frozen:
+            token,warnings=self.output_authority.load(prior,lambda index:migrate_outputs(
+                self.store,self.root,generated,self._configuration_fingerprint,index))
+            owned_parents=set()
+            for raw in generated:
+                parts=Path(raw).parts
+                if any(Path(path).parts[:len(parts)]==parts for path in tracked):
+                    raise ValueError('生成物不能匹配已跟踪的输入文件。')
+                with artifact_index() as existing:
+                    enumerate_generated(self.root,[raw],existing)
+                    for path in existing:
+                        if path not in prior:
+                            detail='旧输出证明不足或路径已退役。' if warnings else ''
+                            raise ValueError(detail+'生成物不能排除本次已有输入；请使用尚未生成的专用路径。')
+                        frozen.add(path)
+                for parent in Path(raw).parents:
+                    if parent.parts and (parent in prior or not (self.root/parent).exists()):
+                        owned_parents.add(parent)
+            add_generated_parents(self.root,owned_parents,frozen)
+            return (*self._snapshot_outputs(frozen,bool(generated),None,guard),tuple(owned_parents),warnings,token)
 
-    def _generated_files(self, declared):
-        files=[]
-        for raw in declared:
-            path=safe_config_path(self.root/raw,self.root)
-            if path.is_dir():
-                def failed(error): raise error
-                for base,dirs,names in os.walk(path,followlinks=False,onerror=failed):
-                    for name in dirs+names: safe_config_path(Path(base)/name,self.root)
-                    files.extend(str((Path(base)/name).relative_to(self.root)) for name in names)
-            elif path.is_file(): files.append(str(path.relative_to(self.root)))
-            elif path.exists(): raise ValueError('生成物必须是普通文件或目录。')
-        return sorted(set(files))
+    def _snapshot_outputs(self, index, publish, binding, guard):
+        from contextlib import nullcontext
+        from nailong.core.verification_artifacts import ManifestWriter
+        guard.check()
+        owner = ManifestWriter(self.evidence_boundary, binding or {'project': str(self.root), 'run_id': 'preflight'}) if publish else nullcontext(None)
+        with owner as writer:
+            observed = snapshot_identity(self.root, index, writer.add if writer else None,
+                mutable_directories=guard.protected)
+            guard.check()
+            reference = writer.finish(observed) if writer else None
+            if writer:self.storage_warnings=(self.storage_warnings+writer.storage_warnings)[:8]
+            return observed, reference, writer.preview if writer else []
+
+    def _prepare(self, declared, guard):
+        guard.start(self.root, {parent for raw in declared for parent in Path(raw).parents})
+        return self._validate_generated(declared, guard)
+
+    def _scan(self, declared, binding, guard, parents, baseline=None):
+        from nailong.core.verification_artifacts import artifact_index, enumerate_generated, add_generated_parents
+        from nailong.core.output_authority import remove_scope
+        with artifact_index() as index:
+            if baseline is not None:
+                from nailong.core.verification_artifacts import load_manifest
+                load_manifest(self.evidence_boundary,baseline,self.root,index)
+                for raw in declared:remove_scope(index,Path(raw))
+            enumerate_generated(self.root, declared, index)
+            add_generated_parents(self.root, parents, index)
+            return self._snapshot_outputs(index,bool(declared) or baseline is not None,binding,guard)
+
+    def _scan_known(self, reference, guard):
+        from nailong.core.verification_artifacts import artifact_index, load_manifest
+        guard.check()
+        with artifact_index() as index:
+            header = load_manifest(self.evidence_boundary, reference, self.root, index) if reference is not None else None
+            observed = snapshot_identity(self.root, index,
+                mutable_directories=guard.protected)
+            guard.check()
+            return observed, header
+
+    def _admit_step(self, token, binding, declared, parents, baseline, initial, guard):
+        admission=None
+        if token is not None:
+            admission=self.output_authority.admit(token,binding,declared,parents,baseline,
+                [initial.inputs,initial.stability])
+        observed,_=self._scan_known(baseline,guard)
+        return observed,admission
+
+    def _observe_step(self, admission, declared, binding, guard, parents, baseline):
+        observed,reference,preview=self._scan(declared,binding,guard,parents,baseline)
+        token=self.output_authority.complete(admission,reference) if admission is not None else None
+        return observed,reference,preview,token
+
+    def _record_step(self, record, step, result, started_at):
+        row={'name':step['name'],'kind':step['kind'],'command':step['command'],'started_at':started_at,
+            'cwd':str(self.root),'finished_at':datetime.now(timezone.utc).isoformat(),**result}
+        if self.api_key:
+            row={key:(value.replace(self.api_key,'[密钥已隐藏]') if isinstance(value,str) else value) for key,value in row.items()}
+        record['steps'].append(row)
+        return row
 
     async def run(self, thread_id, name=None, **kwargs):
         from nailong.core.project_execution import project_execution
         from nailong.core.sessions import ProjectSessionStore
+        from nailong.core.verification_directories import DirectoryGuard
         # Event sinks may be non-durable; project execution still needs a lease.
         execution_store = self.store if hasattr(self.store, 'root') else ProjectSessionStore(self.root)
+        self.evidence_boundary = execution_store.root
+        self.storage_warnings=[]
+        from nailong.core.output_authority import OutputAuthority
+        self.output_authority = OutputAuthority(self.evidence_boundary,self.root)
         with project_execution(execution_store):
-            return await self._run_unlocked(thread_id, name, **kwargs)
+            guard = DirectoryGuard()
+            try:
+                return await self._run_unlocked(thread_id, name, _directory_guard=guard, **kwargs)
+            finally:
+                if await join_cleanup(asyncio.create_task(asyncio.to_thread(guard.close))):
+                    raise asyncio.CancelledError()
 
     async def _run_unlocked(self, thread_id, name=None, *, approval=None, emit=None,
-                  permission_engine=None, permission_mode='default'):
+                  permission_engine=None, permission_mode='default', _directory_guard=None):
         steps=self.list_steps()
         if not steps: raise ValueError('尚未配置验证。请在 .nailong/settings.json 设置 verification.steps，例如：{"verification":{"steps":[{"name":"test","kind":"test","command":"python -m unittest discover -s tests","timeout_seconds":30}]}}。检查命令后重新 /verify。')
         selected=[step for step in steps if name is None or step['name']==name]
@@ -201,14 +263,19 @@ class VerificationService:
             self.tasks.set_state(thread_id, phase='verify')
         task = self.tasks.snapshot(thread_id) if self.tasks is not None else None
         generated=sorted({raw for step in steps for raw in step['generated_paths']})
-        await _owned_worker(self._validate_generated, generated)
-        before=await _owned_worker(input_fingerprint,self.root,self._generated_files(generated))
+        self._configuration_fingerprint=hashlib.sha256(json.dumps(steps,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        initial, known_reference, known_preview, owned_parents, warnings, authority_token = await _owned_worker(self._prepare, generated, _directory_guard)
+        before=initial.inputs
         record={'run_id':uuid.uuid4().hex,'thread_id':thread_id,'cwd':str(self.root),
             'started_at':datetime.now(timezone.utc).isoformat(),'status':'running','complete':name is None,
             'input_before':before,'declared_generated_paths':generated,'generated_paths':[],'steps':[]}
+        record['artifact_authority_warnings'] = warnings
+        from nailong.core.input_snapshot import INPUT_FINGERPRINT_VERSION
+        record['input_fingerprint_version'] = INPUT_FINGERPRINT_VERSION
         record.update(task_id=task['task_id'] if task else None, task_revision=task['revision'] if task else None,
             task_scope=list(task['scope']) if task else [])
-        record['configuration_fingerprint']=hashlib.sha256(json.dumps(steps,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+        record['configuration_fingerprint']=self._configuration_fingerprint
+        if generated:record['output_authority_version']=1
         record['git_before']={'head':_git(self.root,'rev-parse','HEAD').decode(errors='replace').strip(),
             'index_fingerprint':hashlib.sha256(_git(self.root,'ls-files','--stage','-z')).hexdigest()}
         goal=self.goals.active() if self.goals else None
@@ -218,6 +285,12 @@ class VerificationService:
         try:
             for index,step in enumerate(selected):
                 started_at=datetime.now(timezone.utc).isoformat()
+                row=None
+                binding={'run_id':record['run_id'],'step_index':index+1,
+                    'configuration':record['configuration_fingerprint'],'task_id':record['task_id'],
+                    'task_revision':record['task_revision'],'thread_id':thread_id}
+                step_parents=tuple(parent for parent in owned_parents
+                    if any(parent in Path(raw).parents for raw in step['generated_paths']))
                 action={'name':'run_command','args':{'command':step['command']},'description':'执行项目验证',
                         'preview':{'command':step['command'],'cwd':str(self.root),'timeout_seconds':step['timeout_seconds']}}
                 from nailong.core.stage_constraints import compile_stage_policy
@@ -239,7 +312,9 @@ class VerificationService:
                     try:
                         from nailong.tools.coordination import project_coordinator
                         async with project_coordinator(self.root).async_scope():
-                            unchanged = await _owned_worker(input_fingerprint,self.root,self._generated_files(generated))==before
+                            checked, admission = await _owned_worker(self._admit_step, authority_token,
+                                binding,step['generated_paths'],step_parents,known_reference,initial,_directory_guard)
+                            unchanged = checked.inputs == before and checked.stability == initial.stability
                             current_task=self.tasks.snapshot(thread_id) if self.tasks is not None else None
                             task_matches = (task is None and current_task is None or task is not None and current_task is not None
                                 and (task['task_id'],task['revision'])==(current_task['task_id'],current_task['revision']))
@@ -255,26 +330,48 @@ class VerificationService:
                                 result={'ok':False,'started':False,'exit_code':None,'timed_out':False,'observed':None,
                                     'error_code':'approval_invalidated','output':'审批绑定的输入、任务、配置或权限已变化；未启动。'}
                             else:
-                                result=await execute_process(step['command'],self.root,timeout=step['timeout_seconds'],
-                                    stdout_contains=step.get('stdout_contains'),http_url=step.get('http_url'),expected_status=step.get('expected_status',200))
+                                try:
+                                    result=await execute_process(step['command'],self.root,timeout=step['timeout_seconds'],
+                                        stdout_contains=step.get('stdout_contains'),http_url=step.get('http_url'),expected_status=step.get('expected_status',200))
+                                except ProcessCancelled as error:
+                                    result=error.result
+                                row=self._record_step(record,step,result,started_at)
+                                if result.get('cancelled'):raise asyncio.CancelledError()
+                                # Timeout cleanup cannot prove completion of side effects.
+                                if result.get('started') and not result.get('timed_out'):
+                                    _,known_reference,known_preview,authority_token=await _owned_worker(
+                                        self._observe_step,admission,step['generated_paths'],{'project':str(self.root),**binding},
+                                        _directory_guard,step_parents,known_reference)
+                                    if authority_token is not None:record['output_authority_token']=authority_token
                     except ProcessCancelled as error:
                         result=error.result
-                row={'name':step['name'],'kind':step['kind'],'command':step['command'],
-                     'started_at':started_at,
-                     'cwd':str(self.root),'finished_at':datetime.now(timezone.utc).isoformat(),**result}
-                if self.api_key:
-                    row={key:(value.replace(self.api_key,'[密钥已隐藏]') if isinstance(value,str) else value) for key,value in row.items()}
-                record['steps'].append(row)
+                if row is None:row=self._record_step(record,step,result,started_at)
                 if result.get('cancelled'): raise asyncio.CancelledError()
                 if emit:
                     from agent_service import TurnEvent
                     value=emit(TurnEvent('verification_step',row))
                     if inspect.isawaitable(value): await value
-            record['generated_paths']=self._generated_files(generated)
-            record['input_after']=await _owned_worker(input_fingerprint,self.root,record['generated_paths'])
+            final, header = await _owned_worker(self._scan_known, known_reference, _directory_guard)
+            reference, preview = known_reference, known_preview
+            record['generated_paths'] = preview
+            record['generated_count'] = final.artifact_count
+            record['generated_preview_complete'] = len(preview) == final.artifact_count
+            record['source_before'] = before
+            record['source_after'] = final.inputs
+            record['input_after'] = final.inputs
+            if reference is not None:
+                from nailong.core.verification_artifacts import evidence_identity, copy_manifest
+                record['artifact_manifest'] = reference
+                record['input_after'] = evidence_identity(final.inputs, final.artifacts)
+                if before == final.inputs:
+                    record['input_before'] = record['input_after']
+                if self.goals is not None:
+                    await _owned_worker(copy_manifest, self.evidence_boundary, reference, self.root, self.goals.path.parent)
             record['git_after']={'head':_git(self.root,'rev-parse','HEAD').decode(errors='replace').strip(),
                 'index_fingerprint':hashlib.sha256(_git(self.root,'ls-files','--stage','-z')).hexdigest()}
-            if before!=record['input_after']: record['status']='invalidated'
+            if (before != final.inputs or initial.stability != final.stability
+                    or header is not None and (final.artifacts != header['artifacts'] or final.artifact_count != header['count'])):
+                record['status']='invalidated'
             elif any(not row['started'] for row in record['steps']): record['status']='unverified'
             elif not all(row['ok'] for row in record['steps']): record['status']='failed'
             else: record['status']='passed' if name is None else 'partial'
@@ -288,6 +385,7 @@ class VerificationService:
             raise
         finally:
             record['finished_at']=datetime.now(timezone.utc).isoformat()
+            record['artifact_storage_warnings']=self.storage_warnings[:8]
             if self.tasks is not None:
                 self.tasks.record_verification(thread_id, record)
             if self.store: self.store.append_event(thread_id,'verification',record)
@@ -305,7 +403,9 @@ async def verify_goal_if_configured(service,factory,goal,thread_id,*,approval=No
     current=factory.goal_store.get(goal.id)
     if current is None or current.state!='active': return None
     if current.verification_tool=='verify' and current.verification_succeeded:
-        try: valid=await _owned_worker(input_fingerprint,current.verification_project_root,current.verification_generated_paths)==current.verification_fingerprint
+        try: valid=await _owned_worker(current_evidence,current.verification_project_root,
+            {'verification_generated_paths':current.verification_generated_paths,
+             'verification_manifest':current.verification_manifest},factory.goal_store.path.parent)==current.verification_fingerprint
         except (ValueError,OSError): valid=False
         if verification.tasks is not None:
             task=verification.tasks.snapshot(thread_id)

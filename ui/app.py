@@ -138,8 +138,28 @@ async def run_inline(
     plain: bool = False,
 ) -> None:
     """Run the default inline UI; prompt input and Rich output never overlap."""
-    console = console or Console()
+    from contextlib import AsyncExitStack
+    from nailong.core.runtime_resources import await_owned, close_runtime_factories
     factories: list[AgentRuntimeFactory] = []
+    resources = AsyncExitStack()
+    resources.push_async_callback(close_runtime_factories, factories)
+    try:
+        await _run_inline(settings, permission_mode=permission_mode, continue_session=continue_session,
+                          resume_session=resume_session, prompt_session=prompt_session, console=console,
+                          plain=plain, factories=factories, resources=resources)
+    except BaseException as error:
+        try:
+            await await_owned(asyncio.create_task(resources.aclose(), name='terminal:close-resources'))
+        except BaseException as cleanup_error:
+            raise error from cleanup_error
+        raise
+    else:
+        await await_owned(asyncio.create_task(resources.aclose(), name='terminal:close-resources'))
+
+
+async def _run_inline(settings, *, permission_mode, continue_session, resume_session,
+                      prompt_session, console, plain, factories, resources):
+    console = console or Console()
     factory = AgentRuntimeFactory(settings)
     settings = getattr(factory,"settings",None) or settings
     factories.append(factory)
@@ -157,22 +177,17 @@ async def run_inline(
     controller = CommandController(current_settings)
     completion_commands = {spec.name: spec.description for spec in controller.specs()}
     cost_estimator = controller.cost_estimator
-    try:
-        if resume_session is not None:
-            thread_id = store.resolve_session(resume_session)
-            restored = True
-        elif continue_session and sessions:
-            thread_id = sessions[0]["thread_id"]
-            restored = True
-        session = prompt_session or build_session(
-            settings.project_root,
-            completion_commands,
-            api_key=settings.api_key,
-        )
-    except Exception:
-        await factory.aclose()
-        factory.close()
-        raise
+    if resume_session is not None:
+        thread_id = store.resolve_session(resume_session)
+        restored = True
+    elif continue_session and sessions:
+        thread_id = sessions[0]["thread_id"]
+        restored = True
+    session = prompt_session or build_session(
+        settings.project_root,
+        completion_commands,
+        api_key=settings.api_key,
+    )
     if not restored and resume_session is None and not continue_session and sessions:
         latest = sessions[0]
         summary = str(latest.get("summary") or "").strip().replace("\n", " ")
@@ -190,17 +205,77 @@ async def run_inline(
     controller.skill_registry=getattr(factory,'skill_registry',None)
     completion_commands.update({spec.name:spec.description for spec in controller.specs()})
     session_runner = SessionRunner(current_settings.project_root,thread_id)
+    patcher = None
+    interrupt_cleanup = None
+    signal_stop_task = None
+
+    async def cleanup_terminal():
+        try:
+            await session_runner.close()
+        finally:
+            try:
+                if signal_stop_task is not None:
+                    from nailong.core.process_io import join_cleanup
+                    completion = asyncio.gather(signal_stop_task, return_exceptions=True)
+                    cancelled = await join_cleanup(completion)
+                    error = completion.result()[0]
+                    failed = isinstance(error, BaseException) and not isinstance(error, asyncio.CancelledError)
+                    if cancelled:
+                        cause = error if failed else None
+                        raise asyncio.CancelledError('终端退出已取消，停止回执已收尾。') from cause
+                    if failed: raise error
+            finally:
+                try:
+                    if patcher: patcher.__exit__(None,None,None)
+                finally:
+                    if interrupt_cleanup: interrupt_cleanup()
+    resources.push_async_callback(cleanup_terminal)
     from prompt_toolkit.patch_stdout import patch_stdout
     patcher = patch_stdout(raw=True) if prompt_session is None else None
     if patcher: patcher.__enter__()
-    interrupt_cleanup = None
+
+    async def finish_interrupt_stop(waiting, stopped_service, stopped_thread, api_key):
+        try:
+            still_paused = await waiting
+        except asyncio.CancelledError as error:
+            if isinstance(error.__cause__, Exception):
+                console.error(f'停止清理失败：{_safe_error(error.__cause__, api_key)}')
+            raise
+        except Exception as error:
+            console.error(f'停止清理失败：{_safe_error(error, api_key)}')
+        else:
+            if still_paused and service is stopped_service and thread_id == stopped_thread:
+                console.print('当前任务已停止，会话保留。用 /queue resume 继续或 /exit 退出。')
+
+    def request_interrupt_stop():
+        nonlocal signal_stop_task
+        if signal_stop_task is not None and not signal_stop_task.done():
+            return
+        stopped_service, stopped_thread, api_key = service, thread_id, current_settings.api_key
+        # Establish admission/cancellation synchronously in the controller's
+        # scope. The waiter remains bound to this owner if work later resumes.
+        waiting = session_runner.begin_stop()
+        signal_stop_task = asyncio.create_task(
+            finish_interrupt_stop(waiting, stopped_service, stopped_thread, api_key), name='terminal:stop')
+        def settled(task):
+            # Pre-start Task cancellation never executes the coroutine body.
+            # Close the captured waiter there as well as after a normal await.
+            try:
+                waiting.close()
+            finally:
+                if not task.cancelled(): task.exception()
+        signal_stop_task.add_done_callback(settled)
+        console.print('正在停止当前任务，等待清理完成；输入队列已暂停。')
+        try:
+            pause_session_goal(stopped_service, stopped_thread)
+        except Exception as error:
+            console.error(f'保存暂停状态失败：{_safe_error(error, api_key)}')
+
     if plain:
         from ui.plain import install_plain_interrupt
         def interrupt():
-            if session_runner.busy:
-                asyncio.create_task(session_runner.stop())
-                pause_session_goal(service,thread_id)
-                console.print('当前任务已停止，会话保留。用 /queue resume 继续或 /exit 退出。')
+            if session_runner.busy or (signal_stop_task is not None and not signal_stop_task.done()):
+                request_interrupt_stop()
             else:
                 session.session.buffer=b''
                 console.print('输入已清空。用 /exit 退出。')
@@ -482,207 +557,207 @@ async def run_inline(
         if restored:
             console.print(f"已恢复会话 {thread_id}。")
             _format_history(service, thread_id, console)
-        try:
-            if plain:
-                interrupt_cleanup = install_plain_interrupt(interrupt)
-            while True:
-                try:
-                    prompt_options={'bottom_toolbar':toolbar}
-                    if retained_input is not None: prompt_options['default']=retained_input;retained_input=None
-                    message = (await session.prompt_async("> ", **prompt_options)).strip()
-                except ApprovalInterrupted:
-                    await session.ready.wait()
+        if plain:
+            interrupt_cleanup = install_plain_interrupt(interrupt)
+        while True:
+            try:
+                prompt_options={'bottom_toolbar':toolbar}
+                if retained_input is not None: prompt_options['default']=retained_input;retained_input=None
+                message = (await session.prompt_async("> ", **prompt_options)).strip()
+            except ApprovalInterrupted:
+                await session.ready.wait()
+                continue
+            except (KeyboardInterrupt,InputInterrupted):
+                if session_runner.busy or (signal_stop_task is not None and not signal_stop_task.done()):
+                    request_interrupt_stop()
+                else: console.print('输入已清空。用 /exit 退出。')
+                continue
+            except EOFError:
+                await session_runner.wait_idle()
+                console.print('再见！')
+                break
+            if not message:
+                continue
+            try:
+                request = controller.resolve(message)
+                information = None if actions.handles(request) else controller.information(request, service, thread_id, completed_turns=completed_turns)
+                if information is not None:
+                    console.print(information)
                     continue
-                except (KeyboardInterrupt,InputInterrupted):
-                    if session_runner.busy:
-                        await session_runner.stop()
-                        pause_session_goal(service,thread_id)
-                        console.print('当前任务已停止，会话保留；输入队列已暂停。')
-                    else: console.print('输入已清空。用 /exit 退出。')
-                    continue
-                except EOFError:
-                    await session_runner.wait_idle()
-                    console.print('再见！')
-                    break
-                if not message:
-                    continue
-                try:
-                    request = controller.resolve(message)
-                    information = None if actions.handles(request) else controller.information(request, service, thread_id, completed_turns=completed_turns)
-                    if information is not None:
-                        console.print(information)
-                        continue
-                except Exception as error:
-                    console.error(_safe_error(error, current_settings.api_key))
-                    continue
-                command, argument = request.command, request.argument
+            except Exception as error:
+                console.error(_safe_error(error, current_settings.api_key))
+                continue
+            command, argument = request.command, request.argument
 
-                if command in IMMEDIATE_COMMANDS and actions.handles(request):
-                    try: await execute_request(request)
-                    except Exception as error:
-                        retained_input=message
-                        console.error(_safe_error(error,current_settings.api_key))
-                    continue
-                if actions.handles(request) or command in {'/goal','/compact'}:
-                    try:
-                        future=session_runner.submit(request.message,lambda request=request:execute_request(request))
-                        future.add_done_callback(report_queued_error)
-                        await asyncio.sleep(0)
-                        await asyncio.sleep(0)
-                    except Exception as error:
-                        retained_input=message
-                        console.error(_safe_error(error,current_settings.api_key))
-                    continue
-                if command in IDENTITY_COMMANDS and command!='/exit' and session_runner.busy:
-                    console.error('请先 /stop 并 /queue clear，再切换项目或会话。')
-                    continue
-                if command == "/exit":
-                    await session_runner.wait_idle()
-                    console.print("再见！")
-                    break
-                if command == "/history":
-                    try:
-                        _format_history(service, thread_id, console)
-                    except Exception as error:
-                        console.error(f"读取历史失败：{_safe_error(error, current_settings.api_key)}")
-                    continue
-                if command == "/sessions":
-                    _print_sessions(store, console)
-                    continue
-                if command == "/resume":
-                    try:
-                        saved = store.list_sessions()
-                        if not saved:
-                            console.print("当前项目还没有已保存的会话。")
-                            continue
-                        selector = argument
-                        if not selector:
-                            _print_sessions(store, console)
-                            selector = (
-                                await session.prompt_async("选择会话序号（默认 1）：", default="1")
-                            ).strip() or "1"
-                        thread_id = store.resolve_session(selector,**({"query":actions.session_query} if actions.session_query else {}))
-                        session_runner.rebind(current_settings.project_root,thread_id)
-                        console.print(f"已恢复会话 {thread_id}。")
-                        _format_history(service, thread_id, console)
-                    except ValueError as error:
-                        console.error(str(error))
-                    continue
-                if command == "/rewind":
-                    if argument:
-                        console.error("用法：/rewind")
-                        continue
-                    console.print(
-                        "回退会舍弃当前用户轮次及之后的对话状态；"
-                        "已执行的文件修改和命令不会撤销。"
-                    )
-                    try:
-                        confirmation = await session.prompt_async("确认回退对话状态？[y/N] ")
-                    except (EOFError, KeyboardInterrupt, InteractionCancelled):
-                        console.print("已取消回退。")
-                        continue
-                    if str(confirmation).strip().lower() not in {"y", "yes"}:
-                        console.print("已取消回退。")
-                        continue
-                    try:
-                        removed = await service.rewind(thread_id)
-                        if removed is None:
-                            console.print("当前会话没有可回退的用户轮次。")
-                        else:
-                            console.print(
-                                f"对话状态已回退到上一轮开始前，移除了 {removed} 条消息。"
-                                "已执行的文件和命令操作不会撤销。"
-                            )
-                    except Exception as error:
-                        console.error(f"回退失败：{_safe_error(error, current_settings.api_key)}")
-                    continue
-                if command == "/compact":
-                    try:
-                        result = await service.compact_context(thread_id)
-                        if result.get("compacted"):
-                            console.print(
-                                f"已压缩较早工具结果：约 {result['before_tokens']} → "
-                                f"{result['after_tokens']} tokens。"
-                            )
-                        else:
-                            console.print(f"未压缩上下文：{result.get('reason', '无可压缩内容')}。")
-                    except Exception as error:
-                        console.error(f"压缩失败：{_safe_error(error, current_settings.api_key)}")
-                    continue
-                if command == "/goal":
-                    try:
-                        goal, messages = controller.goal(argument, factory, thread_id)
-                        for text in messages:
-                            console.print(text)
-                        if goal is not None:
-                            await drive_goal(goal, message)
-                    except Exception as error:
-                        console.error(f"目标运行失败：{_safe_error(error, current_settings.api_key)}")
-                    continue
-                if command == "/clear":
-                    thread_id = uuid.uuid4().hex
-                    session_runner.rebind(current_settings.project_root,thread_id)
-                    latest_context_input_tokens = None
-                    usage_total={"input_tokens":0,"output_tokens":0,"cache_hit_tokens":0}
-                    console.print("已开始新的会话。")
-                    continue
-                if command == "/project":
-                    try:
-                        if not argument:
-                            raise ValueError("用法：/project <项目目录>")
-                        new_root = select_project_root(argument)
-                        candidate = AgentRuntimeFactory(replace(current_settings, project_root=new_root))
-                        factories.append(candidate)
-                        new_settings = candidate.settings
-                        new_service = AgentService(
-                            candidate,
-                            api_key=new_settings.api_key,
-                            permission_engine=PermissionEngine(new_root),
-                            permission_mode=permission_mode,
-                        )
-                        new_service.ui_name='plain' if plain else 'inline'
-                        new_controller = CommandController(new_settings)
-                        new_actions = CommandActions(new_controller)
-                        new_actions.preferences=candidate.preferences
-                        new_controller.skill_registry=candidate.skill_registry
-                        new_commands = {spec.name: spec.description for spec in new_controller.specs()}
-                        new_session = (session if plain else InputBroker(build_session(
-                            new_root, new_commands, api_key=new_settings.api_key)))
-                        new_thread_id = uuid.uuid4().hex
-                        session_runner.rebind(new_root,new_thread_id)
-                        old_factory = factory
-                        factory, current_settings, service = candidate, new_settings, new_service
-                        store, controller, actions = candidate.session_store, new_controller, new_actions
-                        completion_commands, session, thread_id = new_commands, new_session, new_thread_id
-                        usage_total = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
-                        latest_context_input_tokens = None
-                        cost_estimator = controller.cost_estimator
-                        try:
-                            await old_factory.aclose()
-                            old_factory.close()
-                        except Exception as error:
-                            console.error(f'已切换项目；清理旧会话失败：{_safe_error(error, current_settings.api_key)}')
-                        console.print(f"已切换到项目：{new_root}。已开始新的会话。")
-                    except Exception as error:
-                        console.error(f"切换项目失败：{_safe_error(error, current_settings.api_key)}")
-                    continue
+            if command in IMMEDIATE_COMMANDS and actions.handles(request):
+                try: await execute_request(request)
+                except Exception as error:
+                    retained_input=message
+                    console.error(_safe_error(error,current_settings.api_key))
+                continue
+            if actions.handles(request) or command in {'/goal','/compact'}:
                 try:
-                    pending=session_runner.busy or session_runner.state=='paused'
                     future=session_runner.submit(request.message,lambda request=request:execute_request(request))
                     future.add_done_callback(report_queued_error)
-                    if pending: console.print(f'已加入输入队列 · {len(session_runner.queue)} 项')
-                    # Let model-side approval claim the prompt before requesting the next line.
                     await asyncio.sleep(0)
                     await asyncio.sleep(0)
                 except Exception as error:
                     retained_input=message
                     console.error(_safe_error(error,current_settings.api_key))
-        finally:
+                continue
+            if command in IDENTITY_COMMANDS and command!='/exit' and session_runner.busy:
+                console.error('请先 /stop 并 /queue clear，再切换项目或会话。')
+                continue
+            if command == "/exit":
+                await session_runner.wait_idle()
+                console.print("再见！")
+                break
+            if command == "/history":
+                try:
+                    _format_history(service, thread_id, console)
+                except Exception as error:
+                    console.error(f"读取历史失败：{_safe_error(error, current_settings.api_key)}")
+                continue
+            if command == "/sessions":
+                _print_sessions(store, console)
+                continue
+            if command == "/resume":
+                try:
+                    saved = store.list_sessions()
+                    if not saved:
+                        console.print("当前项目还没有已保存的会话。")
+                        continue
+                    selector = argument
+                    if not selector:
+                        _print_sessions(store, console)
+                        selector = (
+                            await session.prompt_async("选择会话序号（默认 1）：", default="1")
+                        ).strip() or "1"
+                    thread_id = store.resolve_session(selector,**({"query":actions.session_query} if actions.session_query else {}))
+                    session_runner.rebind(current_settings.project_root,thread_id)
+                    console.print(f"已恢复会话 {thread_id}。")
+                    _format_history(service, thread_id, console)
+                except ValueError as error:
+                    console.error(str(error))
+                continue
+            if command == "/rewind":
+                if argument:
+                    console.error("用法：/rewind")
+                    continue
+                console.print(
+                    "回退会舍弃当前用户轮次及之后的对话状态；"
+                    "已执行的文件修改和命令不会撤销。"
+                )
+                try:
+                    confirmation = await session.prompt_async("确认回退对话状态？[y/N] ")
+                except (EOFError, KeyboardInterrupt, InteractionCancelled):
+                    console.print("已取消回退。")
+                    continue
+                if str(confirmation).strip().lower() not in {"y", "yes"}:
+                    console.print("已取消回退。")
+                    continue
+                try:
+                    removed = await service.rewind(thread_id)
+                    if removed is None:
+                        console.print("当前会话没有可回退的用户轮次。")
+                    else:
+                        console.print(
+                            f"对话状态已回退到上一轮开始前，移除了 {removed} 条消息。"
+                            "已执行的文件和命令操作不会撤销。"
+                        )
+                except Exception as error:
+                    console.error(f"回退失败：{_safe_error(error, current_settings.api_key)}")
+                continue
+            if command == "/compact":
+                try:
+                    result = await service.compact_context(thread_id)
+                    if result.get("compacted"):
+                        console.print(
+                            f"已压缩较早工具结果：约 {result['before_tokens']} → "
+                            f"{result['after_tokens']} tokens。"
+                        )
+                    else:
+                        console.print(f"未压缩上下文：{result.get('reason', '无可压缩内容')}。")
+                except Exception as error:
+                    console.error(f"压缩失败：{_safe_error(error, current_settings.api_key)}")
+                continue
+            if command == "/goal":
+                try:
+                    goal, messages = controller.goal(argument, factory, thread_id)
+                    for text in messages:
+                        console.print(text)
+                    if goal is not None:
+                        await drive_goal(goal, message)
+                except Exception as error:
+                    console.error(f"目标运行失败：{_safe_error(error, current_settings.api_key)}")
+                continue
+            if command == "/clear":
+                thread_id = uuid.uuid4().hex
+                session_runner.rebind(current_settings.project_root,thread_id)
+                latest_context_input_tokens = None
+                usage_total={"input_tokens":0,"output_tokens":0,"cache_hit_tokens":0}
+                console.print("已开始新的会话。")
+                continue
+            if command == "/project":
+                candidate = None
+                try:
+                    if not argument:
+                        raise ValueError("用法：/project <项目目录>")
+                    new_root = select_project_root(argument)
+                    candidate = AgentRuntimeFactory(replace(current_settings, project_root=new_root))
+                    factories.append(candidate)
+                    new_settings = candidate.settings
+                    new_service = AgentService(
+                        candidate,
+                        api_key=new_settings.api_key,
+                        permission_engine=PermissionEngine(new_root),
+                        permission_mode=permission_mode,
+                    )
+                    new_service.ui_name='plain' if plain else 'inline'
+                    new_controller = CommandController(new_settings)
+                    new_actions = CommandActions(new_controller)
+                    new_actions.preferences=candidate.preferences
+                    new_controller.skill_registry=candidate.skill_registry
+                    new_commands = {spec.name: spec.description for spec in new_controller.specs()}
+                    new_session = (session if plain else InputBroker(build_session(
+                        new_root, new_commands, api_key=new_settings.api_key)))
+                    new_thread_id = uuid.uuid4().hex
+                    session_runner.rebind(new_root,new_thread_id)
+                    old_factory = factory
+                    factory, current_settings, service = candidate, new_settings, new_service
+                    store, controller, actions = candidate.session_store, new_controller, new_actions
+                    completion_commands, session, thread_id = new_commands, new_session, new_thread_id
+                    usage_total = {"input_tokens": 0, "output_tokens": 0, "cache_hit_tokens": 0}
+                    latest_context_input_tokens = None
+                    cost_estimator = controller.cost_estimator
+                    try:
+                        from nailong.core.runtime_resources import close_runtime_factories
+                        await close_runtime_factories([old_factory])
+                    except Exception as error:
+                        console.error(f'已切换项目；清理旧会话失败：{_safe_error(error, current_settings.api_key)}')
+                    else:
+                        factories.remove(old_factory)
+                    console.print(f"已切换到项目：{new_root}。已开始新的会话。")
+                except Exception as error:
+                    console.error(f"切换项目失败：{_safe_error(error, current_settings.api_key)}")
+                finally:
+                    if candidate is not None and candidate is not factory:
+                        from nailong.core.runtime_resources import close_runtime_factories
+                        try:
+                            await close_runtime_factories([candidate])
+                        except Exception as error:
+                            console.error(f'清理候选项目失败：{_safe_error(error, current_settings.api_key)}')
+                        else:
+                            factories.remove(candidate)
+                continue
             try:
-                await session_runner.close()
-            finally:
-                if patcher: patcher.__exit__(None,None,None)
-                if interrupt_cleanup: interrupt_cleanup()
-                for active_factory in reversed(factories):
-                    await active_factory.aclose()
-                    active_factory.close()
+                pending=session_runner.busy or session_runner.state=='paused'
+                future=session_runner.submit(request.message,lambda request=request:execute_request(request))
+                future.add_done_callback(report_queued_error)
+                if pending: console.print(f'已加入输入队列 · {len(session_runner.queue)} 项')
+                # Let model-side approval claim the prompt before requesting the next line.
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+            except Exception as error:
+                retained_input=message
+                console.error(_safe_error(error,current_settings.api_key))

@@ -581,12 +581,39 @@ class TerminalAgentApp(App[None]):
         )
 
     async def on_unmount(self) -> None:
-        self._stop_status_timer()
-        self._status_widget = None
-        await self.session_runner.close()
-        for factory in self.runtime_factories:
-            await factory.aclose()
-            factory.close()
+        await self._shutdown_runtime()
+
+    async def run_async(self, **kwargs):
+        try:
+            return await super().run_async(**kwargs)
+        finally:
+            # Framework startup can fail before Unmount is emitted. Keep this
+            # final join inside the loop which owns the async transports.
+            await self._shutdown_runtime()
+
+    async def _shutdown_runtime(self):
+        from nailong.core.runtime_resources import await_owned, close_runtime_factories, raise_cleanup_errors
+        task = getattr(self, '_runtime_cleanup_task', None)
+        if task is None or task.done() and (task.cancelled() or task.exception() is not None):
+            async def finish():
+                errors = []
+                try:
+                    self._stop_status_timer()
+                except BaseException as error:
+                    errors.append(error)
+                self._status_widget = None
+                try:
+                    await self.session_runner.close()
+                except BaseException as error:
+                    errors.append(error)
+                try:
+                    await close_runtime_factories(self.runtime_factories)
+                except BaseException as error:
+                    errors.append(error)
+                raise_cleanup_errors(errors)
+            task = asyncio.create_task(finish(), name='textual:close-runtime')
+            self._runtime_cleanup_task = task
+        await await_owned(task)
 
     def on_resize(self, event) -> None:
         self._size_interaction()
@@ -1227,45 +1254,49 @@ class TerminalAgentApp(App[None]):
             new_root = select_project_root(argument)
             new_settings = replace(self.settings, project_root=new_root)
             new_factory = AgentRuntimeFactory(new_settings)
+            self.runtime_factories.append(new_factory)
             new_service = AgentService(new_factory, api_key=new_settings.api_key,
                 permission_engine=PermissionEngine(new_root), permission_mode=self.permission_mode)
+            new_settings = getattr(new_factory, 'settings', None) or new_settings
+            new_controller = CommandController(new_settings)
+            new_controller.skill_registry = getattr(new_factory, 'skill_registry', None)
+            new_actions = CommandActions(new_controller)
+            if getattr(new_factory, 'preferences', None) is not None:
+                new_actions.preferences = new_factory.preferences
+            new_service.ui_name = 'textual'
+            new_thread_id = uuid.uuid4().hex
+            # Prepare the candidate completely before changing the selected
+            # project or closing any resource still used by its service.
+            self.session_runner.rebind(new_settings.project_root, new_thread_id)
             old_factory = getattr(self.service, 'runtime_factory', None)
-            if old_factory is not None:
-                aclose = getattr(old_factory, 'aclose', None)
-                if callable(aclose):
-                    value = aclose()
-                    if inspect.isawaitable(value):
-                        await value
-                close = getattr(old_factory, 'close', None)
-                if callable(close):
-                    close()
-                if old_factory in self.runtime_factories:
-                    self.runtime_factories.remove(old_factory)
-            if inspect.iscoroutinefunction(getattr(new_factory, "aclose", None)) and new_factory not in self.runtime_factories:
-                self.runtime_factories.append(new_factory)
-            self.settings = getattr(new_factory,'settings',None) or new_settings
-            self.controller = CommandController(self.settings)
-            self.controller.skill_registry=getattr(new_factory,'skill_registry',None)
-            self.actions = CommandActions(self.controller)
-            if getattr(new_factory,'preferences',None) is not None: self.actions.preferences=new_factory.preferences
-            self.service = new_service
+            self.settings, self.controller, self.actions = new_settings, new_controller, new_actions
+            self.service, self.thread_id = new_service, new_thread_id
             adopted = True
-            self.service.ui_name='textual'
-            self.thread_id = uuid.uuid4().hex
-            self.session_runner.rebind(self.settings.project_root,self.thread_id)
             self._conversation_started = False
             self._update_session_info()
             self._reload_session_metrics()
             self._clear_transcript()
             self._append_system(f"已切换到项目：{new_root}。已开始新的会话。")
             self._show_welcome()
+            if old_factory is not None:
+                from nailong.core.runtime_resources import close_runtime_factories
+                try:
+                    await close_runtime_factories([old_factory])
+                except Exception as error:
+                    self._append_system(f"已切换项目；清理旧会话失败：{self._friendly_error(error)}")
+                else:
+                    if old_factory in self.runtime_factories:
+                        self.runtime_factories.remove(old_factory)
         except Exception as error:
-            self._append_system(f"切换项目失败：{self._friendly_error(error)}")
+            label = '项目已切换，更新界面失败' if adopted else '切换项目失败'
+            self._append_system(f"{label}：{self._friendly_error(error)}")
         finally:
             self._project_switching = False
             if new_factory is not None and not adopted:
-                await new_factory.aclose()
-                new_factory.close()
+                from nailong.core.runtime_resources import close_runtime_factories
+                await close_runtime_factories([new_factory])
+                if new_factory in self.runtime_factories:
+                    self.runtime_factories.remove(new_factory)
 
     @work(group='help', exclusive=True)
     async def _show_help(self, section='general'):
@@ -1736,26 +1767,25 @@ def run_tui(
     """Construct the scoped Agent service and launch the full-screen interface."""
     with local_tools.use_project_root(settings.project_root):
         factory = AgentRuntimeFactory(settings)
-        service = AgentService(
-            factory,
-            api_key=settings.api_key,
-            permission_engine=PermissionEngine(settings.project_root),
-            permission_mode=permission_mode,
-        )
-        store = factory.session_store
-        thread_id = uuid.uuid4().hex
-        sessions = store.list_sessions()
         try:
+            service = AgentService(
+                factory,
+                api_key=settings.api_key,
+                permission_engine=PermissionEngine(settings.project_root),
+                permission_mode=permission_mode,
+            )
+            store = factory.session_store
+            thread_id = uuid.uuid4().hex
+            sessions = store.list_sessions()
             if resume_session is not None:
                 thread_id = store.resolve_session(resume_session)
             elif continue_session and sessions:
                 thread_id = sessions[0]["thread_id"]
-        except ValueError:
+            TerminalAgentApp(
+                service,
+                settings,
+                permission_mode=permission_mode,
+                thread_id=thread_id,
+            ).run()
+        finally:
             factory.close()
-            raise
-        TerminalAgentApp(
-            service,
-            settings,
-            permission_mode=permission_mode,
-            thread_id=thread_id,
-        ).run()

@@ -181,6 +181,9 @@ class TaskStore:
         for key in ('scope', 'changed_paths'):
             for path in value[key]:
                 self._validate_recorded_path(path)
+        if value.get('verification_manifest') is not None:
+            from nailong.core.verification_artifacts import validate_reference
+            validate_reference(value['verification_manifest'])
         for key in ('steps', 'acceptance', 'evidence'):
             rows = value[key]
             if (any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
@@ -748,6 +751,7 @@ class TaskStore:
             if same_input and current_revision:
                 task['input_fingerprint'] = record['input_after']
                 task['verification_generated_paths'] = list(record.get('generated_paths', []))
+                task['verification_manifest'] = copy.deepcopy(record.get('artifact_manifest'))
             self._write(thread_id, task)
             for index, row in enumerate(record.get('steps', [])):
                 kind = row.get('kind')

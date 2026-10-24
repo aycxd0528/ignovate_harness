@@ -17,7 +17,7 @@ class MCPExecutionTool(ExecutionTool):
     def _parse_input(self, tool_input, tool_call_id):
         if not isinstance(tool_input, dict) or not self.validator.is_valid(tool_input):
             raise ToolException(json.dumps(failure('invalid_parameters',
-                'MCP 工具参数不符合服务声明的 JSON Schema。', started=False), ensure_ascii=False))
+                'MCP 工具参数不符合服务声明的 JSON Schema。', started=False, mcp_admitted=False), ensure_ascii=False))
         return tool_input
 
     def _to_args_and_kwargs(self, tool_input, tool_call_id):
@@ -31,7 +31,8 @@ class MCPExecutionTool(ExecutionTool):
 def _handler(manager, server, remote, owner):
     async def invoke(**arguments):
         if manager.connection_identity(server) is not owner:
-            return failure('mcp_connection_changed', 'MCP 连接已更换；请开始新的回合重新发现工具。', started=False)
+            return failure('mcp_connection_changed', 'MCP 连接已更换；请开始新的回合重新发现工具。',
+                           started=False, mcp_admitted=False)
         return await manager.call_tool(server, remote, arguments)
     return invoke
 

@@ -14,16 +14,18 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage, message_to_dict
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from nailong.core.compact import compact_messages, normalize_pins
+from nailong.core.compact import compact_messages, normalize_pins, summary_character_limit
 from nailong.core.context import RequestEstimateCache, configured_context_window, context_budget, request_report
 from nailong.core.usage import message_usage
-from nailong.core.task_context import TaskContextError, render_task_context, validate_task_snapshot
+from nailong.core.task_context import TaskContextError, TaskContextTooLargeError, render_task_context, validate_task_snapshot
 
 
 _TASK_MESSAGE_ID = 'nailong-current-task-projection-v1'
 _TASK_MESSAGE_NAME = 'nailong_task_context'
 _MEMORY_PROJECTION_KEY = 'nailong_memory_projection_v1'
 _UNSET_SYSTEM_MESSAGE = object()
+_TASK_PROJECTION_TARGET_CHARS = 12000
+_MAX_TASK_PROJECTION_CHARS = 1000000
 
 
 def _same_archive_value(left,right):
@@ -44,7 +46,7 @@ class ContextLimitExceeded(RuntimeError):
 
 
 class ContextManagerMiddleware(AgentMiddleware):
-    def __init__(self,settings,tools,system_prompt,profile,thread_id,store,archive,reports,calibration,parts=None,goal_store=None,request_filter=None,requested_output=4096,memory_budget=None,task_snapshot_provider=None,task_context_max_chars=12000,memory_request_context=None,task_history=None,runtime_environment=None,capability_view=None):
+    def __init__(self,settings,tools,system_prompt,profile,thread_id,store,archive,reports,calibration,parts=None,goal_store=None,request_filter=None,requested_output=4096,memory_budget=None,task_snapshot_provider=None,task_context_max_chars=None,memory_request_context=None,task_history=None,runtime_environment=None,capability_view=None):
         super().__init__()
         self.settings=settings; self.tools=tools; self.system_prompt=system_prompt
         self.profile=profile; self.thread_id=thread_id; self.store=store; self.archive=archive
@@ -64,7 +66,8 @@ class ContextManagerMiddleware(AgentMiddleware):
         # intentionally not imported here. Request-only projections are never
         # returned from before_model as checkpoint state.
         self.task_snapshot_provider=task_snapshot_provider
-        self.task_context_max_chars=task_context_max_chars
+        self._auto_task_context=task_context_max_chars is None
+        self.task_context_max_chars=_TASK_PROJECTION_TARGET_CHARS if self._auto_task_context else task_context_max_chars
         self.task_history=task_history
         self.runtime_environment=deepcopy(runtime_environment)
         self._task_versions={}
@@ -263,14 +266,24 @@ class ContextManagerMiddleware(AgentMiddleware):
                 if isinstance(message,HumanMessage) and not message.name
                 and not message.additional_kwargs.get('nailong_task_context')
                 and isinstance(message.content,str)}
-            text=render_task_context(task,self.task_context_max_chars,history_reference=reference,
-                visible_user_messages=visible)
+            # Closed/compacted user turns remain active requirements. A known
+            # model window, rather than a small display target, bounds their
+            # complete request. Explicit caller limits remain hard limits.
+            grow=self._auto_task_context and self._policy(self.requested_output)['input_limit'] is not None
+            hard_limit=_MAX_TASK_PROJECTION_CHARS if grow else self.task_context_max_chars
+            try:
+                text=render_task_context(task,self.task_context_max_chars,history_reference=reference,
+                    visible_user_messages=visible)
+            except TaskContextTooLargeError:
+                if not grow:raise
+                text=render_task_context(task,hard_limit,history_reference=reference,
+                    visible_user_messages=visible)
             from nailong.core.stage_constraints import compile_stage_policy
             text+='\n'+compile_stage_policy(task).render()
             secret=getattr(self.settings,'api_key','')
             if secret:
                 text=text.replace(secret,'[密钥已隐藏]')
-            if len(text)>self.task_context_max_chars:
+            if len(text)>hard_limit:
                 raise TaskContextError('脱敏后的任务保护字段超过投影字符预算，未截断当前要求。')
         except (TaskContextError,OSError,RuntimeError) as error:
             self._record('task_context_error',{'reason':str(error),'profile':self.profile})
@@ -279,7 +292,8 @@ class ContextManagerMiddleware(AgentMiddleware):
         info={key:task[key] for key in ('task_id','revision','phase','lifecycle')}
         if secret:
             info['task_id']=info['task_id'].replace(secret,'[密钥已隐藏]')
-        info.update(projected=True,characters=len(text))
+        info.update(projected=True,characters=len(text),expanded=len(text)>self.task_context_max_chars,
+            target_characters=self.task_context_max_chars,hard_character_limit=hard_limit)
         if reference is not None:
             info['history_reference']=reference
         message=HumanMessage(id=_TASK_MESSAGE_ID,name=_TASK_MESSAGE_NAME,content=text,
@@ -421,12 +435,22 @@ class ContextManagerMiddleware(AgentMiddleware):
         self.parts=view['parts']
         self.system_prompt=''.join(self.parts.get(key,'') for key in ('base_system','fixed_memory','skill_catalog'))
 
+    def _check_expanded_context_window(self,messages,policy):
+        if policy['input_limit'] is not None:return
+        for message in messages:
+            if (message.additional_kwargs.get('nailong_compact_summary')
+                    and message.additional_kwargs.get('nailong_compact_summary_expanded')):
+                raise ContextLimitExceeded('历史摘要扩展后模型输入窗口已无法核对；未调用提供商，请重新核对窗口配置。')
+            if (self._auto_task_context and message.name==_TASK_MESSAGE_NAME and message.additional_kwargs.get('nailong_task_context')
+                    and len(message.content)>self.task_context_max_chars):
+                raise ContextLimitExceeded('任务投影扩展后模型输入窗口已无法核对；未调用提供商，请重新核对窗口配置。')
+
     def _before_model(self,state,runtime):
         with self._measure('memory_refresh'):
             memory_view=self._refresh_memory_view()
         self._select_capability_view(state,memory_view)
-        original=list(state.get('messages',[])); messages,removed=normalize_pins(original)
-        changed=bool(removed)
+        original=list(state.get('messages',[])); messages,released=normalize_pins(original)
+        changed=bool(released)
         goal=self.goal_store.active() if self.goal_store is not None else None
         active_goal=goal is not None and goal.thread_id==self.thread_id
         if not active_goal:
@@ -449,6 +473,8 @@ class ContextManagerMiddleware(AgentMiddleware):
                         self._archive_tool(m,args.get(m.tool_call_id))
         with self._measure('policy'):
             policy=self._policy(self.requested_output)
+        self._check_expanded_context_window(messages,policy)
+        if task_projection is not None:self._check_expanded_context_window([task_projection],policy)
         report=self._preflight_report(messages,task_projection,memory_view)
         hard=policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']
         if report['estimated_tokens']>policy['trigger_tokens']:
@@ -464,7 +490,8 @@ class ContextManagerMiddleware(AgentMiddleware):
                         # overflow may reduce that protected recent window.
                         if level=='L2' and not hard and keep<4: break
                         self._metrics['compaction_attempts']+=1
-                        result=compact_messages(messages,keep_turns=keep,level=level,hard=hard,archive=self.archive,thread_id=self.thread_id)
+                        result=compact_messages(messages,keep_turns=keep,level=level,hard=hard,archive=self.archive,thread_id=self.thread_id,
+                            summary_max_chars=summary_character_limit(policy['input_limit']))
                         if result.compacted:
                             messages=result.messages; changed=True; levels.append(result.level)
                             # L2 may remove a previously visible user message.
@@ -494,7 +521,11 @@ class ContextManagerMiddleware(AgentMiddleware):
         return None
 
     async def abefore_model(self,state,runtime):
-        return self.before_model(state,runtime)
+        from nailong.core.verification import _owned_worker
+        # Checkpoint updates remain owned by the graph after this await. The
+        # worker only prepares a view and immutable recovery objects; joining
+        # it on cancellation prevents an abandoned background publication.
+        return await _owned_worker(self.before_model,state,runtime)
 
     def _prepare_request(self,request):
         self._metrics=self._new_metrics()
@@ -513,7 +544,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         self._record('context_request',snapshot)
         return request,snapshot
 
-    def _historical_request_view(self, request):
+    def _historical_request_view(self, request, task_info):
         """Archive closed prior user turns; never shorten the current exchange.
 
         The soft target is a request preference, not a token budget. Failure to
@@ -530,26 +561,26 @@ class ContextManagerMiddleware(AgentMiddleware):
         info={'target_tokens':target,'before_tokens':before,'after_tokens':before,
               'applied':False,'checkpoint_originals_retained':True}
         if before<=target:
-            return request,info
+            return request,info,task_info
         names={tool.get('function',tool).get('name','') if isinstance(tool,dict) else tool.name
                for tool in request.tools}
         if not self.archive or not self.thread_id or 'read_history_result' not in names:
             info['reason']='recovery_unavailable'
-            return request,info
+            return request,info,task_info
         messages=list(request.messages)
         real_humans=[i for i,m in enumerate(messages) if isinstance(m,HumanMessage)
             and not m.name and not any(m.additional_kwargs.get(k) for k in
                 ('nailong_compact_summary','nailong_task_context','nailong_task_index','nailong_pin'))]
         if not real_humans or real_humans[-1]==0:
             info['reason']='no_prior_user_turn'
-            return request,info
+            return request,info,task_info
         cutoff=real_humans[-1]
         prefix=messages[:cutoff]
         try:
             self._assert_completed_tool_boundary(prefix)
         except TaskContextError:
             info['reason']='prior_exchange_incomplete'
-            return request,info
+            return request,info,task_info
         try:
             # Validate all originals, including prior reasoning and short
             # failures, before asking L2 to build a discoverable evidence index.
@@ -562,30 +593,34 @@ class ContextManagerMiddleware(AgentMiddleware):
                     arguments=args.get(str(m.tool_call_id)) if isinstance(m,ToolMessage) else None)
                 if self.archive.read(self.thread_id,reference,max_chars=1)['archive_truncated']:
                     info['reason']='archive_truncated'
-                    return request,info
+                    return request,info,task_info
                 state=m.additional_kwargs.get('nailong_compact_state',{})
                 for previous in state.get('evidence',[]) if isinstance(state,dict) else []:
                     if self.archive.read(self.thread_id,previous,max_chars=1)['archive_truncated']:
                         info['reason']='archive_truncated'
-                        return request,info
+                        return request,info,task_info
             result=compact_messages([*prefix,messages[cutoff]],keep_turns=1,
-                level='L2',min_gain=0,archive=self.archive,thread_id=self.thread_id)
+                level='L2',min_gain=0,archive=self.archive,thread_id=self.thread_id,
+                summary_max_chars=summary_character_limit(self._policy(self.requested_output)['input_limit']))
             if not result.compacted:
                 info['reason']=result.reason
-                return request,info
+                return request,info,task_info
             view=[*result.messages,*messages[cutoff+1:]]
             # Restore requirement text which previously relied on a visible
             # older HumanMessage; the projection is never an authorization.
+            candidate_task_info=task_info
             if self.task_snapshot_provider is not None:
-                projection,_=self._task_projection(request.tools,messages=view)
+                projection,candidate_task_info=self._task_projection(request.tools,messages=view)
                 view=self._task_request_view(view,projection)
             candidate=request.override(messages=view)
             after=self._report(view,request.system_message,request.tools)['estimated_tokens']
             info.update(after_tokens=after,applied=after<before,level='prior_turn_L2')
-            return (candidate if info['applied'] else request),info
+            if info['applied']:
+                return candidate,info,candidate_task_info
+            return request,info,task_info
         except (ValueError,OSError,RuntimeError,KeyError) as error:
             info.update(reason='archive_unavailable',error_type=type(error).__name__)
-            return request,info
+            return request,info,task_info
 
     def _build_request(self,request):
         with self._measure('memory_refresh'):
@@ -622,7 +657,7 @@ class ContextManagerMiddleware(AgentMiddleware):
                 additional_kwargs={'nailong_runtime_environment':1}))
             request=request.override(messages=self._task_request_view(view,task_projection))
         with self._measure('history_request_view'):
-            request,history_info=self._historical_request_view(request)
+            request,history_info,task_info=self._historical_request_view(request,task_info)
         if history_info['before_tokens']>history_info['target_tokens']:
             self._record('history_compact',history_info)
         if self.profile != 'subagent':
@@ -633,6 +668,7 @@ class ContextManagerMiddleware(AgentMiddleware):
         maximum=int(request.model_settings.get('max_tokens') or getattr(request.model,'max_tokens',None) or 4096)
         with self._measure('policy'):
             policy=self._policy(maximum)
+        self._check_expanded_context_window(request.messages,policy)
         report=self._report(request.messages,request.system_message,request.tools)
         if policy['input_limit'] is not None and report['estimated_tokens']>policy['input_limit']:
             raise ContextLimitExceeded('实际模型请求超过完整输入预算，尚未调用提供商。')
@@ -656,6 +692,11 @@ class ContextManagerMiddleware(AgentMiddleware):
                 with self._measure('budget_compaction'):
                     result=compact_messages(request.messages,level='L1',min_gain=0,
                         archive=self.archive,thread_id=self.thread_id)
+                    if not result.compacted and result.reason=='archive_truncated':
+                        self._record('budget_compact',{'before_input_upper_bound':before_bound,
+                            'after_input_upper_bound':before_bound,'remaining_tokens':session_budget.remaining,
+                            'output_tokens':cap,'applied':False,'reason':'archive_truncated',
+                            'checkpoint_originals_retained':True})
                     if result.compacted:
                         candidate=request.override(messages=result.messages)
                         after_bound=_input_bound(candidate)
@@ -681,6 +722,8 @@ class ContextManagerMiddleware(AgentMiddleware):
             'compact_threshold_tokens':policy['trigger_tokens'],'compaction':self.compaction,
             'actual_main_input_tokens':None}
         snapshot['history_compaction']=history_info
+        warnings=getattr(self.archive,'storage_warnings',[])
+        if warnings:snapshot['history_storage_warnings']=list(warnings[:8])
         if environment is not None:
             snapshot['runtime_environment']=environment
         if self.memory_budget is not None: snapshot['memory_budget']=self.memory_budget
@@ -714,7 +757,8 @@ class ContextManagerMiddleware(AgentMiddleware):
         self._settle(response,snapshot); return response
 
     async def awrap_model_call(self,request,handler):
-        request,snapshot=self._prepare_request(request)
+        from nailong.core.verification import _owned_worker
+        request,snapshot=await _owned_worker(self._prepare_request,request)
         try: response=await handler(request)
         except BaseException as error:
             self._settle_failed_response(error, snapshot)

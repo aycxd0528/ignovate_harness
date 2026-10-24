@@ -64,8 +64,12 @@ class HistoryRequestViewTests(unittest.TestCase):
         self.assertEqual(prepared.messages,request.messages)
 
     def test_truncated_reasoning_archive_cannot_replace_original(self):
+        from test_complete_history_archive import legacy_partial
         request=self.request()
-        with patch('nailong.core.history_archive.MAX_ARCHIVE_BYTES',4096):
+        reference=legacy_partial(self.archive,'one',self.old_ai);original_save=self.archive.save
+        def save(thread,message,arguments=None):
+            return reference if message.id==self.old_ai.id else original_save(thread,message,arguments)
+        with patch.object(self.archive,'save',side_effect=save):
             prepared,_=self.manager._prepare_request(request)
         self.assertEqual(prepared.messages,request.messages)
 

@@ -5,16 +5,44 @@ import copy
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from nailong.core.control_ledger import bounded_text
 from nailong.core.file_locks import file_lock
 from nailong.core.memory import MemoryStore
 from nailong.core.memory_knowledge import project_identity
 from nailong.core.preferences import atomic_json, read_config, safe_config_path
-from nailong.core.verification import input_fingerprint
+from nailong.core.verification import current_evidence
 
 SOURCE = re.compile(r'session:[A-Za-z0-9_-]{1,80}#(?:event|node):[A-Za-z0-9_-]{1,80}\Z')
+
+
+@dataclass(frozen=True)
+class _FeedbackInput:
+    """Native scan context; never accepted from model or HTTP payload fields."""
+    project: Path
+    boundary: Path
+    operation: str
+    identity: str
+    task: dict
+    document: str
+    generated: tuple
+    candidate: dict | None
+
+    @property
+    def needs_scan(self):
+        return self.candidate is None or self.operation == 'confirm' and self.candidate['state'] == 'candidate'
+
+    def observed(self, fingerprint):
+        return _FeedbackObservation(self, fingerprint)
+
+
+@dataclass(frozen=True)
+class _FeedbackObservation:
+    context: _FeedbackInput
+    fingerprint: str | None
 
 
 class FeedbackStore:
@@ -38,14 +66,47 @@ class FeedbackStore:
     def _safe(self, text):
         return text.replace(self.sessions.api_key, '[密钥已隐藏]') if self.sessions.api_key else text
 
-    def _fingerprint(self, task, document):
+    def _generated(self, task, document):
         # Publication changes these two owned outputs. Excluding only this
         # candidate's topic and lock permits readback recovery without masking
         # changes to other project inputs or independently edited experiences.
         path = self.memories.document_path(document)
-        generated = [*task.get('verification_generated_paths', []),
-            str(path.relative_to(self.project)), str(path.with_suffix('.lock').relative_to(self.project))]
-        return input_fingerprint(self.project, generated)
+        return (str(path.relative_to(self.project)), str(path.with_suffix('.lock').relative_to(self.project)),
+            *(str(parent.relative_to(self.project)) for parent in path.parents
+              if parent != self.project and parent.is_relative_to(self.project)))
+
+    def _fingerprint(self, task, document):
+        return current_evidence(self.project, task, self.boundary, self._generated(task, document))
+
+    def _request_identity(self, request_id):
+        request_id = bounded_text(request_id, '请求 ID', 128)
+        return hashlib.sha256((str(self.boundary) + ':' + request_id).encode()).hexdigest()
+
+    def _input_context(self, operation, task, identity, document, row):
+        self._task(task)
+        return _FeedbackInput(self.project, self.boundary, operation, identity, copy.deepcopy(task),
+            document, self._generated(task, document), copy.deepcopy(row))
+
+    def _prepare_proposal(self, *, task, request_id):
+        identity = self._request_identity(request_id)
+        row = self.get(identity) if self._path(identity).exists() else None
+        document = row['document'] if row else f'project/feedback-{identity[:24]}.md'
+        return self._input_context('propose', task, identity, document, row)
+
+    def _prepare_confirmation(self, identity, *, task):
+        row = self.get(identity)
+        return self._input_context('confirm', task, identity, row['document'], row)
+
+    def _observed_fingerprint(self, observation, operation, task, identity, document, row):
+        # Recheck inside the candidate lock, including the complete candidate
+        # and exact output exclusions. A hash for another topic is not usable.
+        if (not isinstance(observation, _FeedbackObservation)
+                or observation.context != self._input_context(operation, task, identity, document, row)):
+            raise ValueError('反馈任务、候选内容或目标文档已变化，请重新核对。')
+        fingerprint = observation.fingerprint
+        if fingerprint is not None and (not isinstance(fingerprint, str) or not re.fullmatch(r'[a-f0-9]{64}', fingerprint)):
+            raise ValueError('反馈输入观察无效。')
+        return fingerprint
 
     def get(self, identity):
         path = self._path(identity)
@@ -57,12 +118,12 @@ class FeedbackStore:
             raise ValueError('反馈记录不存在或身份无效。')
         return copy.deepcopy(row)
 
-    def propose(self, *, task, source_ref, context, outcome, behavior, boundary, request_id, source_input_fingerprint=None):
+    def propose(self, *, task, source_ref, context, outcome, behavior, boundary, request_id,
+                source_input_fingerprint=None, _observation=None):
         self._task(task)
         if not isinstance(source_ref, str) or not SOURCE.fullmatch(source_ref):
             raise ValueError('反馈需要准确的会话回合来源。')
-        request_id = bounded_text(request_id, '请求 ID', 128)
-        identity = hashlib.sha256((str(self.boundary) + ':' + request_id).encode()).hexdigest()
+        identity = self._request_identity(request_id)
         data = {key: self._safe(bounded_text(value, key)) for key, value in {
             'context': context, 'outcome': outcome, 'behavior': behavior, 'boundary': boundary}.items()}
         if source_input_fingerprint is not None and (not isinstance(source_input_fingerprint, str) or not re.fullmatch(r'[a-f0-9]{64}', source_input_fingerprint)):
@@ -73,16 +134,19 @@ class FeedbackStore:
         signature = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
         path = self._path(identity)
         with file_lock(safe_config_path(path.with_suffix('.lock'), self.boundary)):
-            if path.exists():
-                row = self.get(identity)
+            row = self.get(identity) if path.exists() else None
+            document = row['document'] if row else f'project/feedback-{identity[:24]}.md'
+            if _observation is not None:
+                fingerprint = self._observed_fingerprint(_observation, 'propose', task, identity, document, row)
+            if row is not None:
                 if row['signature'] != signature:
                     raise ValueError('反馈请求 ID 已用于不同内容。')
                 return row
-            document = f'project/feedback-{identity[:24]}.md'
-            try:
-                fingerprint = self._fingerprint(task, document)
-            except (OSError, ValueError):
-                fingerprint = None
+            if _observation is None:
+                try:
+                    fingerprint = self._fingerprint(task, document)
+                except (OSError, ValueError):
+                    fingerprint = None
             row = {**data, 'schema_version': 1, 'id': identity, 'signature': signature,
                 'state': 'candidate', 'revision': 1, 'input_fingerprint': fingerprint,
                 'document': document, 'memory_version': None,
@@ -106,11 +170,13 @@ class FeedbackStore:
                 '用户确认是经验声明，不能代替测试或授予动作权限。效用归因：未知。\n')
         return '---\n' + frontmatter + '\n---\n\n' + body
 
-    def confirm(self, identity, *, task, expected_revision):
+    def confirm(self, identity, *, task, expected_revision, _observation=None):
         self._task(task)
         path = self._path(identity)
         with file_lock(safe_config_path(path.with_suffix('.lock'), self.boundary)):
             row = self.get(identity)
+            if _observation is not None:
+                fingerprint = self._observed_fingerprint(_observation, 'confirm', task, identity, row['document'], row)
             if (task['task_id'], task['revision']) != (row['task_id'], row['task_revision']):
                 raise ValueError('反馈来源任务或要求版本已变化。')
             if row['state'] == 'confirmed' and expected_revision in {row['revision'], row['revision'] - 1}:
@@ -120,7 +186,8 @@ class FeedbackStore:
                 return row
             if row['state'] != 'candidate' or type(expected_revision) is not int or expected_revision != row['revision']:
                 raise ValueError('反馈状态或版本发生冲突。')
-            fingerprint = self._fingerprint(task, row['document'])
+            if _observation is None:
+                fingerprint = self._fingerprint(task, row['document'])
             if not fingerprint or fingerprint != row['input_fingerprint']:
                 raise ValueError('反馈来源输入版本已变化，请重新整理候选。')
             content = self._content(row)
