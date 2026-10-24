@@ -228,6 +228,26 @@ class NativeWindowsDirectoryGuardTests(unittest.TestCase):
                         output,status,overflow=capture_bytes(argv,cwd=alias,timeout=10,max_output_bytes=8000)
                         diagnostics[name]={'status':status,'output':output.decode('utf-8',errors='replace'),'overflow':overflow}
                     except Exception as error:diagnostics[name]=repr(error)
+                with tempfile.TemporaryDirectory() as aliases:
+                    import _winapi
+                    from nailong.core import _win32_files as native
+                    junction=Path(aliases)/'cwd'
+                    _winapi.CreateJunction(str(root),str(junction))
+                    handle=native.CreateFile(native.extended(junction),native.DELETE|native.READ_ATTRIBUTES,
+                        7,None,native.OPEN_EXISTING,native.BACKUP_SEMANTICS|native.OPEN_REPARSE_POINT|0x04000000,None)
+                    if handle==native.INVALID_HANDLE_VALUE:raise native._error(junction)
+                    try:
+                        probe=script.replace(alias.replace("'","''"),str(junction).replace("'","''"))
+                        argv=[*arguments[:-1],base64.b64encode(probe.encode('utf-16-le')).decode('ascii')]
+                        for name,argv in (('junction-shell',argv),('junction-git',['git','-c','core.longpaths=true','init'])):
+                            try:
+                                output,status,overflow=capture_bytes(argv,cwd=junction,timeout=10,max_output_bytes=8000)
+                                diagnostics[name]={'status':status,'output':output.decode('utf-8',errors='replace'),'overflow':overflow}
+                            except Exception as error:diagnostics[name]=repr(error)
+                    finally:
+                        native.CloseHandle(handle)
+                        diagnostics['junction-cleanup']={'alias_exists':os.path.lexists(junction),'target_exists':root.is_dir()}
+                        if os.path.lexists(junction):os.rmdir(junction)
                 result['native_shell_diagnostics']=diagnostics
             self.assertTrue(result['ok'],result)
             self.assertEqual((root/'shell-proof').read_text(),'native shell cwd')
