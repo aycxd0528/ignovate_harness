@@ -168,6 +168,30 @@ class VerificationCompatibilityTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name=='nt', 'requires actual Win32 directory sharing')
 class NativeWindowsDirectoryGuardTests(unittest.TestCase):
+    def test_git_identity_is_read_from_a_native_long_repository(self):
+        from nailong.core.safe_files import _path
+        from nailong.core._win32_files import short_directory
+        from nailong.core.verification import _git
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).joinpath(*(['工程目录'*3]*20))
+            root.mkdir(parents=True)
+            alias=short_directory(_path(root))
+            def git(*args):
+                result=subprocess.run(['git','-c','core.longpaths=true','-c','user.name=Native Test',
+                    '-c','user.email=native@example.invalid',*args],cwd=alias,capture_output=True,timeout=20)
+                self.assertEqual(result.returncode,0,result.stderr)
+                return result.stdout
+            git('init')
+            (root/'source.txt').write_text('source')
+            git('add','source.txt')
+            git('commit','-m','initial')
+            first=_git(root,'rev-parse','HEAD')
+            self.assertEqual(first,git('rev-parse','HEAD'))
+            self.assertTrue(first.strip())
+            self.assertIn(b'source.txt',_git(root,'ls-files','--stage','-z'))
+            git('commit','--allow-empty','-m','next')
+            self.assertNotEqual(_git(root,'rev-parse','HEAD'),first)
+
     def test_shell_child_runs_in_deep_unicode_directory(self):
         import asyncio
         from platform_fixtures import python_command

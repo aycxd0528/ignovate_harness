@@ -1150,3 +1150,11 @@ I1/M1修正后的最终wheel SHA256 `302156ef206f211505f60c51008439641feccc632ff
 作者处置后增加原生verification先行门：同一现有NativeTestResult/async诊断器和120秒watchdog先跑三个相关模块，再执行原来完整native套件。YAML及折叠Python已解析/compile核对；cost：有限重复测试成本，失败更早暴露，但未省略任何最终全量。没有额外独立review，该工作流观察调整属于作者同一处置pass，最终运行行为仍待CI。
 
 本地提交门已通过，实际Windows installer/runtime311/runtime313/desktop及Linux两版CI仍须观察最终commit；旧Windows关闭期branches.sqlite警告须同时检查最终日志。此记录写入时未合并，最终动作/提交身份以PR5和merge commit为准。原整项目goal继续active，不把当前修复和合并等同全部长期边界已认证。
+
+## Phase 35–36：实际Windows长cwd与shell子进程
+
+用户明确要求合并PR5。5070901真实Windows installer通过，runtime先行门仍有CreateProcess267；改用现有8.3短名并同时pin原目录/alias比较volume/file-index，保留UTF-16绝对长度和无有效短名明确拒绝。唯一helper review 0C/1I/0M，外置Git对象目录I1在一次作者pass补修；全部R1–R5和D1–D3裁决/代价见 `2026-10-25-windows-launch-cwd.md`，原review `2026-10-25-windows-short-cwd-review.md` SHA256 `785f7bf0c35134770dcce991e34374fe6c90e07180d9116c5be09a20e34df65e`。
+
+8e15109长ASCII/emoji原生进程恢复，但deep中文ownership命令仍failed。e91ec4d断言完整result定位到PowerShell启动成功而其python子进程报目录名无效，未放宽passed要求。b454293为长初始cwd在编码shell内先Set-Location -LiteralPath同一校验短名，保持普通cwd/POSIX和挂起归属顺序。唯一shell review 0C/0I/0M，原文 `2026-10-25-windows-shell-location-review.md` SHA256 `ca511d5b0b5d6ca35ab6200867afd7c01b4b9f9412c605d339620baee5afb252`；全部R1–R4与D1–D7及作者一次处置/成本见 `2026-10-25-windows-shell-location.md`。作者另补实际长中文Git仓库HEAD/index变化native门以覆盖既有R2，不改变产品代码、不做第二次review。
+
+中间8e包SHA256 `5a99d06fea06ed676edd8600116b00f85474bdf015892d4379d24b1398674864`，源码两版各2223项/52和53skip、382.317s/386.371s，实装各816项/8skip、227.828s/231.888s通过；仍非Windows绿色。当前b454产品wheel SHA256 `3df85e992a7106a6e37fb12b4df1d80a28cae7f79172cdf1a13f433262df5319`，159Python/39GUI匹配，313的77/5616 RECORD clean，19JS/desktop/CLI smoke通过，源码和实装最终门进行中。真实CI全部绿色且关闭日志核查前不合并，最终门身份和merge动作由PR5及merge commit记录。旧MCP间歇退出断言保留未定；整项目goal仍active。
