@@ -44,7 +44,7 @@ class OutputProvenanceTests(WorkflowFixture):
             service=VerificationService(root,ProjectSessionStore(root,base_dir=self.data.name))
             result=await service.run('deep',approval=lambda *args:'approve_once',
                 permission_engine=PermissionEngine(root,rules={}))
-            self.assertEqual(result['status'],'passed')
+            self.assertEqual(result['status'],'passed',result)
         self.assertEqual(json.loads((store.root/'output-authority-v1/head.json').read_bytes())['generation'],2)
 
     async def test_overlapping_file_then_directory_scope_retires_old_members(self):

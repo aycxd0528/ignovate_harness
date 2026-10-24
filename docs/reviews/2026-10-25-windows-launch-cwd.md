@@ -17,3 +17,15 @@ R4. Ruling: 保留原长ASCII/emoji真实进程回归、增加短名helper边界
 R5. Ruling: 新Win32 helper相对5070901增量一次fresh只读review与作者一次处置，最终全量/实装/CI全部门后合并；cost: 不重新审查上轮全部历史，真实失败证据不删除，无第二次review冒充。
 
 当前仍未合并。实际平台门的最终结果和merge commit由PR5历史记录；整体长任务goal继续active。上轮MCP间歇退出断言仍按原记录保留未定，不因本轮Windows修复宣称已定位。
+
+## 唯一完成review与作者处置
+
+用户已明确授权合并。唯一fresh reviewer `/root/windows_short_cwd_review` 对5070901后的冻结五路径diff `da243a2302959b32b70c85753866c1b355b087dbfae1895a47d2f5f150fc8077` 完成0C/1I/0M审查。原文 `2026-10-25-windows-short-cwd-review.md` SHA256 `785f7bf0c35134770dcce991e34374fe6c90e07180d9116c5be09a20e34df65e`。
+
+I1 Ruling: 采纳并在唯一作者处置pass补修GIT_OBJECT_DIRECTORY的key存在判断（含空值）；补充没有本地objects的HEAD/refs结构回归，原空值拒绝回归同时覆盖新变量。修前3个子场景FAIL，修后10项/3native skip通过。Cost: 显式外置对象配置须真实Git检查或明确拒绝，不能用空Git身份绕过。
+
+全部初始裁决：R1采纳现有短名及同目录身份比较，cost为无足够短名的卷明确拒绝；R2按I1采纳保守仓库检测，cost为更多配置需要真实Git/可用短名；R3采纳pin阻止首次移动的failed断言，cost为不声称已观察输入改回历史；R4采纳portable与保留native门，cost为AST不证明Win32 ABI；R5采纳唯一review加一次作者处置，cost为最终实际CI仍是合并前置条件。
+
+全部Declined裁决：D1实际Windows行为交给最终native CI，cost为等待并修复真实失败；D2不承诺无8.3短名卷普遍可启动，cost为显式拒绝和位置限制保留；D3不将短名选择的临时pin扩大成一般进程cwd竞态或旧MCP间歇问题的保证，cost为保留原限制与未定现象。
+
+8e15109实际Windows：installer通过；两版59项native先行门均只剩1FAIL/3skip（224.535s/224.553s），长ASCII/emoji进程及父目录pin测试均通过。剩余deep Unicode构建返回failed，原断言未打印result，作者补充断言诊断以获得真实命令输出，未放宽passed要求。日志 `/tmp/ignovate-pr5-shortdir-native{311,313}.log`。不能将此候选称为全绿或合并就绪。

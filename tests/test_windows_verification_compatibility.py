@@ -67,12 +67,22 @@ class VerificationCompatibilityTests(unittest.TestCase):
     def test_empty_git_identity_variables_are_explicit_and_refused(self):
         import nailong.core.verification as verification
         with tempfile.TemporaryDirectory() as directory:
-            for key in ('GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE'):
+            for key in ('GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY'):
                 with self.subTest(key=key), patch.dict(os.environ,{key:''},clear=True), \
                         patch('shutil.which',return_value=None), \
                         patch.object(verification.subprocess,'run',side_effect=FileNotFoundError('git')):
                     with self.assertRaises(ValueError):
                         verification._git(Path(directory),'rev-parse','HEAD')
+
+    def test_external_git_objects_prevent_non_repository_shortcut(self):
+        import nailong.core.verification as verification
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            (root/'HEAD').write_text('ref: refs/heads/main')
+            (root/'refs').mkdir()
+            for value in ('',str(root/'external-objects')):
+                with self.subTest(value=value), patch.dict(os.environ,{'GIT_OBJECT_DIRECTORY':value},clear=True):
+                    self.assertFalse(verification._non_repository(root))
 
     def test_windows_manifest_accepts_canonical_slash_and_native_paths(self):
         import nailong.core.verification_artifacts as artifacts

@@ -43,7 +43,7 @@ async def _owned_worker(function, *args):
 
 def _non_repository(root):
     """Missing Git is optional only when no repository boundary is possible."""
-    if any(key in os.environ for key in ('GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE')):
+    if any(key in os.environ for key in ('GIT_DIR','GIT_COMMON_DIR','GIT_WORK_TREE','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY')):
         return False
     root=Path(root)
     if not root.is_dir():
