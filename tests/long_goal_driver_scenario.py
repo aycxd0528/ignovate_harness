@@ -1,7 +1,6 @@
 """Offline end-to-end acceptance through the shared autonomous goal driver."""
 import json
 import math
-import shlex
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -14,6 +13,7 @@ from nailong.core.costs import CostEstimator
 from nailong.core.sessions import ProjectSessionStore
 from test_context_runtime import RecordingModel
 from long_task_scenario import answer
+from platform_fixtures import shell_join
 from ui.flows import stream_goal
 
 THREAD='long-autonomous'
@@ -26,7 +26,7 @@ async def run_goal_driver_scenario(base):
     (root/'source.py').write_text("MODE='bad'\n")
     (root/'notes.txt').write_text(''.join(f'native observation line {i}\n' for i in range(1600))+'AUTONOMOUS_TOOL_TAIL')
     body="from pathlib import Path;ns={};exec(Path('source.py').read_text(),ns);assert Path('notes.txt').read_text().endswith('AUTONOMOUS_TOOL_TAIL');p=Path('bundle');p.mkdir(exist_ok=True);f=p/'partial';f.write_text('failed build output') if ns['MODE']=='bad' else f.unlink(missing_ok=True);(p/'report.csv').write_text('kind,value\\nresult,42\\n');raise SystemExit(1 if ns['MODE']=='bad' else 0)"
-    step={'name':'build','kind':'build','command':shlex.join([sys.executable,'-B','-c',body]),'generated_paths':['bundle']}
+    step={'name':'build','kind':'build','command':shell_join([sys.executable,'-B','-c',body]),'generated_paths':['bundle']}
     (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[step]},
         'budgets':{'session_token_limit':2000000}}))
     settings=Settings('fixture-key','https://offline.invalid','deepseek-flash',root)

@@ -1,5 +1,5 @@
 """Real offline runtime scenario shared by long-task integration tests."""
-import asyncio,json,shlex,sys,tempfile
+import asyncio,json,sys,tempfile
 from pathlib import Path
 from unittest.mock import patch
 from langchain_core.messages import AIMessage
@@ -9,6 +9,7 @@ from agent_service import AgentService
 from config import Settings
 from nailong.core.sessions import ProjectSessionStore
 from nailong.core.verification import VerificationService
+from platform_fixtures import shell_join
 
 THREAD='long-composite'
 ALLOWED={'read_file','write_file','read_history_result','read_task_context','run_command','update_goal'}
@@ -21,7 +22,7 @@ async def run_composite_scenario(base, cycles=1):
     (root/'source.py').write_text("MODE='bad'\n")
     (root/'notes.txt').write_text('native input evidence\n'*1500+'ORIGINAL_TOOL_TAIL')
     body="from pathlib import Path;ns={};exec(Path('source.py').read_text(),ns);assert all(Path(f'stage-{i}.txt').read_text()==f'native stage {i}' for i in range(1,7));p=Path('bundle');p.mkdir(exist_ok=True);c=p/'count';c.write_text(str(int(c.read_text())+1 if c.exists() else 1));f=p/'partial';f.write_text('known failed output') if ns['MODE']=='bad' else f.unlink(missing_ok=True);(p/'report.csv').write_text('kind,value\\nresult,42\\n');raise SystemExit(1 if ns['MODE']=='bad' else 0)"
-    step={'name':'build','kind':'build','command':shlex.join([sys.executable,'-B','-c',body]),'generated_paths':['bundle']}
+    step={'name':'build','kind':'build','command':shell_join([sys.executable,'-B','-c',body]),'generated_paths':['bundle']}
     (root/'.nailong/settings.json').write_text(json.dumps({'verification':{'steps':[step]}}))
     settings=Settings('offline-key','https://offline.invalid','deepseek-flash',root)
     factory=None
@@ -101,7 +102,7 @@ async def run_composite_scenario(base, cycles=1):
             assert not goals.update(goal.id,state='complete',thread_id=THREAD)[0]
             await turn('继续修复source.py使原构建验收通过',[{'name':'read_file','args':{'path':'source.py'},'id':'read-repair'}],[{'name':'write_file','args':{'path':'source.py','content':"MODE='good'\n"},'id':'repair'}])
             second=await VerificationService(root,factory.session_store,goals,task_store=tasks).run(THREAD,approval=lambda *a:'approve_once',permission_engine=service.permission_engine)
-            assert second['status']=='passed',second['status']
+            assert second['status']=='passed',second
             events=await turn('继续',[{'name':'update_goal','args':{'state':'complete','summary':'native long workflow complete'},'id':'complete'}])
             final=goals.get(goal.id);report=await service.delivery_report(THREAD)
             if final.state!='complete':print('PENDING_REPORT '+json.dumps(report,ensure_ascii=False),flush=True)

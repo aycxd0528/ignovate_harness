@@ -1158,3 +1158,9 @@ I1/M1修正后的最终wheel SHA256 `302156ef206f211505f60c51008439641feccc632ff
 8e15109长ASCII/emoji原生进程恢复，但deep中文ownership命令仍failed。e91ec4d断言完整result定位到PowerShell启动成功而其python子进程报目录名无效，未放宽passed要求。b454293为长初始cwd在编码shell内先Set-Location -LiteralPath同一校验短名，保持普通cwd/POSIX和挂起归属顺序。唯一shell review 0C/0I/0M，原文 `2026-10-25-windows-shell-location-review.md` SHA256 `ca511d5b0b5d6ca35ab6200867afd7c01b4b9f9412c605d339620baee5afb252`；全部R1–R4与D1–D7及作者一次处置/成本见 `2026-10-25-windows-shell-location.md`。作者另补实际长中文Git仓库HEAD/index变化native门以覆盖既有R2，不改变产品代码、不做第二次review。
 
 中间8e包SHA256 `5a99d06fea06ed676edd8600116b00f85474bdf015892d4379d24b1398674864`，源码两版各2223项/52和53skip、382.317s/386.371s，实装各816项/8skip、227.828s/231.888s通过；仍非Windows绿色。当前b454产品wheel SHA256 `3df85e992a7106a6e37fb12b4df1d80a28cae7f79172cdf1a13f433262df5319`，159Python/39GUI匹配，313的77/5616 RECORD clean，19JS/desktop/CLI smoke通过，源码和实装最终门进行中。真实CI全部绿色且关闭日志核查前不合并，最终门身份和merge动作由PR5及merge commit记录。旧MCP间歇退出断言保留未定；整项目goal仍active。
+
+## Phase 37：Windows复合长任务夹具
+
+93cb259已在原生对照后修正shell设备前缀短名；当前产品wheel `e1f7753f1922e32938e7c8d9ed3b0e7ec1ae229ee240ebd76497925af0021971`。本地两版2228全量和821实装通过，Linux两版全量/Windows installer及desktop CI通过，但Windows完整2228两版均剩2FAIL/99skip（1094.761s/1097.072s），原生相关64项已经通过。长任务复合helper误用shlex.join，Windows验证命令失败，核心正确拒绝完成。实际长Git仓库能力仍有限：完整身份或明确拒绝、不允许空身份；这不是长Git路径读写认证。详情及native原始对照和所有成本见shell-location brief最终作者处置。
+
+两处测试helper改为既有platform_fixtures.shell_join，保留正文和全部修复/压缩/重启/交付/外部变更断言；增加构造连线回归，native先行门扩为77项，完整suite保留，生产代码和制品不变。唯一fresh review 0C/0I/0M，原文 `2026-10-25-windows-long-fixture-review.md`；全部R1–R4和D1–D7作者裁决/成本见 `2026-10-25-windows-long-scenario-fixtures.md`。RED两个子场景命令断言FAIL，GREEN13项10.944s；最终本地源码/实装及当前head实际CI仍待完成，未合并。最终绿色及merge由PR5和merge commit记录，goal不因合并而完成。
