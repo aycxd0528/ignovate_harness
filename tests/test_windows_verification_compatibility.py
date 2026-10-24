@@ -9,6 +9,36 @@ from unittest.mock import Mock, patch
 
 
 class VerificationCompatibilityTests(unittest.TestCase):
+    def test_long_windows_shell_dispatch_supplies_verified_alias(self):
+        import sys
+        import nailong.core.process_io as process_io
+        root=PureWindowsPath('C:/project').joinpath(*(['long-component']*25))
+        process=Mock(stdin=None,stdout=None,stderr=None)
+        job=Mock()
+        modules={'nailong.core._windows_process':SimpleNamespace(WindowsJob=lambda:job),
+                 'nailong.core._win32_files':SimpleNamespace(short_directory=lambda path:'C:\\short')}
+        with patch.dict(sys.modules,modules), \
+                patch.object(process_io,'os',SimpleNamespace(name='nt',fspath=os.fspath)), \
+                patch('nailong.core.safe_files._path',return_value=root), \
+                patch.object(process_io,'shell_command',return_value=(['shell'],False)) as build, \
+                patch.object(process_io.subprocess,'Popen',return_value=process) as popen:
+            owner=process_io.OwnedProcess('user-command',cwd=root,shell=True)
+            try:
+                build.assert_called_once_with('user-command',cwd='C:\\short')
+                self.assertEqual(popen.call_args.kwargs['cwd'],'C:\\short')
+                self.assertFalse(popen.call_args.kwargs['shell'])
+            finally:owner.close()
+
+    def test_windows_shell_keeps_verified_short_location_before_user_command(self):
+        import base64
+        import nailong.core.process_io as process_io
+        with patch.object(process_io,'os',SimpleNamespace(name='nt',environ={},fspath=os.fspath)):
+            command,shell=process_io.shell_command('user-command',cwd="C:\\SHORT'S\\PROJECT")
+        self.assertFalse(shell)
+        script=base64.b64decode(command[-1]).decode('utf-16-le')
+        self.assertIn("Set-Location -LiteralPath 'C:\\SHORT''S\\PROJECT' -ErrorAction Stop;",script)
+        self.assertLess(script.index('Set-Location'),script.index('user-command'))
+
     def test_short_alias_checks_length_and_native_directory_identity(self):
         import ast
         import ctypes
@@ -138,6 +168,18 @@ class VerificationCompatibilityTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name=='nt', 'requires actual Win32 directory sharing')
 class NativeWindowsDirectoryGuardTests(unittest.TestCase):
+    def test_shell_child_runs_in_deep_unicode_directory(self):
+        import asyncio
+        from platform_fixtures import python_command
+        from nailong.core.processes import execute_process
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).joinpath(*(['工程目录'*3]*20))
+            root.mkdir(parents=True)
+            command=python_command("from pathlib import Path;Path('shell-proof').write_text('native shell cwd')")
+            result=asyncio.run(execute_process(command,root,timeout=20))
+            self.assertTrue(result['ok'],result)
+            self.assertEqual((root/'shell-proof').read_text(),'native shell cwd')
+
     def test_owned_process_runs_in_a_native_long_directory(self):
         import sys
         from nailong.core.process_io import OwnedProcess

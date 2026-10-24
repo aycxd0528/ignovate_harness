@@ -22,13 +22,17 @@ def command_environment():
     return {key: value for key, value in os.environ.items() if key != 'DEEPSEEK_API_KEY'}
 
 
-def shell_command(command: str):
+def shell_command(command: str, *, cwd=None):
     """Use the platform's native shell without changing POSIX shell semantics."""
     if os.name != 'nt':
         return command, True
     # EncodedCommand preserves quotes, Unicode and newlines through CreateProcess.
     # Reset LASTEXITCODE so a successful PowerShell-only command exits with zero.
-    script = ("$ProgressPreference = 'SilentlyContinue'; "
+    # Windows PowerShell expands its initial provider location before launching
+    # native children. Keep the already verified short alias as that location.
+    location = ("Set-Location -LiteralPath '" + os.fspath(cwd).replace("'", "''")
+                + "' -ErrorAction Stop; ") if cwd is not None else ''
+    script = (location + "$ProgressPreference = 'SilentlyContinue'; "
               "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
               "$OutputEncoding = [Console]::OutputEncoding; $global:LASTEXITCODE = 0; "
               + command + "\nif (-not $?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }; exit $LASTEXITCODE")
@@ -70,10 +74,8 @@ class OwnedProcess:
         self.job = None
         self.process = None
         self.guard = None
-        if shell:
-            command, shell = shell_command(command)
+        shell_cwd = None
         if os.name == 'nt':
-            from nailong.core._windows_process import WindowsJob
             if cwd is not None:
                 from nailong.core.safe_files import _path
                 absolute=_path(cwd)
@@ -81,6 +83,11 @@ class OwnedProcess:
                 if len(os.fspath(absolute).encode('utf-16-le','surrogatepass'))//2 >= 260:
                     from nailong.core._win32_files import short_directory
                     cwd=short_directory(absolute)
+                    shell_cwd=cwd
+        if shell:
+            command, shell = shell_command(command,cwd=shell_cwd)
+        if os.name == 'nt':
+            from nailong.core._windows_process import WindowsJob
             self.job = WindowsJob()
             kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x4  # CREATE_SUSPENDED
         else:
