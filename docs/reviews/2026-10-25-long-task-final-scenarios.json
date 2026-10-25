@@ -1,0 +1,256 @@
+{
+  "wheel_sha256": "ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9",
+  "browsers": [
+    {
+      "case": "tools",
+      "attempt": "pr6-final",
+      "evidence": "/tmp/ignovate-browser-acceptance-evidence/tools-pr6-final",
+      "server": {
+        "origin": "http://127.0.0.1:49286",
+        "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-sapooosq/tmpe_a3bvsh/data/projects/f5bc0d120662/checkpoints.sqlite",
+        "controller_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/nailong/gui/controller.py",
+        "agent_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/agent.py"
+      },
+      "browser_exit_code": 0,
+      "server_descendants_after_browser": [],
+      "server_exit_code": 0,
+      "remaining_owned_entries": [],
+      "footprint": {
+        "fd_before": 5,
+        "fd_after": 5,
+        "new_threads": []
+      }
+    },
+    {
+      "case": "conversation",
+      "attempt": "pr6-final",
+      "evidence": "/tmp/ignovate-browser-acceptance-evidence/conversation-pr6-final",
+      "server": {
+        "origin": "http://127.0.0.1:49455",
+        "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-es5mah1g/tmpuyk8b2gc/data/projects/91f7547808c6/checkpoints.sqlite",
+        "controller_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/nailong/gui/controller.py",
+        "agent_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/agent.py"
+      },
+      "browser_exit_code": 0,
+      "server_descendants_after_browser": [],
+      "server_exit_code": 0,
+      "remaining_owned_entries": [],
+      "footprint": {
+        "fd_before": 5,
+        "fd_after": 5,
+        "new_threads": []
+      }
+    },
+    {
+      "case": "lazy-long",
+      "attempt": "pr6-final",
+      "evidence": "/tmp/ignovate-browser-acceptance-evidence/lazy-long-pr6-final",
+      "server": {
+        "origin": "http://127.0.0.1:49621",
+        "database": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-browser-owned-xfhf_gn2/lazy-long-hf1qugo8/private/projects/52c426ed3f72/checkpoints.sqlite",
+        "controller_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/nailong/gui/controller.py",
+        "agent_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/agent.py"
+      },
+      "browser_exit_code": 0,
+      "server_descendants_after_browser": [],
+      "server_exit_code": 0,
+      "remaining_owned_entries": [],
+      "footprint": {
+        "fd_before": 5,
+        "fd_after": 5,
+        "new_threads": []
+      }
+    }
+  ],
+  "runtime_scale": {
+    "turns": 200,
+    "provider_boundary_calls": 200,
+    "factory_reopens": 4,
+    "persistent_task_id": "53cbda8e0c8946a4b3341e01f91398bf",
+    "active_requirements": 201,
+    "new_requirements": 200,
+    "compaction_indexes": 7,
+    "maximum_input_estimate": 122635,
+    "input_limit": 122880,
+    "peak_disk_bytes": 60371904,
+    "seconds": 15.049,
+    "peak_rss_bytes": 141787136,
+    "fd_before": 7,
+    "fd_after": 7,
+    "new_threads": [
+      "asyncio_0"
+    ],
+    "final_disk_bytes": 56300808,
+    "largest_files": [
+      {
+        "path": "private/projects/ee8e2b8d2b75/checkpoints.sqlite",
+        "bytes": 32313344
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/sessions/history-scale.jsonl",
+        "bytes": 8865329
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/history-results/2bd613982bc2c5f2447bdee56049108e3ac6f03f9a59ad383b1fc540cc6f1bc7/hist_669050b1e62c1c58df082ab63dd28bba37e8b288b315506620f6cc1852795a88.json",
+        "bytes": 163064
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/history-results/2bd613982bc2c5f2447bdee56049108e3ac6f03f9a59ad383b1fc540cc6f1bc7/hist_79f74272085c1a545ad07da7362279f397db74bead3eeb05edc70a5ebf70e47b.json",
+        "bytes": 142688
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/history-results/2bd613982bc2c5f2447bdee56049108e3ac6f03f9a59ad383b1fc540cc6f1bc7/hist_cbe6adadf2021d41410ab036d273bd50288d3323d03aaea04c839c32021ad3a6.json",
+        "bytes": 121463
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/tasks/history-scale.json",
+        "bytes": 118196
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/history-results/2bd613982bc2c5f2447bdee56049108e3ac6f03f9a59ad383b1fc540cc6f1bc7/hist_c4af9da5219188bddbda58bd89e42a47ae80b0cd4434861c5eac22a4edd48c0d.json",
+        "bytes": 109395
+      },
+      {
+        "path": "private/projects/ee8e2b8d2b75/history-results/2bd613982bc2c5f2447bdee56049108e3ac6f03f9a59ad383b1fc540cc6f1bc7/hist_a0369cec53ca602d147ebc0db2fd14d8da987ce77f0d17c60d197bc36638fff4.json",
+        "bytes": 108856
+      }
+    ],
+    "compact_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/nailong/core/compact.py",
+    "checkpoint_tables": [
+      {
+        "name": "checkpoints",
+        "sql": "CREATE TABLE checkpoints (\n                thread_id TEXT NOT NULL,\n                checkpoint_ns TEXT NOT NULL DEFAULT '',\n                checkpoint_id TEXT NOT NULL,\n                parent_checkpoint_id TEXT,\n                type TEXT,\n                checkpoint BLOB,\n                metadata BLOB,\n                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)\n            )"
+      },
+      {
+        "name": "writes",
+        "sql": "CREATE TABLE writes (\n                thread_id TEXT NOT NULL,\n                checkpoint_ns TEXT NOT NULL DEFAULT '',\n                checkpoint_id TEXT NOT NULL,\n                task_id TEXT NOT NULL,\n                idx INTEGER NOT NULL,\n                channel TEXT NOT NULL,\n                type TEXT,\n                value BLOB,\n                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)\n            )"
+      }
+    ],
+    "checkpoint_encodings": {
+      "compressed-v1": 1396,
+      "msgpack": 4
+    },
+    "checkpoint_rows": [
+      1400,
+      23946811,
+      33861
+    ],
+    "sqlite_table_bytes": {
+      "checkpoints": 25305088,
+      "sqlite_autoindex_checkpoints_1": 98304,
+      "sqlite_autoindex_writes_1": 208896,
+      "sqlite_schema": 4096,
+      "writes": 6696960
+    },
+    "all_snapshots_decoded": 1400,
+    "serde_origin": "/private/var/folders/z2/rwy253lj5q7brgt58g01wky40000gn/T/ignovate-pr6-final-acceptance-zgzcgy3i/site-packages/nailong/core/checkpoint_serde.py",
+    "process_fd_before": 4,
+    "process_fd_after": 4,
+    "post_loop_new_threads": []
+  },
+  "attested_files": 198,
+  "owned_installation_removed": true,
+  "logs": {
+    "/tmp/ignovate-pr6-final-scenarios/runtime-scale313.log": "13f9959a3419b3d31ea4a8d80fcb2c2605de75e73642c6191a7a30f6b7b882c3",
+    "/tmp/ignovate-pr6-final-scenarios/conversation.log": "80e8c5cfafb9d28a6d7ab39892c7ae481c76137de2bdcf8451c0c98f22778d65",
+    "/tmp/ignovate-pr6-final-scenarios/lazy-long.log": "f4e387d0fd7127f4f7abf2931d82e31d458dff9865e68de3a1a00b1c8b065cce",
+    "/tmp/ignovate-pr6-final-scenarios/tools.log": "d9ac1c293926f206bd5a2cea87bee78262cb37b8c2b89dfa0e03aa504e88d024"
+  },
+  "code_head": "9842ba17d7e7e8fecb9c0cf718b5e0cc0a286b65",
+  "byte_bridge": {
+    "current": {
+      "sha256": "ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9",
+      "python": 159,
+      "gui_static": 39
+    },
+    "/tmp/ignovate-checkpoint-compression-final-wheel/ignovate_harness-1.2.1-py3-none-any.whl": {
+      "sha256": "85fb1423e204fcc4f7fcdd80f8ced29b61d355f55a9f2732c0f21567275f19bc",
+      "changed": [
+        "nailong/core/_mcp_stdio_owner.py",
+        "nailong/core/_posix_process_child.py",
+        "nailong/core/_win32_files.py",
+        "nailong/core/posix_process.py",
+        "nailong/core/process_io.py",
+        "nailong/core/verification.py",
+        "nailong/core/verification_artifacts.py",
+        "nailong/core/verification_directories.py",
+        "nailong/gui/__main__.py",
+        "nailong/gui/runtime_sources.py",
+        "nailong/gui/work_control.py",
+        "nailong/gui/static/style.css"
+      ]
+    },
+    "/tmp/ignovate-github-final-wheel/ignovate_harness-1.2.3-py3-none-any.whl": {
+      "sha256": "25e5d283e1c266f6c231285c869a16056a4401003a7a461027601f5b0caad919",
+      "changed": [
+        "nailong/core/_mcp_stdio_owner.py",
+        "nailong/core/_posix_process_child.py",
+        "nailong/core/_win32_files.py",
+        "nailong/core/posix_process.py",
+        "nailong/core/process_io.py",
+        "nailong/core/verification.py",
+        "nailong/core/verification_artifacts.py",
+        "nailong/core/verification_directories.py"
+      ]
+    },
+    "/tmp/ignovate-github-integrated-wheel/ignovate_harness-1.2.3-py3-none-any.whl": {
+      "sha256": "121400ca71faa2857251111403cbfe81a91bc4aae77f179ffa1c8257313bbc3a",
+      "changed": [
+        "nailong/core/_mcp_stdio_owner.py",
+        "nailong/core/_posix_process_child.py",
+        "nailong/core/_win32_files.py",
+        "nailong/core/posix_process.py",
+        "nailong/core/process_io.py",
+        "nailong/core/verification.py",
+        "nailong/core/verification_artifacts.py",
+        "nailong/core/verification_directories.py",
+        "nailong/gui/work_control.py"
+      ]
+    }
+  },
+  "raw_result_sha256": "5c274a9aca91a9ce5abf0d8501afd9c0689b066a314f5320205bd92a66188b31",
+  "release_source": {
+    "assets": [
+      {
+        "name": "Ignovate-1.2.3-macos-arm64.dmg",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/Ignovate-1.2.3-macos-arm64.dmg"
+      },
+      {
+        "name": "ignovate-1.2.3-unix.tar.gz",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-unix.tar.gz"
+      },
+      {
+        "name": "Ignovate-1.2.3-windows-x64.zip",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/Ignovate-1.2.3-windows-x64.zip"
+      },
+      {
+        "name": "ignovate-1.2.3-windows.zip",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-windows.zip"
+      },
+      {
+        "name": "ignovate_harness-1.2.3-py3-none-any.whl",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate_harness-1.2.3-py3-none-any.whl"
+      },
+      {
+        "name": "SHA256SUMS",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/SHA256SUMS"
+      },
+      {
+        "name": "SHA256SUMS-macos",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/SHA256SUMS-macos"
+      },
+      {
+        "name": "SHA256SUMS-windows-desktop",
+        "url": "https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/SHA256SUMS-windows-desktop"
+      }
+    ],
+    "publishedAt": "2026-10-15T17:33:27Z",
+    "tagName": "v1.2.3"
+  },
+  "release_archive_inspection": {
+    "tag": "v1.2.3",
+    "unix_install": "ignovate-1.2.3/install.sh",
+    "windows_install": "ignovate-1.2.3/install.ps1",
+    "archives_inspected_not_executed": true
+  }
+}

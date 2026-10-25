@@ -1210,3 +1210,13 @@ fe5814f已保存两项POSIX/MCP修复与完整证据。合并后main唯一native
 唯一fresh review 0C/0I/0M，原文 `2026-10-25-conversation-render-ready-review.md` SHA256 `30e9a5c4eca086f9e880a31659b4efe7223072e47ec6b6562ce5bd50db29768c`，冻结两路径diff `6099c6830fb3820afbd807496970c0f5d9cac29ef9e733fa37f49b76f8839f0e`。作者完整阅读一次无补修处置，R1–R5及全部12项D裁决/成本见 `2026-10-25-conversation-render-ready.md`。native先行门新增完整六项module114→120，YAML/折叠Python compile/实际loader已核对，完整discovery/单项120s/job45m保持。正常模块6项2.016s，最终工作区外两版实装新增完整module后各173项/4skip/82.338s与82.643s通过，产品wheel仍ee025；最终两版全量与新head实际CI另记。不以mac probe测量或认证Windows调度，goal继续active。
 
 最终phase43代码门：源码两版2233项/54和55skip/393.573s及396.254s全部terminal0；实装相关两版173项/4skip/82.338s及82.643s全部terminal0。冻结diff未变，159Python+39GUI字节/10origin确认；完整日志SHA索引 `2026-10-25-post-merge-validation.json`。已确认未修复P0为0，两项新增条件性P1本地关闭；新head平台CI待推送观察，不合并新PR、不发布或改用户IDE/CSS。
+
+## Phase 44：整体完成审计与当前发行包长场景证据
+
+PR6已提交9842ba1；工作树无代码/测试变更。按原整个目标的10个职责域逐项核对当前源、实际断言、旧最终证据和发行字节，审计表更新于 `2026-10-24-project-acceptance-audit.md` 顶部。与已验收phase31/phase33包逐字节比较，容量/历史/费用核心未变、GUI Python及39静态资源相同；这只桥接实现身份，不代替行为证明。
+
+为直接覆盖当前产品组合，ee025 wheel重新离线安装到临时site-packages，159Python/39GUI与当前source一致。复用原200轮生产探针，无prototype/serializer patch：200模型边界、201active要求、7L2、4重开，每轮要求完整；maxinput122635≤122880，全部1400checkpoint再次原生解码，FD4→4/post-loop无线程。当前三组Chrome实际并行命令/停止、审批/产物预览/刷新、模型关闭长回答恢复全部通过，服务/浏览器exit0，三组FD5→5，无新threads/后代/自有目录遗留，无非服务网络；最终临时安装已删除。终端15432 exit0，原始结果/各日志SHA及源包字节桥接记录 `2026-10-25-long-task-final-scenarios.json`。此有限重复样本不升级成无限规模、远端模型或每次历史PID故障法证证明。
+
+发现项目说明仍把v1.1.0称当前版本、开发smoke使用旧文件名；GitHub真实最新发布v1.2.3及Unix/Windows安装归档内路径已核对，修正链接/目录/main源码分支/当前wheel示例，明确开发分支修复未必属于已发布tag。补充本轮MCP内层保留健康通道至退出/直接child回收/unknown语义。checkpoint reader升级限制原本完整，保留原文，不添加同义重复。本轮仅作者文档与证据更新，没有新增产品实现、回滚用户数据库或重开前三份冻结review；旧本机全量对应完全相同产品/测试字节，未重跑无变化源码。
+
+PR5已按用户要求合并；PR6新head平台CI仍需实际终态，整体完成尚未证实。后续若追加本次文档commit，只终止由新head替代且仍运行的旧head CI，不把cancel当通过，不因观察超时重启。最终CI与集成状态以PR6为准，不自动合并或发布。

@@ -1,6 +1,6 @@
 # ignovate harness 项目说明
 
-本文面向希望使用或维护编码代理的开发者，从实际开发痛点说明项目定位，再介绍结构、上下文压缩、工作流、工具调用、记忆与轨迹统计。安装与操作指引放在核心机制之后。适用版本为 1.1.0，维护日期为 2026-10-08。支持 macOS、Linux 和 Windows 11 x64（原生运行，无需 WSL）；Release 安装器会自动准备缺少的 Python 和应用依赖。
+本文面向希望使用或维护编码代理的开发者，从实际开发痛点说明项目定位，再介绍结构、上下文压缩、工作流、工具调用、记忆与轨迹统计。安装与操作指引放在核心机制之后。基于 1.2.3 开发版，维护日期为 2026-10-25；开发分支中的可靠性修复可能尚未包含在已发布安装包中，安装包内容以对应 Release 标签为准。支持 macOS、Linux 和 Windows 11 x64（原生运行，无需 WSL）；Release 安装器会自动准备缺少的 Python 和应用依赖。
 
 仓库：[aycxd0528/ignovate_harness](https://github.com/aycxd0528/ignovate_harness)。快速开始见 [README](../README.md)，完整命令与运行时细节见 [CLI 与运行时参考](CLI_REFERENCE.md)，本次问题与验证记录见 [项目审查报告](reviews/2026-10-08-project-audit.md)。
 
@@ -224,7 +224,7 @@ MCP 支持 stdio 和 Streamable HTTP，将外部工具 schema 转换后接入相
 
 MCP 请求的等待时间计入超时。尚未交给 SDK 的请求取消或过期时只撤回自身并释放队列容量，其他请求和连接继续使用；SDK owner 在执行前同时检查调用方取消和绝对截止时间。已交给 SDK 的调用中断后会关闭其原连接，副作用需核对，不自动重放。关闭时立即撤下工具并拒绝新调用；同一 SDK owner 只取消一次，所有断开/退出等待者等清理结束后才传播自己的取消。整体退出也覆盖正在连接、等待生命周期锁及并发重连的情形。
 
-POSIX 本地 MCP 连接继续使用 SDK 的 stdio 协议和取消上下文，由外层启动器观察控制端的实际父子关系，再通过独立存活管道监护真实服务。控制端硬退出或 SDK 只强杀其直接子进程时，会收回服务及普通同组后代；服务关闭输入或输出不会被监护者的副本遮蔽。连接还使用仅本机回环地址的认证健康通道；监护连接异常时撤下工具、停止接纳并报告清理无法核实，不因服务管道仍可用而继续调用。回环 IPC 不可用时拒绝启动。每连接增加两个 Python 监护进程、一个线程与一个宿主异步监测任务，本机样本启动约增加 20–30 毫秒，监护者合计 RSS 约 37 MiB，连接数较多时须计入资源预算。主动脱组后代、独立强杀内层监护者及 Windows 原生行为仍需单独验收，不能据此推断全故障下已停止或副作用完成。
+POSIX 本地 MCP 连接继续使用 SDK 的 stdio 协议和取消上下文，由外层启动器观察控制端的实际父子关系，再通过独立存活管道监护真实服务。控制端硬退出或 SDK 只强杀其直接子进程时，会收回服务及普通同组后代；服务关闭输入或输出不会被监护者的副本遮蔽。连接还使用仅本机回环地址的认证健康通道；内层监护者保留该通道至自身退出，避免外层启动器被杀后过早结束关闭等待，实际服务不继承该通道。监护者在确认正常清理前终止并回收直接子进程，失败时保留“清理无法核实”；外层启动器丢失也不被当成干净退出。监护连接异常时撤下工具、停止接纳，不因服务管道仍可用而继续调用。回环 IPC 不可用时拒绝启动。每连接增加两个 Python 监护进程、一个线程与一个宿主异步监测任务，本机样本启动约增加 20–30 毫秒，监护者合计 RSS 约 37 MiB，连接数较多时须计入资源预算。主动脱组后代、独立强杀内层监护者及 Windows 原生行为仍需单独验收，不能据此推断全故障下已停止或副作用完成。
 
 原生工具结果中的 `started` 表示执行门已进入处理器；`mcp_admitted` 单独表示本地 SDK owner 已接纳该 MCP 请求。后者为 true 仍不能证明服务端副作用已完成；为 false 表示未接纳。该字段会保留到工具消息、观察回执及大结果摘要，仅供核对，不授予权限或证明交付完成。取消回执缺失该字段时保持未知。SDK 自身因管道故障取消 owner，也会在进入上下文清理前停止接纳请求。
 
@@ -305,15 +305,15 @@ POSIX 本地 MCP 连接继续使用 SDK 的 stdio 协议和取消上下文，由
 
 ## 快速开始
 
-推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包，无需预装 Python 或克隆源码。当前版本为 [v1.1.0](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.1.0)。
+推荐从 [GitHub Releases](https://github.com/aycxd0528/ignovate_harness/releases/latest) 下载安装包，无需预装 Python 或克隆源码。当前发布版本为 [v1.2.3](https://github.com/aycxd0528/ignovate_harness/releases/tag/v1.2.3)。
 
 ### macOS / Linux
 
-下载 [ignovate-1.1.0-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.1.0/ignovate-1.1.0-unix.tar.gz)，支持 Intel / Apple Silicon macOS 和 x86_64 / ARM64 Linux。在下载目录执行：
+下载 [ignovate-1.2.3-unix.tar.gz](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-unix.tar.gz)，支持 Intel / Apple Silicon macOS 和 x86_64 / ARM64 Linux。在下载目录执行：
 
 ```sh
-tar -xzf ignovate-1.1.0-unix.tar.gz
-cd ignovate-1.1.0
+tar -xzf ignovate-1.2.3-unix.tar.gz
+cd ignovate-1.2.3
 sh install.sh
 . "$HOME/.local/bin/ignovate-env.sh"
 ignovate set up
@@ -321,11 +321,11 @@ ignovate set up
 
 ### Windows 11
 
-下载 [ignovate-1.1.0-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.1.0/ignovate-1.1.0-windows.zip)，在 PowerShell 中执行：
+下载 [ignovate-1.2.3-windows.zip](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-windows.zip)，在 PowerShell 中执行：
 
 ```powershell
-Expand-Archive .\ignovate-1.1.0-windows.zip -DestinationPath .\ignovate-release
-cd .\ignovate-release\ignovate-1.1.0
+Expand-Archive .\ignovate-1.2.3-windows.zip -DestinationPath .\ignovate-release
+cd .\ignovate-release\ignovate-1.2.3
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -368,7 +368,7 @@ ignovate doctor --project /path/to/work-project --output-format json
 在已安装 Git、Python 3.11 或更新版本的 macOS/Linux 终端执行：
 
 ```bash
-git clone --branch v1.1.0 https://github.com/aycxd0528/ignovate_harness.git
+git clone --branch main https://github.com/aycxd0528/ignovate_harness.git
 cd ignovate_harness
 python3 -m venv .venv
 source .venv/bin/activate
@@ -461,7 +461,7 @@ py -3.11 -m venv .venv
 ```bash
 python -m unittest discover -s tests -v
 python -m pip wheel --no-deps --wheel-dir dist .
-python scripts/smoke_wheel.py dist/ignovate_harness-1.1.0-py3-none-any.whl
+python scripts/smoke_wheel.py dist/ignovate_harness-1.2.3-py3-none-any.whl
 ```
 
 离线测试使用假模型、临时项目和本地 MCP 服务，不调用真实模型 API。wheel smoke 从源码目录之外加载实际发行内容，验证 `--help`、JSON doctor 和依赖检查，避免仅验证 editable 安装。
