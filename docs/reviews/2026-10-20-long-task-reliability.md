@@ -1178,3 +1178,13 @@ d7完整Windows2229的push两版和PR313成功，PR311仅TUI drag在鼠标操作
 同模块控制/任务锁/HTTP观察统一以扫描gate尚未finished时操作已完成作为顺序断言，3秒操作取消策略及10秒fixture回退，所有原项目/任务/反馈/交付断言保留；不再认证300ms native IO SLA，也未改生产GUI构造延迟，不将wait_for或socket配置当硬wall-clock保证。相同延迟probe GREEN，提前恢复扫描负对照触发明确断言FAIL，15模块GREEN；native先行门100项、完整2230保留。
 
 两路径唯一fresh只读review 0C/0I/1 advisory M，原文 `2026-10-25-gui-scan-semantic-review.md` SHA256 `9b40237049ca7661f9709551c408ab0cecb8e404359d4262d0aece8ebef295c0`，冻结diff SHA256 `58eef6e58d7fd678679f0b4dab6bdeea6a19dba4a5e55a0c8f80e8ac381f6089`。作者一次采纳M1补HTTP后台socket/join预算和异常/存活诊断；实际慢启动/心跳probe旧4.615s超时及IndexError、修后4.610s通过。全部R1–R4及D1–D12处置/成本见 `2026-10-25-gui-scan-semantic-gates.md`。候选完整源码两版2230/54和55skip/388.082s及392.353s，实装830/10skip/236.326s及241.328s通过；运行在M1之前启动，M1后完整15模块四环境再通过，不称旧全量为M1后执行。当前head最终实际CI及关闭日志和merge身份由PR5记录，产品wheel仍e1f7753，整体goal仍active。
+
+## Phase 40：执行面板渲染生命周期
+
+70643c9最终11个GitHub检查成功、1个失败。四个100项native先行门及Linux/installer/desktop通过；三个native完整2230/99skip GREEN，push311完整2230/99skip仅最终tool-response显示count0!=1。四份日志均无旧SQLite关闭警告，未合并。实际_append_assistant写入live turn后call_after_refresh更新缓存，wait_idle只join pump；原测试单pause不能证明显示缓存已刷新。
+
+将ExecutionDashboard已有resize三秒就绪helper提到类级，在六个方法全部渲染观察前复用；保留文本/精确finalcount1/工具先后/颜色/视口/滚动/屏幕身份全部原断言，不强制刷新或滚动。原706源码在受控延迟实际render probe中0.422s FAIL0!=1，新fixture0.501s GREEN，永不释放仍3.373s FAIL；初版probe反复reflow自身错误保留并更正，不当产品缺陷。先行门114、完整2230与120秒watchdog及45分钟job保持，实装范围新增整个14项模块。
+
+唯一fresh review因transport中断未产报告，恢复同一review完成0C/0I/0M，非第二轮；原文 `2026-10-25-execution-render-ready-review.md` SHA256 `0f2eedf6e16d73836daba6bfe6953bab590d18664da9f8bc2175d4a6717e49e6`，冻结两路径diff SHA256 `5df25e81893a7e8a138039dd3c2bae94f67663bbcf5ee127a9632c02993a8ecc`。作者完整阅读一次处置，无代码补修；全部R1–R4及D1–D16裁决/成本见 `2026-10-25-execution-render-ready.md`。最终当前head本地/实际CI门和merge身份由PR5记录，产品wheel仍e1f7753，整体goal继续active。
+
+最终phase40本地门：源码两版2230项/54和55skip/389.312s及393.954s，工作区外实装两版844项/10skip/240.773s及245.506s全部terminal0；159发行Python字节和49安装origin匹配。作者没有在review后改变冻结代码，本轮完整门对应最终代码；新head实际Windows/Linux/installer/desktop及关闭日志继续由PR5记录，全部齐全才合并。
