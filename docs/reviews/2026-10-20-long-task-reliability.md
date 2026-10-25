@@ -1170,3 +1170,11 @@ I1/M1修正后的最终wheel SHA256 `302156ef206f211505f60c51008439641feccc632ff
 d7完整Windows2229的push两版和PR313成功，PR311仅TUI drag在鼠标操作前找不到尚未渲染文字；四份最终native日志均未出现旧branches.sqlite/WinError32/Exception ignored。生产call_after_refresh异步调度与锁定Textual Pilot.pause实现证明单次pause不是特定文字就绪契约。drag改用既有三秒条件等待同viewport实际文字，新增RED/GREEN夹具回归，全部原选择/高亮/clipboard断言保留。先行门扩为85项，完整discovery不减；健康311已耗34分17秒，job35到45分钟保留120秒单项watchdog。
 
 唯一fresh review 0C/0I/0必修M，冻结diff SHA256 `91c87e44fb1c2cb8ffb1bf2d84fa3481934168c9804d768bc89e640e7b5c18ac`；原文 `2026-10-25-tui-render-ready-review.md` SHA256 `0ac050909ddf19ff32ec6182281df4bde3ad330db38c4bd8e4fe158f799a33e0`。作者一次处置额外采纳两个Escape后文字观察的同三秒语义等待并保留原assertIn，未改生产代码。全部R1–R4、相邻建议、D1–D8裁决及成本见 `2026-10-25-tui-selection-render-ready.md`。产品wheel仍e1f7753轮；当前head最终平台门和merge身份由PR5记录，不把审查或旧head通过当新head实际Windows证据，整个goal继续active。
+
+## Phase 39：GUI扫描测试的阻塞顺序证明
+
+5ec1a07最终11个GitHub检查成功、1个失败；四个85项native先行门均通过，三个Windows完整2230通过，push313仅项目切换测试0.3秒wait_for报错，四份日志均无旧SQLite关闭警告。该测试一次monitored执行0.318秒；真实构造器前加0.4秒延迟可重现同TimeoutError，旧owned-close取消堆栈不是已证实资源泄漏或死锁。仍未合并。
+
+同模块控制/任务锁/HTTP观察统一以扫描gate尚未finished时操作已完成作为顺序断言，3秒操作取消策略及10秒fixture回退，所有原项目/任务/反馈/交付断言保留；不再认证300ms native IO SLA，也未改生产GUI构造延迟，不将wait_for或socket配置当硬wall-clock保证。相同延迟probe GREEN，提前恢复扫描负对照触发明确断言FAIL，15模块GREEN；native先行门100项、完整2230保留。
+
+两路径唯一fresh只读review 0C/0I/1 advisory M，原文 `2026-10-25-gui-scan-semantic-review.md` SHA256 `9b40237049ca7661f9709551c408ab0cecb8e404359d4262d0aece8ebef295c0`，冻结diff SHA256 `58eef6e58d7fd678679f0b4dab6bdeea6a19dba4a5e55a0c8f80e8ac381f6089`。作者一次采纳M1补HTTP后台socket/join预算和异常/存活诊断；实际慢启动/心跳probe旧4.615s超时及IndexError、修后4.610s通过。全部R1–R4及D1–D12处置/成本见 `2026-10-25-gui-scan-semantic-gates.md`。候选完整源码两版2230/54和55skip/388.082s及392.353s，实装830/10skip/236.326s及241.328s通过；运行在M1之前启动，M1后完整15模块四环境再通过，不称旧全量为M1后执行。当前head最终实际CI及关闭日志和merge身份由PR5记录，产品wheel仍e1f7753，整体goal仍active。

@@ -21,6 +21,7 @@ class PausedFingerprint:
     def __init__(self):
         self.started = threading.Event()
         self.release = threading.Event()
+        self.finished = threading.Event()
         self.threads = []
 
     def __call__(self, root, generated=()):
@@ -29,7 +30,8 @@ class PausedFingerprint:
         self.started.set()
         # A deadline also lets the regression fail cleanly when the event loop
         # itself is blocked and cannot execute the test's finally clause.
-        self.release.wait(2)
+        self.release.wait(10)
+        self.finished.set()
         return value
 
 
@@ -62,12 +64,16 @@ class SnapshotHTTPScanTests(unittest.TestCase):
         self.server.call(prepare)
         gate = PausedFingerprint()
         result = []
+        errors = []
         def snapshot_request():
-            connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=4)
+            # Cover scan startup and the independent heartbeat before release.
+            connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=10)
             try:
                 connection.request('GET', '/api/snapshot', headers={'Authorization': 'Bearer test-token'})
                 response = connection.getresponse()
                 result.append((response.status, json.loads(response.read())))
+            except Exception as error:
+                errors.append(error)
             finally:
                 connection.close()
         with patch('nailong.core.verification.input_fingerprint', gate):
@@ -75,7 +81,7 @@ class SnapshotHTTPScanTests(unittest.TestCase):
             request.start()
             try:
                 self.assertTrue(gate.started.wait(2), 'snapshot never observed current project inputs')
-                heartbeat = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=.3)
+                heartbeat = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=3)
                 try:
                     heartbeat.request('GET', '/api/events', headers={'Authorization': 'Bearer test-token'})
                     try:
@@ -84,11 +90,15 @@ class SnapshotHTTPScanTests(unittest.TestCase):
                     except TimeoutError:
                         self.fail('input scanning blocked the HTTP events heartbeat')
                     self.assertEqual(response.status, 200)
+                    self.assertFalse(gate.finished.is_set(),
+                                     'heartbeat completed only after input scanning resumed')
                 finally:
                     heartbeat.close()
             finally:
                 gate.release.set()
-                request.join(4)
+                request.join(10)
+                self.assertFalse(request.is_alive(), 'snapshot client did not finish after release')
+                self.assertEqual(errors, [], f'snapshot client failed: {errors!r}')
         self.assertEqual(result[0][0], 200)
         self.assertFalse(any(row.get('acceptance_id') == 'human' for row in result[0][1]['control']['attention']), result[0][1]['control'])
         self.assertNotIn(self.server.loop_thread.ident, gate.threads)
@@ -117,6 +127,12 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
         gate.release.set()
         await asyncio.gather(pending, return_exceptions=True)
 
+    async def during_scan(self, operation, gate):
+        result = await asyncio.wait_for(operation, 3)
+        self.assertFalse(gate.finished.is_set(),
+                         'operation completed only after input scanning resumed')
+        return result
+
     def confirmation(self):
         return {'operation': 'confirm_acceptance', 'branch_id': self.branch['id'],
                 'expected_revision': self.tasks.snapshot(self.thread_id)['revision'],
@@ -127,10 +143,10 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
         with patch('nailong.core.verification.input_fingerprint', gate):
             pending = await self.start_scan('work_control', self.confirmation(), gate)
             # A real waiting run provides the stop command's normal authority.
-            queued = await asyncio.wait_for(self.controller.command('send', {
-                'branch_id': self.branch['id'], 'message': 'wait', 'request_id': 'during-scan'}), .3)
+            queued = await self.during_scan(self.controller.command('send', {
+                'branch_id': self.branch['id'], 'message': 'wait', 'request_id': 'during-scan'}), gate)
             await self.until(lambda: self.controller.runs[queued['run_id']]['status'] == 'running')
-            stopped = await asyncio.wait_for(self.controller.command('stop', {'run_id': queued['run_id']}), .3)
+            stopped = await self.during_scan(self.controller.command('stop', {'run_id': queued['run_id']}), gate)
             self.assertEqual(stopped['status'], 'stopped')
             replacement = self.tasks.begin(self.thread_id, 'unrelated new task', new=True)
             gate.release.set()
@@ -147,8 +163,8 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
         with patch('nailong.core.verification.input_fingerprint', gate):
             pending = await self.start_scan('work_control', payload, gate)
             external = TaskStore(self.sessions)
-            changed = await asyncio.wait_for(asyncio.to_thread(external.set_wait, self.thread_id,
-                reason='new dependency', condition='new result', expected_revision=payload['expected_revision']), .3)
+            changed = await self.during_scan(asyncio.to_thread(external.set_wait, self.thread_id,
+                reason='new dependency', condition='new result', expected_revision=payload['expected_revision']), gate)
             self.assertEqual(changed['revision'], payload['expected_revision'])
             gate.release.set()
             with self.assertRaisesRegex(ValueError, '任务|版本|变化'):
@@ -162,7 +178,7 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
             pending = await self.start_scan('work_control', self.confirmation(), gate)
             with patch('nailong.gui.controller.ProjectSessionStore', side_effect=lambda root:
                        ProjectSessionStore(root, base_dir=Path(self.temp.name)/'data')):
-                opened = await asyncio.wait_for(self.controller.command('open_project', {'path': str(other)}), .3)
+                opened = await self.during_scan(self.controller.command('open_project', {'path': str(other)}), gate)
             self.assertEqual(opened['project']['path'], str(other.resolve()))
             gate.release.set()
             with self.assertRaisesRegex(ValueError, '项目|变化'):
@@ -228,8 +244,8 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
                     'public': {'run_id': 'waiting', 'branch_id': self.branch['id'], 'action': {'name': 'run_command'}}}
                 with patch('nailong.core.verification.input_fingerprint', gate):
                     pending = await self.start_scan(name, payload, gate)
-                    approved = await asyncio.wait_for(self.controller.command('approve', {
-                        'action_id': 'approval', 'run_id': 'waiting', 'decision': 'approve_once'}), .3)
+                    approved = await self.during_scan(self.controller.command('approve', {
+                        'action_id': 'approval', 'run_id': 'waiting', 'decision': 'approve_once'}), gate)
                     self.assertTrue(approved['accepted'])
                     gate.release.set()
                     result = await pending
@@ -248,8 +264,8 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
         gate = PausedFingerprint()
         with patch('nailong.core.verification.input_fingerprint', gate):
             pending = await self.start_scan('work_control', payload, gate)
-            changed = await asyncio.wait_for(asyncio.to_thread(TaskStore(self.sessions).set_wait, self.thread_id,
-                reason='changed while scanning', condition='new result', expected_revision=task['revision']), .3)
+            changed = await self.during_scan(asyncio.to_thread(TaskStore(self.sessions).set_wait, self.thread_id,
+                reason='changed while scanning', condition='new result', expected_revision=task['revision']), gate)
             self.assertEqual(changed['revision'], task['revision'])
             gate.release.set()
             with self.assertRaisesRegex(ValueError, '任务|版本|变化'):
@@ -270,7 +286,7 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
         payload = self.feedback_payload('native-stage')
         with patch('nailong.core.verification.input_fingerprint', gate):
             pending = await self.start_scan('work_control', payload, gate)
-            created = await asyncio.wait_for(self.controller.command('create', {'name': 'while scanning'}), .3)
+            created = await self.during_scan(self.controller.command('create', {'name': 'while scanning'}), gate)
             self.assertEqual(created['name'], 'while scanning')
             gate.release.set()
             row = await pending
@@ -285,8 +301,8 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
             pending = await self.start_scan('work_control', {'operation': 'feedback_confirm',
                 'branch_id': self.branch['id'], 'id': row['id'], 'expected_revision': row['revision']}, gate)
             task = self.tasks.snapshot(self.thread_id)
-            await asyncio.wait_for(asyncio.to_thread(TaskStore(self.sessions).set_wait, self.thread_id,
-                reason='new input required', condition='updated result', expected_revision=task['revision']), .3)
+            await self.during_scan(asyncio.to_thread(TaskStore(self.sessions).set_wait, self.thread_id,
+                reason='new input required', condition='updated result', expected_revision=task['revision']), gate)
             gate.release.set()
             with self.assertRaisesRegex(ValueError, '任务|变化'):
                 await pending
@@ -340,7 +356,7 @@ class CommandScanTests(unittest.IsolatedAsyncioTestCase):
         with patch('nailong.core.verification.input_fingerprint', gate):
             pending = await self.start_scan('work_control', {'operation': 'feedback_confirm',
                 'branch_id': self.branch['id'], 'id': row['id'], 'expected_revision': row['revision']}, gate)
-            created = await asyncio.wait_for(self.controller.command('create', {'name': 'during publication'}), .3)
+            created = await self.during_scan(self.controller.command('create', {'name': 'during publication'}), gate)
             self.assertEqual(created['name'], 'during publication')
             gate.release.set()
             confirmed = await pending
