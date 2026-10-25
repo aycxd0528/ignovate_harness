@@ -3,13 +3,27 @@ from __future__ import annotations
 
 import asyncio
 import os
-from contextlib import AsyncExitStack
+from pathlib import Path
+import sys
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from nailong.mcp.config import MCPConfigStore, resolve_references
 from nailong.mcp.naming import tool_name
 from nailong.tools.results import failure, redact
+
+
+@dataclass
+class _Request:
+    tool: str
+    arguments: dict
+    result: asyncio.Future
+    caller: asyncio.Task
+    cancel_count: int
+    deadline: float
+    started: bool = False
+    finished: bool = False
 
 
 @dataclass
@@ -21,20 +35,42 @@ class _Connection:
     descriptors: tuple = ()
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=16))
     task: asyncio.Task | None = None
+    ready: asyncio.Future | None = None
+    closing: bool = False
+
+
+@asynccontextmanager
+async def _owner_stack(connection):
+    async with AsyncExitStack() as stack:
+        try:
+            yield stack
+        finally:
+            # SDK task groups may cancel this owner themselves (e.g. broken
+            # transport). Seal admission before any SDK __aexit__, including
+            # failures/cancellation that did not originate in _begin_close.
+            connection.closing = True
+            connection.descriptors = ()
+            connection.status = 'error' if connection.error else 'disconnecting'
 
 
 async def _join(task):
     """Finish the owner's teardown even when the requesting UI task is cancelled."""
-    while not task.done():
+    # gather turns the owner's expected cancellation into a value, so only a
+    # cancellation of this waiter is caught here. Shield prevents recancelling
+    # SDK task groups while their original owner unwinds them.
+    completion = asyncio.gather(task, return_exceptions=True)
+    cancelled = None
+    while not completion.done():
         try:
-            await asyncio.shield(task)
-        except asyncio.CancelledError:
-            if task.done():
-                break
-    try:
-        task.result()
-    except asyncio.CancelledError:
-        pass
+            await asyncio.shield(completion)
+        except asyncio.CancelledError as error:
+            cancelled = error
+    result = completion.result()[0]
+    error = result if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError) else None
+    if cancelled is not None:
+        raise cancelled from error
+    if error is not None:
+        raise error
 
 
 class MCPManager:
@@ -44,6 +80,7 @@ class MCPManager:
         self._secrets = {api_key} if api_key else set()
         self._api_key = api_key
         self._lifecycle_lock = asyncio.Lock()
+        self._shutdown_task = None
 
     def sanitize(self, value):
         if isinstance(value, dict):
@@ -71,40 +108,57 @@ class MCPManager:
     def connection_identity(self, name: str):
         return self._connections.get(name) if self.status(name)['status'] == 'connected' else None
 
+    @property
+    def has_live_connections(self):
+        """Whether an async owner still needs this manager's shutdown loop."""
+        return any(not connection.task.done() for connection in self._connections.values())
+
     async def connect(self, name: str) -> dict:
+        if self._shutting_down:
+            raise ValueError('MCP 服务正在关闭；请等待清理完成后重新连接。')
         async with self._lifecycle_lock:
+            if self._shutting_down:
+                raise ValueError('MCP 服务正在关闭；请等待清理完成后重新连接。')
             definition = self.store.list_servers().get(name)
             if definition is None:
                 raise ValueError('MCP 服务未配置；先使用 /mcp add。')
             if self.status(name)['status'] == 'connected':
                 return self.status(name)
             await self._disconnect(name)
+            if self._shutting_down:
+                raise ValueError('MCP 服务正在关闭；请等待清理完成后重新连接。')
             connection = _Connection(name, definition)
             self._connections[name] = connection
             ready = asyncio.get_running_loop().create_future()
+            connection.ready = ready
             connection.task = asyncio.create_task(self._serve(connection, ready), name=f'mcp:{name}')
             try:
                 await asyncio.wait_for(asyncio.shield(ready), definition.get('timeout_seconds', 30))
             except asyncio.CancelledError:
-                await self._disconnect(name)
-                if ready.done() and not ready.cancelled():
-                    ready.exception()
-                else:
-                    ready.cancel()
+                try:
+                    await self._disconnect(name)
+                finally:
+                    self._discard_ready(ready)
                 raise
             except Exception as error:
-                await self._disconnect(name)
-                if ready.done() and not ready.cancelled():
-                    ready.exception()
-                else:
-                    ready.cancel()
+                try:
+                    await self._disconnect(name)
+                finally:
+                    self._discard_ready(ready)
                 connection.status = 'error'
                 connection.error = connection.error or f'MCP 连接失败（{type(error).__name__}）；请检查服务配置、凭据与可执行文件。'
                 raise ValueError(connection.error) from None
             return self.status(name)
 
+    @staticmethod
+    def _discard_ready(ready):
+        if ready.done() and not ready.cancelled():
+            ready.exception()
+        else:
+            ready.cancel()
+
     async def _serve(self, connection, ready):
-        active_result = None
+        active_request = None
         try:
             # Lazy imports keep diagnostics and offline configuration usable without SDK.
             from mcp import ClientSession, StdioServerParameters
@@ -117,13 +171,22 @@ class MCPManager:
             if self._api_key and any(self._api_key in value for value in values.values()):
                 raise ValueError('MCP 不能使用模型 API 密钥。')
             self._secrets.update(values.values())
-            async with AsyncExitStack() as stack:
+            async with _owner_stack(connection) as stack:
                 if definition['transport'] == 'stdio':
                     # SDK inherits only its own minimal platform allowlist, plus explicit env.
                     errlog = stack.enter_context(open(os.devnull, 'w'))
-                    parameters = StdioServerParameters(command=definition['command'],
-                        args=definition.get('args', []), env=values, cwd=str(self.store.project_root))
+                    command,args=definition['command'],definition.get('args',[])
+                    ownership=None
+                    if os.name=='posix':
+                        from nailong.mcp.stdio_owner import StdioOwnership
+                        ownership=await stack.enter_async_context(StdioOwnership(connection))
+                        helper=Path(__file__).resolve().parents[1]/'core'/'_mcp_stdio_owner.py'
+                        command,args=sys.executable,['-I','-S',str(helper),str(os.getpid()),
+                            *ownership.arguments,command,*args]
+                    parameters = StdioServerParameters(command=command,
+                        args=args, env=values, cwd=str(self.store.project_root))
                     streams = await stack.enter_async_context(stdio_client(parameters, errlog=errlog))
+                    if ownership is not None:await ownership.attach()
                 else:
                     http = await stack.enter_async_context(httpx.AsyncClient(headers=values,
                         timeout=httpx.Timeout(timeout), follow_redirects=False))
@@ -169,26 +232,46 @@ class MCPManager:
                 connection.status = 'connected'
                 if not ready.done():
                     ready.set_result(None)
-                while True:
-                    tool, arguments, result = await connection.queue.get()
-                    if result.cancelled():
+                while not connection.closing:
+                    request = await connection.queue.get()
+                    connection.queue.task_done()
+                    if request.result.done():
                         continue
-                    active_result = result
+                    if request.caller.cancelling() > request.cancel_count:
+                        request.result.cancel()
+                        continue
+                    if asyncio.get_running_loop().time() >= request.deadline:
+                        request.result.set_result(failure('mcp_timeout',
+                            'MCP 排队等待超时；该请求未执行，连接保持。',
+                            timed_out=True, started=False, mcp_admitted=False))
+                        request.finished = True
+                        continue
+                    # No await between observing withdrawal and admitting this
+                    # request. Only the SDK owner can mark it as started.
+                    active_request = request
+                    request.started = True
                     try:
-                        response = await session.call_tool(tool, arguments=arguments)
+                        response = await session.call_tool(request.tool, arguments=request.arguments)
                         value = self._result(response)
                     except Exception as error:
-                        value = failure('mcp_transport_error', f'MCP 调用失败（{type(error).__name__}）；未自动重试，副作用需核对。')
+                        value = failure('mcp_transport_error', f'MCP 调用失败（{type(error).__name__}）；未自动重试，副作用需核对。',
+                                        started=True, mcp_admitted=True)
                         connection.error = value['error']
-                    if not result.done():
-                        result.set_result(self.sanitize(value))
-                    active_result = None
+                        # This owner is already unwinding its SDK contexts;
+                        # joining it must not issue another cancellation.
+                        connection.closing = True
+                        connection.status = 'error'
+                        connection.descriptors = ()
+                    if not request.result.done():
+                        request.result.set_result(self.sanitize(value))
+                    request.finished = True
+                    active_request = None
                     if connection.error:
                         break
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            connection.error = f'MCP 连接失败（{type(error).__name__}）；请检查服务配置、凭据与可执行文件。'
+            connection.error = connection.error or f'MCP 连接失败（{type(error).__name__}）；请检查服务配置、凭据与可执行文件。'
             if not ready.done():
                 ready.set_exception(ValueError(connection.error))
         finally:
@@ -196,13 +279,15 @@ class MCPManager:
             connection.status = 'error' if connection.error else 'disconnected'
             if not ready.done():
                 ready.cancel()
-            if active_result is not None and not active_result.done():
-                active_result.set_result(failure('mcp_disconnected',
-                    'MCP 连接已关闭；进行中的操作可能产生副作用，需核对结果。', started=True))
+            if active_request is not None and not active_request.result.done():
+                active_request.result.set_result(failure('mcp_disconnected',
+                    'MCP 连接已关闭；进行中的操作可能产生副作用，需核对结果。', started=True, mcp_admitted=True))
             while not connection.queue.empty():
-                _, _, result = connection.queue.get_nowait()
-                if not result.done():
-                    result.set_result(failure('mcp_disconnected', 'MCP 连接已关闭；未执行排队请求。', started=False))
+                request = connection.queue.get_nowait()
+                connection.queue.task_done()
+                if not request.result.done():
+                    request.result.set_result(failure('mcp_disconnected', 'MCP 连接已关闭；未执行排队请求。',
+                                                      started=False, mcp_admitted=False))
 
     @staticmethod
     def _result(response) -> dict:
@@ -215,7 +300,7 @@ class MCPManager:
                 text.append(content.resource.text)
             else:
                 omitted.append(content.type)
-        value = {'ok': not response.isError, 'content': '\n'.join(text)}
+        value = {'ok': not response.isError, 'content': '\n'.join(text), 'mcp_admitted': True}
         if response.structuredContent is not None:
             value['structured_content'] = response.structuredContent
         if omitted:
@@ -228,22 +313,50 @@ class MCPManager:
     async def call_tool(self, server: str, tool: str, arguments: dict) -> dict:
         connection = self._connections.get(server)
         if connection is None or self.status(server)['status'] != 'connected':
-            return failure('mcp_disconnected', 'MCP 服务未连接；请使用 /mcp connect。', started=False)
+            return failure('mcp_disconnected', 'MCP 服务未连接；请使用 /mcp connect。', started=False, mcp_admitted=False)
         if tool not in {item.name for item in connection.descriptors}:
-            return failure('mcp_unknown_tool', 'MCP 工具未在当前连接中发现。', started=False)
-        result = asyncio.get_running_loop().create_future()
+            return failure('mcp_unknown_tool', 'MCP 工具未在当前连接中发现。', started=False, mcp_admitted=False)
+        loop = asyncio.get_running_loop()
+        caller = asyncio.current_task()
+        timeout = connection.definition.get('timeout_seconds', 30)
+        request = _Request(tool, arguments, loop.create_future(), caller, caller.cancelling(), loop.time() + timeout)
         try:
-            connection.queue.put_nowait((tool, arguments, result))
+            connection.queue.put_nowait(request)
         except asyncio.QueueFull:
-            return failure('mcp_queue_full', 'MCP 服务的待执行请求已达上限。', started=False)
+            return failure('mcp_queue_full', 'MCP 服务的待执行请求已达上限。', started=False, mcp_admitted=False)
         try:
-            return await asyncio.wait_for(result, connection.definition.get('timeout_seconds', 30))
+            value = await asyncio.wait_for(request.result, timeout)
+            if connection.error:
+                await self._close(connection)
+            return value
         except asyncio.CancelledError:
-            await self._close(connection)
+            if not request.started:
+                self._withdraw(connection)
+            elif not request.finished:
+                await self._close(connection)
             raise
         except TimeoutError:
-            await self._close(connection)
-            return failure('mcp_timeout', 'MCP 调用超时，连接已关闭；未自动重试，副作用需核对。', timed_out=True)
+            if not request.started:
+                self._withdraw(connection)
+                return failure('mcp_timeout', 'MCP 排队等待超时；该请求未执行，连接保持。',
+                               timed_out=True, started=False, mcp_admitted=False)
+            if not request.finished or connection.error:
+                await self._close(connection)
+            return failure('mcp_timeout', 'MCP 调用超时；未自动重试，副作用需核对。',
+                           timed_out=True, started=True, mcp_admitted=True)
+
+    @staticmethod
+    def _withdraw(connection):
+        # At most 16 entries; draining/restoring without await also releases
+        # capacity immediately while the SDK owner is busy with another call.
+        pending = []
+        while not connection.queue.empty():
+            request = connection.queue.get_nowait()
+            connection.queue.task_done()
+            if not request.result.done():
+                pending.append(request)
+        for request in pending:
+            connection.queue.put_nowait(request)
 
     async def _disconnect(self, name):
         connection = self._connections.get(name)
@@ -251,16 +364,46 @@ class MCPManager:
 
     async def _close(self, connection):
         if connection and connection.task:
-            if not connection.task.done():
-                connection.task.cancel()
+            self._begin_close(connection)
             await _join(connection.task)
-            connection.descriptors = ()
+
+    @staticmethod
+    def _begin_close(connection):
+        # Also wake connect when an SDK failure already sealed admission but
+        # is still unwinding before it can publish ready's original error.
+        if connection.ready is not None and not connection.ready.done():
+            connection.ready.cancel()
+        if connection.closing:
+            return
+        connection.closing = True
+        connection.status = 'disconnecting'
+        connection.descriptors = ()
+        if connection.task is not None and not connection.task.done():
+            connection.task.cancel()
 
     async def disconnect(self, name: str) -> None:
-        async with self._lifecycle_lock:
-            await self._disconnect(name)
+        # Capture this generation before the first await. Closing its SDK owner
+        # needs no lifecycle lock: connect already joins that same owner before
+        # replacement. An unrelated connecting server cannot defer admission of
+        # this stop or let a cancelled waiter abandon its resources.
+        await self._close(self._connections.get(name))
 
     async def aclose(self) -> None:
+        # Admit shutdown before waiting for the lifecycle lock. All resources
+        # remain owned even if this controller is cancelled while connect or
+        # disconnect holds the lock. Concurrent callers join the same shutdown.
+        if not self._shutting_down:
+            connections = tuple(self._connections.values())
+            for connection in connections:
+                self._begin_close(connection)
+            self._shutdown_task = asyncio.create_task(self._shutdown(connections), name='mcp:shutdown')
+        await _join(self._shutdown_task)
+
+    @property
+    def _shutting_down(self):
+        return self._shutdown_task is not None and not self._shutdown_task.done()
+
+    async def _shutdown(self, connections):
         async with self._lifecycle_lock:
-            for name in tuple(self._connections):
-                await self._disconnect(name)
+            for connection in connections:
+                await self._close(connection)

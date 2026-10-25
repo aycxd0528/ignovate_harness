@@ -128,6 +128,31 @@ class ExecutionDisplayTests(unittest.TestCase):
 
 
 class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
+    async def wait_for_transcript(self, pilot, size=None):
+        app = pilot.app
+        log = app.query_one('#transcript', RichLog)
+        # Reflow may reach the bottom before its follow-completion callback runs.
+        async def settle():
+            while True:
+                await pilot.pause()
+                if ((size is None or app.screen.size == Size(*size))
+                        and log._render_size == (log._size, log.container_size)
+                        and log._resize_scroll is None
+                        and not log._reflow_scheduled
+                        and not log._full_reflow_pending
+                        and not log._follow_requested):
+                    return
+        try:
+            await asyncio.wait_for(settle(), 3)
+        except TimeoutError:
+            self.fail(
+                f'Transcript did not settle at {size!r}: screen={app.screen.size!r}, '
+                f'render_size={log._render_size!r}, viewport={(log._size, log.container_size)!r}, '
+                f'resize_scroll={log._resize_scroll!r}, reflow={log._reflow_scheduled!r}, '
+                f'full_reflow={log._full_reflow_pending!r}, follow={log._follow_requested!r}, '
+                f'scroll_y={log.scroll_y!r}'
+            )
+
     async def test_dashboard_shows_step_statistics_only_in_detailed_mode(self):
         for output_style in ('normal', 'detailed'):
             with self.subTest(output_style=output_style), tempfile.TemporaryDirectory() as directory:
@@ -137,7 +162,7 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
                     tracker, streamed = StepTracker(), []
                     app._render_flow_event(TurnEvent('usage', {'input_tokens': 50, 'output_tokens': 2}), tracker, streamed)
                     app._render_flow_event(TurnEvent('final', {'text': '检查完成'}), tracker, streamed)
-                    await pilot.pause()
+                    await self.wait_for_transcript(pilot)
                     display = ''.join(line.text for line in app.query_one('#transcript', RichLog).lines)
                     self.assertEqual('模型调用 1' in display, output_style == 'detailed')
                     self.assertEqual('tokens im=50 out=2' in display, output_style == 'detailed')
@@ -152,42 +177,18 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
                     app._append_assistant(f"Paragraph {index:02d}: " + "需要在窄窗口中重新换行并保持滚动位置。" * 4)
                 log = app.query_one('#transcript', RichLog)
 
-                async def wait_for_transcript(size):
-                    # Reflow may reach the bottom before its follow-completion callback runs.
-                    async def settle():
-                        while True:
-                            await pilot.pause()
-                            if (app.screen.size == Size(*size)
-                                    and log._render_size == (log._size, log.container_size)
-                                    and log._resize_scroll is None
-                                    and not log._reflow_scheduled
-                                    and not log._full_reflow_pending
-                                    and not log._follow_requested):
-                                return
-
-                    try:
-                        await asyncio.wait_for(settle(), 3)
-                    except TimeoutError:
-                        self.fail(
-                            f'Transcript did not settle at {size!r}: screen={app.screen.size!r}, '
-                            f'render_size={log._render_size!r}, viewport={(log._size, log.container_size)!r}, '
-                            f'resize_scroll={log._resize_scroll!r}, reflow={log._reflow_scheduled!r}, '
-                            f'full_reflow={log._full_reflow_pending!r}, follow={log._follow_requested!r}, '
-                            f'scroll_y={log.scroll_y!r}'
-                        )
-
-                await wait_for_transcript((100, 30))
+                await self.wait_for_transcript(pilot, (100, 30))
                 self.assertTrue(log.is_vertical_scroll_end)
                 await pilot.resize_terminal(40, 18)
-                await wait_for_transcript((40, 18))
+                await self.wait_for_transcript(pilot, (40, 18))
                 self.assertTrue(log.is_vertical_scroll_end)
                 visible = ''.join(log.render_line(y).text for y in range(log.scrollable_content_region.height))
                 self.assertIn('Paragraph 14', visible)
                 log.scroll_to(y=0, animate=False)
-                await wait_for_transcript((40, 18))
+                await self.wait_for_transcript(pilot, (40, 18))
                 self.assertEqual(log.scroll_y, 0)
                 await pilot.resize_terminal(90, 28)
-                await wait_for_transcript((90, 28))
+                await self.wait_for_transcript(pilot, (90, 28))
                 self.assertEqual(log.scroll_y, 0, '阅读较早的消息时不应强制跳到末尾')
 
     async def test_theme_switch_recolors_messages_already_in_history(self):
@@ -197,10 +198,10 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(80, 24)) as pilot:
                 app._append_user('检查主题')
                 app._append_assistant('已有回复也应该保持可读。')
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 app.actions.preferences.set('theme', 'light')
                 app._refresh_preferences()
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 segments = [segment for line in app.query_one('#transcript', RichLog).lines for segment in line if '已有回复' in segment.text]
                 self.assertTrue(segments)
                 self.assertEqual(segments[0].style.color, Style(color='#28343c').color)
@@ -212,15 +213,15 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
                 app._append_user('检查项目')
                 for index in range(8):
                     app._append_assistant(f'回复 {index}：' + '已有对话内容。' * 10)
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 app._append_activity(TurnEvent('tool_start', {'call_id': 'run', 'name': 'run_command', 'preview': {'command': 'python -m unittest'}}), [])
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 app._clear_tool_activity()
                 app.actions.preferences.set('theme', 'light')
                 app._refresh_preferences()
                 app._append_user('检查新回复')
                 app._append_assistant('最新回复应在视口中显示。')
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 log = app.query_one('#transcript', RichLog)
                 visible = ''.join(log.render_line(y).text for y in range(log.scrollable_content_region.height))
                 self.assertIn('最新回复应在视口中显示。', visible)
@@ -232,9 +233,9 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(100, 30)) as pilot:
                 app._append_user('检查项目')
                 app._append_assistant('这是一段较长的中文回复，需要在窗口变窄时重新换行，保留最后的结论。')
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 await pilot.resize_terminal(40, 18)
-                await pilot.pause()
+                await self.wait_for_transcript(pilot, (40, 18))
                 log = app.query_one('#transcript', RichLog)
                 self.assertLessEqual(log.virtual_size.width, log.scrollable_content_region.width)
                 self.assertIn('最后的结论。', ''.join(line.text for line in log.lines))
@@ -267,26 +268,26 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
                 app._dispatch("检查并测试")
                 try:
                     await asyncio.wait_for(started.wait(), 2)
-                    await pilot.pause()
+                    await self.wait_for_transcript(pilot)
                     transcript = "\n".join(strip.text for strip in app.query_one("#transcript", RichLog).lines)
                     self.assertIn("python -m unittest", transcript,
                                   "正在执行的工具应在对话中有可见记录")
                     self.assertNotIn("退出码", transcript)
                     finish_tool.set()
                     await asyncio.wait_for(finished.wait(), 2)
-                    await pilot.pause()
+                    await self.wait_for_transcript(pilot)
                     transcript = "\n".join(strip.text for strip in app.query_one("#transcript", RichLog).lines)
                     self.assertIn("退出码 0", transcript)
                     self.assertNotIn("Ran 12 tests", transcript)
                     await pilot.press('ctrl+o')
-                    await pilot.pause()
+                    await self.wait_for_transcript(pilot)
                     transcript = "\n".join(strip.text for strip in app.query_one("#transcript", RichLog).lines)
                     self.assertIn("Ran 12 tests", transcript)
                     self.assertNotIn("检查完成", transcript)
                     self.assertIsNone(app._live_response.pending_activity)
                     conversation = app.screen
                     app._show_tool_details(1)
-                    await pilot.pause()
+                    await self.wait_for_transcript(pilot)
                     self.assertIs(app.screen, conversation, '工具详情应在正文展开')
                     text = '\n'.join(line.text for line in app.query_one('#transcript', RichLog).lines)
                     self.assertIn("python -m unittest", text)
@@ -296,7 +297,7 @@ class ExecutionDashboardTests(unittest.IsolatedAsyncioTestCase):
                     finish_tool.set()
                     finish_reply.set()
                     await app.session_runner.wait_idle()
-                await pilot.pause()
+                await self.wait_for_transcript(pilot)
                 self.assertIs(app.screen, conversation)
                 self.assertFalse(app.query('#tool-details-dialog'))
                 transcript = "\n".join(strip.text for strip in app.query_one("#transcript", RichLog).lines)

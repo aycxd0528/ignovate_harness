@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from nailong.core.verification import VerificationService, verify_goal_if_configured
+from nailong.core.verification import VerificationService, verify_goal_if_configured, snapshot_identity
 
 
 class VerificationWorkerCancellationTests(unittest.IsolatedAsyncioTestCase):
@@ -66,32 +66,37 @@ class VerificationWorkerCancellationTests(unittest.IsolatedAsyncioTestCase):
         return caught
 
     async def test_cancellation_joins_validation_and_every_fingerprint_stage(self):
-        for stage, blocked_call in (('validation', 0), ('initial', 1), ('approval', 2), ('final', 3)):
+        for stage, blocked_call in (('validation', 0), ('initial', 1), ('approval', 2), ('outputs', 3), ('final', 4)):
             with self.subTest(stage=stage):
                 self.events.clear()
                 work, started, release, closed, held = self.blocking_worker()
                 calls = 0
 
-                def fingerprint(*args):
+                def fingerprint(*args, **kwargs):
                     nonlocal calls
                     calls += 1
-                    return work() if calls == blocked_call else 'unchanged'
+                    value = snapshot_identity(*args, **kwargs)
+                    if calls == blocked_call:
+                        work()
+                    return value
 
+                service = VerificationService(self.root, self.store)
+                native_validation = service._validate_generated
                 def validate(*args):
                     if stage == 'validation':
                         work()
+                    return native_validation(*args)
 
-                service = VerificationService(self.root, self.store)
                 result = {'ok': True, 'started': True, 'exit_code': 0, 'output': '',
                           'timed_out': False, 'observed': None}
-                with patch('nailong.core.verification.input_fingerprint', side_effect=fingerprint), \
+                with patch('nailong.core.verification.snapshot_identity', side_effect=fingerprint), \
                         patch('nailong.core.verification._git', return_value=b''), \
                         patch.object(service, '_validate_generated', side_effect=validate), \
                         patch('nailong.core.verification.execute_process', new=AsyncMock(return_value=result)):
                     await self.cancel_blocked(service.run('thread', permission_mode='bypassPermissions'),
                                               started, release, closed)
                 held.unlink()
-                if stage in {'approval', 'final'}:
+                if stage in {'approval', 'outputs', 'final'}:
                     self.assertEqual(self.events[-1][2]['status'], 'cancelled')
                 else:
                     self.assertEqual(self.events, [])
@@ -100,9 +105,9 @@ class VerificationWorkerCancellationTests(unittest.IsolatedAsyncioTestCase):
         work, started, release, closed, held = self.blocking_worker()
         goal = SimpleNamespace(id='goal', state='active', verification_tool='verify',
                                verification_succeeded=True, verification_project_root=self.root,
-                               verification_generated_paths=[], verification_fingerprint='unchanged')
+                               verification_generated_paths=[], verification_manifest=None, verification_fingerprint='unchanged')
         factory = SimpleNamespace(settings=SimpleNamespace(project_root=self.root, api_key=''),
-                                  goal_store=SimpleNamespace(get=lambda _: goal))
+                                  goal_store=SimpleNamespace(get=lambda _: goal, path=self.root/'goals.json'))
         with patch('nailong.core.verification.input_fingerprint', side_effect=lambda *args: work()):
             await self.cancel_blocked(verify_goal_if_configured(SimpleNamespace(), factory, goal, 'thread'),
                                       started, release, closed)
@@ -112,7 +117,7 @@ class VerificationWorkerCancellationTests(unittest.IsolatedAsyncioTestCase):
         failure = ValueError('Fingerprint failed after cancellation.')
         work, started, release, closed, held = self.blocking_worker(failure)
         service = VerificationService(self.root, self.store)
-        with patch('nailong.core.verification.input_fingerprint', side_effect=lambda *args: work()):
+        with patch('nailong.core.verification.snapshot_identity', side_effect=lambda *args, **kwargs: work()):
             cancelled = await self.cancel_blocked(service.run('thread'), started, release, closed)
         self.assertIs(cancelled.__cause__, failure)
         held.unlink()
@@ -120,7 +125,7 @@ class VerificationWorkerCancellationTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_error_without_cancellation_is_unchanged(self):
         failure = ValueError('Fingerprint failed.')
         service = VerificationService(self.root, self.store)
-        with patch('nailong.core.verification.input_fingerprint', side_effect=failure):
+        with patch('nailong.core.verification.snapshot_identity', side_effect=failure):
             with self.assertRaises(ValueError) as caught:
                 await service.run('thread')
         self.assertIs(caught.exception, failure)

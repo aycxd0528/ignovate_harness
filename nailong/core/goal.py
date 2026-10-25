@@ -46,6 +46,7 @@ class Goal:
     verification_fingerprint: str = ""
     verification_project_root: str = ""
     verification_generated_paths: list[str] = field(default_factory=list)
+    verification_manifest: dict | None = None
     verification_task_id: str = ''
     verification_task_revision: int = 0
     thread_id: str | None = None
@@ -53,6 +54,18 @@ class Goal:
     last_progress: dict = field(default_factory=dict)
     recent_progress: list[dict] = field(default_factory=list)
     no_change_rounds: int = 0
+    pending_cost_rounds: dict = field(default_factory=dict)
+    cost_recovery_required: bool = False
+
+
+@dataclass
+class _CompletionObservation:
+    goal: Goal | None
+    task_store: object
+    project_root: Path | None
+    task: dict | None = None
+    current: str | None = None
+    verification_current: str | None = None
 
 
 class GoalStore:
@@ -67,6 +80,8 @@ class GoalStore:
         self._lock = threading.RLock()
         self._lock_depth = 0
         self._driver_owner = None
+        from nailong.core.goal_costs import GoalCostLedger
+        self.costs = GoalCostLedger(self)
         with pinned_directory(self.path.parent, create=True):
             pass
 
@@ -115,27 +130,82 @@ class GoalStore:
         try:
             with open_regular_file(self.path, binary=False) as source:
                 payload = json.load(source)
-        except (OSError, UnicodeError, json.JSONDecodeError):
+        except FileNotFoundError:
             return {}
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError('目标状态无法读取或已损坏，未重置进度和费用。') from error
+        if not isinstance(payload, list):
+            raise ValueError('目标状态必须为列表，未重置进度和费用。')
         goals = {}
-        for value in payload if isinstance(payload, list) else []:
-            if isinstance(value, dict) and value.get("id"):
-                try:
-                    goals[str(value["id"])] = Goal(**value)
-                except (TypeError, ValueError):
-                    continue
+        try:
+            for value in payload:
+                goal = Goal(**value)
+                self._validate_goal(goal)
+                if goal.id in goals:
+                    raise ValueError('duplicate goal')
+                goals[goal.id] = goal
+            if sum(goal.state == 'active' for goal in goals.values()) > 1:
+                raise ValueError('multiple active goals')
+        except (TypeError, ValueError) as error:
+            raise ValueError('目标状态身份、预算或记录无效，未重置进度和费用。') from error
         return goals
+
+    @staticmethod
+    def _validate_goal(goal: Goal) -> None:
+        """Reject damaged ledgers instead of dropping their spending history."""
+        for name in ('id', 'objective', 'created_at'):
+            if not isinstance(getattr(goal, name), str) or not getattr(goal, name).strip():
+                raise ValueError('invalid goal identity')
+        if goal.state not in {'active', 'paused', 'complete', 'blocked'}:
+            raise ValueError('invalid goal state')
+        for name in ('round', 'max_rounds', 'blocked_rounds', 'idle_rounds',
+                     'verification_task_revision', 'no_change_rounds', 'blocker_observed_round'):
+            value = getattr(goal, name)
+            if type(value) is not int or value < (-1 if name == 'blocker_observed_round' else 0):
+                raise ValueError('invalid goal counter')
+        if not 1 <= goal.max_rounds <= 100:
+            raise ValueError('invalid goal round limit')
+        for name in ('spent_usd', 'max_cost_usd'):
+            from nailong.core.goal_costs import _usd
+            _usd(getattr(goal,name))
+        if not 0 < goal.max_cost_usd <= 100:
+            raise ValueError('invalid goal cost limit')
+        for name in ('last_summary', 'pause_reason', 'verification_command', 'verification_output',
+                     'verification_tool', 'verification_recorded_at', 'verification_run_id',
+                     'verification_fingerprint', 'verification_project_root', 'verification_task_id'):
+            if not isinstance(getattr(goal, name), str):
+                raise ValueError('invalid goal text')
+        for value in (goal.thread_id, goal.verification_thread_id, goal.last_blocker):
+            if value is not None and not isinstance(value, str):
+                raise ValueError('invalid goal binding')
+        if type(goal.verification_succeeded) is not bool or (goal.verification_exit_code is not None
+                and type(goal.verification_exit_code) is not int):
+            raise ValueError('invalid goal verification')
+        if type(goal.cost_recovery_required) is not bool or goal.cost_recovery_required and goal.state!='paused':
+            raise ValueError('invalid goal cost recovery state')
+        for values in (goal.settled_round_ids, goal.verification_generated_paths):
+            if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+                raise ValueError('invalid goal references')
+        if goal.verification_manifest is not None:
+            from nailong.core.verification_artifacts import validate_reference
+            validate_reference(goal.verification_manifest)
+        if (not isinstance(goal.last_progress, dict) or not isinstance(goal.recent_progress, list)
+                or any(not isinstance(row, dict) for row in goal.recent_progress)):
+            raise ValueError('invalid goal progress')
+        from nailong.core.goal_costs import validate_cost_rounds
+        validate_cost_rounds(goal)
 
     def _save(self, goals: dict[str, Goal]) -> None:
         content = []
         for goal in goals.values():
+            self._validate_goal(goal)
             data = asdict(goal)
             if self.api_key:
                 for key, value in data.items():
                     if isinstance(value, str):
                         data[key] = value.replace(self.api_key, "[密钥已隐藏]")
             content.append(data)
-        encoded = json.dumps(content, ensure_ascii=False, indent=2).encode("utf-8")
+        encoded = json.dumps(content, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
         atomic_write_bytes(self.path, encoded)
 
     def create(
@@ -154,6 +224,7 @@ class GoalStore:
         if not 0 < float(max_cost_usd) <= 100:
             raise ValueError("目标成本上限必须大于 0 且不超过 100 美元。")
         with self.driver_lease(), self._locked():
+            self.costs.recover()
             goals = self._load()
             if any(goal.state == "active" for goal in goals.values()):
                 raise ValueError("已有进行中的目标；请先用 /goal status 查看或暂停它。")
@@ -220,10 +291,12 @@ class GoalStore:
     def resume(self, goal_id: str, *, thread_id: str | None = None) -> tuple[bool, str, Goal | None]:
         """Resume a paused goal only after an explicit caller action."""
         with self.driver_lease(), self._locked():
+            recovered=self.costs.recover(goal_id)
             goals = self._load()
             goal = goals.get(goal_id)
             if goal is None:
                 return False, "找不到该目标。", None
+            if recovered:return False,goal.pause_reason,goal
             if goal.state != "paused":
                 return False, f"目标当前状态为 {goal.state}，不能恢复。", goal
             limit_reason = self._limit_reason(goal)
@@ -232,6 +305,7 @@ class GoalStore:
             if any(item.state == "active" for item in goals.values()):
                 return False, "已有进行中的目标；请先完成或暂停它。", goal
             goal.state = "active"
+            goal.cost_recovery_required = False
             goal.pause_reason = ""
             goal.blocked_rounds = 0
             goal.last_blocker = None
@@ -254,6 +328,7 @@ class GoalStore:
 
     def prepare_round(self, goal_id: str) -> Goal | None:
         """Read current state and enforce limits before any new model call."""
+        self.costs.recover(goal_id)
         with self._locked():
             goals = self._load()
             goal = goals.get(goal_id)
@@ -278,22 +353,29 @@ class GoalStore:
         goal.verification_fingerprint = ""
         goal.verification_project_root = ""
         goal.verification_generated_paths = []
+        goal.verification_manifest = None
         goal.verification_task_id = ''
         goal.verification_task_revision = 0
 
     def record_verified_run(self, record: dict) -> bool:
         if record.get('status') != 'passed' or not record.get('complete'):
             return False
-        with self._locked():
+        tasks = self.task_store
+        if tasks is not None and (not isinstance(record.get('thread_id'), str) or not record['thread_id']):
+            return False
+        # Intake owns the task before updating its goal. Keep the same order
+        # here so a verification result cannot deadlock a user amendment.
+        binding = tasks._locked(record.get('thread_id')) if tasks is not None else nullcontext()
+        with binding, self._locked():
             goals = self._load()
             goal = goals.get(record.get('goal_id'))
             if goal is None or goal.state != 'active' or goal.thread_id != record.get('thread_id'):
                 return False
-            if self.task_store is not None:
-                task=self.task_store.snapshot(goal.thread_id)
+            if tasks is not None:
+                task=tasks.snapshot(goal.thread_id)
                 if task is None or (task['task_id'],task['revision'])!=(record.get('task_id'),record.get('task_revision')):
-                    self._clear_verification(goal)
-                    self._save(goals)
+                    # A stale receipt has no authority to erase newer proof.
+                    # Completion independently binds proof to the current task.
                     return False
             rows = record.get('steps', [])
             if not rows or not all(row.get('ok') and row.get('started') for row in rows):
@@ -309,10 +391,54 @@ class GoalStore:
             goal.verification_fingerprint = record['input_after']
             goal.verification_project_root = record['cwd']
             goal.verification_generated_paths = record.get('generated_paths', [])
+            goal.verification_manifest = record.get('artifact_manifest')
             goal.verification_task_id = record.get('task_id') or ''
             goal.verification_task_revision = record.get('task_revision') or 0
             self._save(goals)
             return True
+
+    @staticmethod
+    def _has_verification(goal: Goal) -> bool:
+        return bool(
+            goal.verification_tool in {'run_command', 'verify'}
+            and goal.verification_exit_code == 0
+            and goal.verification_recorded_at
+            and goal.verification_succeeded
+            and goal.verification_command.strip()
+            and goal.verification_thread_id == goal.thread_id
+        )
+
+    def _completion_observation(self, goal_id, thread_id):
+        """Collect slow input observations without a goal or task transaction."""
+        observed = _CompletionObservation(self.get(goal_id), self.task_store, self.project_root)
+        goal = observed.goal
+        if (goal is None or goal.state != 'active'
+                or goal.thread_id is not None and goal.thread_id != thread_id
+                or any(row['reservations'] or not row['usage_complete']
+                    for row in goal.pending_cost_rounds.values())):
+            return observed
+        from nailong.core.verification import current_evidence
+        if observed.task_store is not None:
+            task = observed.task_store.snapshot(thread_id) if thread_id else None
+            observed.task = task
+            if task is None or task['objective'] != goal.objective or task['lifecycle'] in {'paused', 'blocked'}:
+                return observed
+            if goal.verification_tool == 'verify' and (task['task_id'], task['revision']) != (
+                    goal.verification_task_id, goal.verification_task_revision):
+                return observed
+            try:
+                observed.current = current_evidence(observed.project_root, task,
+                    observed.task_store.sessions.root)
+            except (OSError, ValueError):
+                pass
+        if self._has_verification(goal) and goal.verification_tool == 'verify':
+            try:
+                observed.verification_current = current_evidence(goal.verification_project_root,
+                    {'verification_generated_paths': goal.verification_generated_paths,
+                     'verification_manifest': goal.verification_manifest}, self.path.parent)
+            except (OSError, ValueError):
+                pass
+        return observed
 
     def record_verification(
         self,
@@ -392,7 +518,14 @@ class GoalStore:
     ) -> tuple[bool, str, Goal | None]:
         if state not in {"active", "paused", "complete", "blocked"}:
             return False, "目标状态无效。", None
-        with self._locked():
+        observed = self._completion_observation(goal_id, thread_id) if state == 'complete' else None
+        task_identity = ((observed.task['task_id'], observed.task['revision'])
+            if observed is not None and observed.task is not None else None)
+        binding = (observed.task_store.bound_task(thread_id, *task_identity)
+            if task_identity is not None else nullcontext())
+        # All combined task/goal mutations acquire the task first. No input
+        # scan runs inside either transaction; compare the full saved states.
+        with binding as bound_task, self._locked():
             goals = self._load()
             goal = goals.get(goal_id)
             if goal is None:
@@ -401,6 +534,18 @@ class GoalStore:
                 return False, f"目标当前状态为 {goal.state}，不能继续更新。", goal
             if goal.thread_id is not None and goal.thread_id != thread_id:
                 return False, "当前会话不属于此目标；请先恢复目标会话。", goal
+            if observed is not None and (goal != observed.goal
+                    or self.task_store is not observed.task_store
+                    or self.project_root != observed.project_root):
+                return False, '完成检查期间目标状态或验证记录已变化，请重新核对。', goal
+            if observed is not None:
+                from nailong.core.input_snapshot import active_snapshot_cancellation
+                cancellation = active_snapshot_cancellation.get()
+                if cancellation is not None and cancellation.is_set():
+                    return False, '完成检查已取消，未提交目标完成状态。', goal
+            if state=='complete' and any(row['reservations'] or not row['usage_complete']
+                    for row in goal.pending_cost_rounds.values()):
+                return False,'仍有在途或用量未知的模型费用，不能完成整体目标。',goal
             if self.api_key:
                 summary = summary.replace(self.api_key, "[密钥已隐藏]")
                 blocker = blocker.replace(self.api_key, "[密钥已隐藏]") if blocker else blocker
@@ -415,40 +560,23 @@ class GoalStore:
                         return False,'仍有未完成或待核对的派发，不能完成整体目标。',goal
                 except (ValueError,OSError,TypeError,AttributeError):
                     return False,'无法核对派发控制状态，未完成整体目标。',goal
-            task_identity = None
-            current = None
+            current = observed.current if observed is not None else None
             if state == 'complete' and self.task_store is not None:
-                from nailong.core.verification import input_fingerprint
                 from nailong.core.delivery import build_delivery_report
-                task = self.task_store.snapshot(thread_id) if thread_id else None
+                task = observed.task
                 if task is None or task['objective'] != goal.objective:
                     return False, '当前目标没有对应任务验收，请先核对 /task。', goal
-                task_identity = (task['task_id'], task['revision'])
+                if task['lifecycle'] in {'paused', 'blocked'}:
+                    return False, '当前任务已暂停或阻塞，请先明确恢复后再完成。', goal
                 if goal.verification_tool == 'verify' and (task['task_id'], task['revision']) != (
                         goal.verification_task_id, goal.verification_task_revision):
                     self._clear_verification(goal)
                     self._save(goals)
                     return False, '目标验证不属于当前任务版本，请重新 /verify。', goal
-                try:
-                    current = input_fingerprint(self.project_root, task.get('verification_generated_paths', []))
-                except (OSError, ValueError):
-                    current = None
-            if state == "complete" and not (
-                goal.verification_tool in {"run_command", "verify"}
-                and goal.verification_exit_code == 0
-                and goal.verification_recorded_at
-                and goal.verification_succeeded
-                and goal.verification_command.strip()
-                and goal.verification_thread_id == goal.thread_id
-            ):
+            if state == "complete" and not self._has_verification(goal):
                 return False, "完成目标必须先在当前目标会话中成功实际执行验证命令。", goal
             if state == "complete" and goal.verification_tool == "verify":
-                from nailong.core.verification import input_fingerprint
-                try:
-                    current = input_fingerprint(goal.verification_project_root, goal.verification_generated_paths)
-                except (OSError, ValueError):
-                    current = None
-                if current != goal.verification_fingerprint:
+                if observed.verification_current != goal.verification_fingerprint:
                     self._clear_verification(goal)
                     self._save(goals)
                     return False, "项目输入已变化或摘要无法完整取得，请重新 /verify。", goal
@@ -466,28 +594,23 @@ class GoalStore:
                 if goal.blocked_rounds < 3:
                     self._save(goals)
                     return False, f"相同阻塞原因已连续记录 {goal.blocked_rounds}/3 轮；目标仍保持 active。", goal
-            # Hashing may allow another process to amend or replace the task.
-            # Commit acceptance and completion under one final identity lock.
-            binding = (self.task_store.bound_task(thread_id, *task_identity)
-                if task_identity is not None else nullcontext())
-            with binding as task:
-                if task_identity is not None:
-                    if task is None:
-                        self._clear_verification(goal)
-                        self._save(goals)
-                        return False, '完成前任务身份或要求已变化，请重新核对 /task 并验证。', goal
-                    task = self.task_store.reconcile(thread_id, current_input_fingerprint=current)
-                    report = build_delivery_report(task, current_input_fingerprint=current)
-                    if report['status'] not in {'verified', 'reviewed'}:
-                        return False, '目标验收尚未满足；配置命令成功不能替代功能目标覆盖，请查看 /task。', goal
-                    self.task_store.set_state(thread_id, phase='deliver', lifecycle='completed',
-                        current_input_fingerprint=current)
-                goal.state = state
-                goal.last_summary = summary.replace(self.api_key, "[密钥已隐藏]") if self.api_key else summary
-                goal.pause_reason = summary if state == "paused" else ""
-                goals[goal.id] = goal
-                self._save(goals)
-                return True, f"目标状态已更新为 {state}。", goal
+            if task_identity is not None:
+                if bound_task != observed.task:
+                    self._clear_verification(goal)
+                    self._save(goals)
+                    return False, '完成前任务身份、要求或状态已变化，请重新核对 /task 并验证。', goal
+                task = self.task_store.reconcile(thread_id, current_input_fingerprint=current)
+                report = build_delivery_report(task, current_input_fingerprint=current)
+                if report['status'] not in {'verified', 'reviewed'}:
+                    return False, '目标验收尚未满足；配置命令成功不能替代功能目标覆盖，请查看 /task。', goal
+                self.task_store.set_state(thread_id, phase='deliver', lifecycle='completed',
+                    current_input_fingerprint=current)
+            goal.state = state
+            goal.last_summary = summary.replace(self.api_key, "[密钥已隐藏]") if self.api_key else summary
+            goal.pause_reason = summary if state == "paused" else ""
+            goals[goal.id] = goal
+            self._save(goals)
+            return True, f"目标状态已更新为 {state}。", goal
 
     def record_round(
         self,
@@ -512,8 +635,13 @@ class GoalStore:
             completed = goal.state == "complete"
             blocked = goal.state == "blocked"
             paused = goal.state == "paused"
+            from nailong.core.goal_costs import finish_cost_round
+            additional_cost,unknown_cost=finish_cost_round(goal,round_id,cost_usd)
+            if unknown_cost:goal.cost_recovery_required=True
+            if unknown_cost and not stop_reason:
+                stop_reason='模型用量未知或仍有未结算预留，已保守计费并暂停目标。'
             goal.round += 1
-            goal.spent_usd += max(0.0, float(cost_usd))
+            goal.spent_usd += additional_cost
             if round_id:
                 goal.settled_round_ids.append(round_id)
             if progress is not None:

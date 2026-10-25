@@ -187,9 +187,10 @@ class ResultArchive:
             "ok", "status", "error", "error_code", "retryable", "hint", "path",
             "exit_code", "expected_exit_code", "exit_code_matches", "completed", "execution_mode", "shell",
             "output_chars", "output_archive", "tool_result_id", "tool_result_turn_id",
-            "timed_out", "cancelled", "started", "replacements", "chars_written", "line_start",
+            "timed_out", "cancelled", "started", "mcp_admitted", "replacements", "chars_written", "line_start",
             "line_end", "offset", "next_offset", "next_char_offset", "version",
             "input_fingerprint", "total_matches", "backend", "pattern_mode", "coverage_complete",
+            "child_status", "resume_reference", "parent_run_id", "resume_position", "usage_complete", "stop_reason",
         ) if key in result}
         bounded.update(truncated=True, result_truncated=True, coverage="partial", **artifact)
         bounded["coverage_complete"] = False

@@ -149,9 +149,14 @@ class TaskHistoryTests(TaskFixture):
         with self.assertRaises(ValueError): history.read(ref)
 
     def test_incomplete_archive_is_not_a_recovery_source(self):
+        from test_complete_history_archive import legacy_partial
         self.tasks.begin('one','保护原文'+'中'*10000)
-        history=self.history()
-        with patch('nailong.core.history_archive.MAX_ARCHIVE_BYTES',5000):
+        history=self.history();original_save=history.archive.save
+        def save(thread,message,arguments=None):
+            if message.additional_kwargs.get('nailong_task_archive'):
+                return legacy_partial(history.archive,thread,message,arguments)
+            return original_save(thread,message,arguments)
+        with patch.object(history.archive,'save',side_effect=save):
             with self.assertRaises(ValueError): history.save(self.tasks.snapshot('one'))
 
 

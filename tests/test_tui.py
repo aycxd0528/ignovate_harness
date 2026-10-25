@@ -533,6 +533,7 @@ class TerminalAgentAppTests(unittest.IsolatedAsyncioTestCase):
                     patch("tui.AgentRuntimeFactory") as factory,
                     patch("tui.AgentService", return_value=new_service),
                 ):
+                    factory.return_value.aclose = AsyncMock()
                     factory.return_value.settings=Settings('unit-test-key','https://api.invalid','deepseek-chat',root.resolve())
                     factory.return_value.preferences=None
                     factory.return_value.skill_registry=None

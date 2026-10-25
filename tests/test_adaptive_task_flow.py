@@ -89,6 +89,25 @@ class GoalStreamTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(saved.spent_usd,0)
 
 class NaturalIntakeTests(GoalStreamTests):
+    async def test_productive_ordinary_goal_turns_do_not_trigger_idle_pause(self):
+        self.goals.update(self.goal.id, state='paused', thread_id='stream')
+        goal = self.goals.create('创建项目文件', thread_id='stream', max_rounds=10)
+        for index in range(2):
+            path = f'output-{index}.txt'
+            self.factory.model.i = 0
+            self.factory.model.responses = [answer('', [{'name': 'write_file',
+                'args': {'path': path, 'content': 'saved'}, 'id': f'write-{index}'}]), answer()]
+            events = [event async for event in self.service.stream_turn(
+                f'请创建 {path}', {'configurable': {'thread_id': 'stream'}},
+                approval_handler=lambda *args: 'approve_once')]
+            self.assertTrue(any(event.kind == 'tool_end' and event.data.get('ok') for event in events))
+            self.assertEqual((self.root / path).read_text(), 'saved')
+        current = self.goals.get(goal.id)
+        self.assertEqual(current.round, 2)
+        self.assertGreater(current.spent_usd, 0)
+        self.assertEqual(current.idle_rounds, 0)
+        self.assertEqual(current.state, 'active')
+
     async def test_draft_needs_live_user_authorization_and_current_presented_revision(self):
         from nailong.core.task_intake import TaskIntake, user_request
         intake=TaskIntake(self.factory.task_store,'natural')

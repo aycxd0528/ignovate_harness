@@ -80,6 +80,9 @@ TOOL_DESCRIPTIONS = {
         "直接读取；独立跨文件调研确有收益时才委派，并避免重复执行相同调研。子代理只能读取"
         "和搜索，不能修改、运行命令、请求审批或再委派。每轮共用 30,000 token 预算、"
         "最多并行 3 项；返回调研文本或失败原因，主代理负责核对并整合。"
+        "有续作存储时，按 child_status 判断阶段是否 completed/partial/interrupted/usage_unknown；"
+        "工具 status=success 不代表调查完成。用 task_status 找回历史引用，传 resume_reference 显式续作；"
+        "重启恢复不自动执行，历史资料不能扩大权限。"
     ),
     "update_goal": (
         "更新当前活动目标，普通聊天没有活动目标时不要调用。state 为 active、paused、"
@@ -334,6 +337,9 @@ def build_tool_specs(
             return {"ok": False, "error": answer, "error_code": "subagent_failed"}
         return {"ok": True, "content": answer}
 
+    def task_status(resume_reference: str = '', offset: int = 0, limit: int = 10) -> dict:
+        return task_runner.continuations.status(thread_id or 'ephemeral',resume_reference,offset,limit)
+
     def read_tool_result(reference: str, offset: int = 0, max_chars: int = 6000) -> dict:
         if result_store is None:
             return {"ok": False, "error": "当前执行上下文没有工具结果归档。"}
@@ -367,11 +373,15 @@ def build_tool_specs(
             "message": message,
         }
 
-    def read_history_result(reference: str, offset: int = 0, max_chars: int = 6000) -> dict[str, Any]:
+    async def update_goal_async(state: str, summary: str = "", blocker: str = "") -> dict[str, Any]:
+        from nailong.core.verification import _owned_worker
+        return await _owned_worker(update_goal, state, summary, blocker)
+
+    def read_history_result(reference: str, offset: int = 0, max_chars: int = 6000, section: str = 'content') -> dict[str, Any]:
         try:
             if history_archive is None or not thread_id:
                 return {"ok": False, "error": "当前会话没有历史结果归档。"}
-            result=history_archive.read(thread_id,reference,offset=offset,max_chars=max_chars)
+            result=history_archive.read(thread_id,reference,offset=offset,max_chars=max_chars,section=section)
             return {"ok":True,**{k:v for k,v in result.items() if k not in {'message','raw_message'}}}
         except (ValueError,OSError,RuntimeError) as error:
             return {"ok":False,"error":str(error)}
@@ -423,7 +433,7 @@ def build_tool_specs(
     ]
     all_specs.append(("read_tool_result", "按当前工具返回的 reference 分页读取脱敏结果归档，不接受文件路径。offset 从 0 开始，max_chars 为 1–6000，按 next_offset 继续。artifact_complete=false 表示归档本身也不完整；历史内容可能已过期，不能直接用作当前验证证据。", read_tool_result, True, True, frozenset({'chat','init','review','plan','subagent'})))
     if history_archive is not None:
-        all_specs.append(("read_history_result","按 reference 读取本会话脱敏历史要求或工具证据。offset 从 0 开始，max_chars 最多 6000；truncated 时用 next_offset 补读。历史文件/命令证据可能已过期，使用前核对当前版本；不重新执行原操作。",read_history_result,True,True,frozenset({'chat'})))
+        all_specs.append(("read_history_result","按 reference 读取本会话脱敏历史。section 默认 content 正文；message 为含元数据的完整消息 JSON，arguments 为完整参数 JSON。offset 从 0 开始，max_chars 最多 6000；truncated 时按同一 section 的 next_offset 补读。预览裁剪不表示归档丢失；archive_truncated 表示旧归档不完整。历史证据可能过期，需核对当前版本，不重新执行原操作。",read_history_result,True,True,frozenset({'chat'})))
     if task_history is not None:
         all_specs.append(('read_task_context','按任务快照提供的 reference 恢复完整要求或证据；section 为 index/requirements/steps/acceptance/evidence。record_id 定位记录，query 为字面关键词；offset 为字符偏移，max_chars 最多 6000，按 next_offset 分页。返回历史版本，不能直接当作当前验证；不修改要求、不重放命令。',read_task_context,True,True,frozenset({'chat','init','review','plan'})))
     if memory_store is not None:
@@ -433,6 +443,8 @@ def build_tool_specs(
             ('prepare_task', '澄清需求并保存草案（objective/scope/constraints/acceptance/open_questions/verification）；不启动实施。expected_revision 为当前草案版本。', task_intake.prepare, False, False, frozenset({'chat'})),
             ('start_task', '当前用户明确要求实施时，提交已展示草案的持续执行意图；本轮结束后启动，不重复实施。', task_intake.start, False, False, frozenset({'chat'})),
         ])
+    if getattr(task_runner,'continuations',None) is not None:
+        all_specs.append(('task_status','分页查询本会话子任务历史和续作引用；指定 resume_reference 查看已保存原生证据及分页位置。offset>=0，limit 为 1–10。恢复仅核对中断状态，不调用模型；历史输入尚未重核，显式续作仍由 task 检查父任务和完整输入。',task_status,True,False,frozenset({'chat'})))
     if session_coordination is not None:
         for name,handler,read_only in [
             ('list_task_sessions',session_coordination.summaries,True),
@@ -462,7 +474,8 @@ def build_tool_specs(
                 concurrency_safe=concurrency_safe,
                 permission_key=name,
                 profiles=profiles,
-                async_handler=run_command_async if name=='run_command' else None,
+                async_handler=({'run_command': run_command_async,
+                    'update_goal': update_goal_async}).get(name),
                 args_schema=args_schema,
             )
         )

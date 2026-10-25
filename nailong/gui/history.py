@@ -21,7 +21,7 @@ def _timestamp(value):
 
 
 def _latest_checkpoint(controller, thread_id):
-    from langgraph.checkpoint.sqlite import SqliteSaver
+    from nailong.core.sqlite_saver import RuntimeSqliteSaver as SqliteSaver
 
     config = {'configurable': {'thread_id': thread_id, 'checkpoint_ns': ''}}
     saver = getattr(controller.factory, 'checkpointer', None)

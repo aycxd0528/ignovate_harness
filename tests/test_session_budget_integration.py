@@ -33,8 +33,8 @@ class SessionBudgetIntegrationTests(unittest.IsolatedAsyncioTestCase):
         with patch('agent.ChatDeepSeek', return_value=self.model):
             factory = AgentRuntimeFactory(Settings('fake-key', 'https://example.invalid', 'private', self.root,
                 cli_preferences={'reasoning_effort': 'default'}), session_store=self.sessions, **options)
-        self.addAsyncCleanup(factory.aclose)
         self.addCleanup(factory.close)
+        self.addAsyncCleanup(factory.aclose)
         return factory
 
     async def test_operator_can_set_limit_without_writing_benchmark_workspace(self):

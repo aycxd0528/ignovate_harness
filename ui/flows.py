@@ -64,19 +64,18 @@ async def _goal_task_snapshot(service, factory, thread_id):
     before = tasks.snapshot(thread_id)
     if before is None:
         return None
-    from nailong.core.verification import input_fingerprint, _owned_worker
+    from nailong.core.verification import current_evidence, _owned_worker
     root = getattr(tasks, 'project_root', None)
     current = None
     if root is not None:
         try:
-            current = await _owned_worker(input_fingerprint, root,
-                before.get('verification_generated_paths', []))
+            current = await _owned_worker(current_evidence, root, before, tasks.sessions.root)
         except (OSError, ValueError):
             pass  # Unknown coverage is not a claim of no effective progress.
     after = tasks.snapshot(thread_id)
     if after is None:
         return None
-    if (before['task_id'], before['revision']) != (after['task_id'], after['revision']):
+    if before != after:
         current = None
     return {**after, 'current_input_fingerprint': current}
 
@@ -263,7 +262,8 @@ async def _goal_events(
                 '重新运行相同检查、工具计数或文件改名不代表有效进展。'
                 f"\n任务：{control.get('task_id')}；要求版本：{control.get('task_revision')}。")
         config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 40}
-        budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd)
+        budget = GoalCostBudget(cost_estimator, goal.max_cost_usd - goal.spent_usd,
+            goal_store=goal_store,goal_id=goal.id,round_id=round_id)
         budget.goal_round_id=round_id
         round_error = None
         stop_reason = ""
@@ -333,33 +333,35 @@ async def _goal_events(
             stop_reason = "目标运行已取消。" if isinstance(error, (asyncio.CancelledError,GeneratorExit)) else str(error) or type(error).__name__
         finally:
             try:
-                round_cost = max(cost_estimator.estimate(round_usage), budget.spent)
-            except ValueError:
-                round_cost = goal.max_cost_usd
-            if not budget.usage_complete and not stop_reason:
-                stop_reason = "模型未提供完整用量；已保守计费并暂停目标。"
-            try:
-                after = await _goal_task_snapshot(service, factory, thread_id)
-                progress = assess_goal_progress(before, after)
-            except asyncio.CancelledError as error:
-                round_error = round_error or error
-                stop_reason = '目标运行已取消。'
-            except Exception:
-                # Progress observation failure must never prevent cost settlement.
-                progress['reason'] = 'task_observation_failed'
-            goal = goal_store.record_round(
-                goal.id, cost_usd=round_cost, files_changed=files_changed,
-                tool_calls=tool_calls, summary=summary, unattended_approval=unattended_approval,
-                round_id=round_id, stop_reason=stop_reason,
-                progress=progress,
-            ) or goal
-            task_store=getattr(service,'task_store',None)
-            if model_observed and before and before.get('intake') and task_store is not None:
-                with task_store.bound_task(thread_id,before['task_id'],before['revision']) as current:
-                    intake=(current or {}).get('intake',{})
-                    if intake.get('goal_id')==goal.id and intake.get('draft_revision')==before['intake']['draft_revision']:
-                        intake['implementation_started']=True
-                        task_store._write(thread_id,current)
+                try:
+                    round_cost = max(cost_estimator.estimate(round_usage), budget.spent)
+                except ValueError:
+                    round_cost = goal.max_cost_usd
+                if not budget.usage_complete and not stop_reason:
+                    stop_reason = "模型未提供完整用量；已保守计费并暂停目标。"
+                try:
+                    after = await _goal_task_snapshot(service, factory, thread_id)
+                    progress = assess_goal_progress(before, after)
+                except asyncio.CancelledError as error:
+                    round_error = round_error or error
+                    stop_reason = '目标运行已取消。'
+                except Exception:
+                    # Progress observation failure must never prevent cost settlement.
+                    progress['reason'] = 'task_observation_failed'
+                goal = goal_store.record_round(
+                    goal.id, cost_usd=round_cost, files_changed=files_changed,
+                    tool_calls=tool_calls, summary=summary, unattended_approval=unattended_approval,
+                    round_id=round_id, stop_reason=stop_reason,
+                    progress=progress,
+                ) or goal
+                task_store=getattr(service,'task_store',None)
+                if model_observed and before and before.get('intake') and task_store is not None:
+                    with task_store.bound_task(thread_id,before['task_id'],before['revision']) as current:
+                        intake=(current or {}).get('intake',{})
+                        if intake.get('goal_id')==goal.id and intake.get('draft_revision')==before['intake']['draft_revision']:
+                            intake['implementation_started']=True
+                            task_store._write(thread_id,current)
+            finally:budget.close()
         if isinstance(round_error,(GeneratorExit,asyncio.CancelledError)):
             raise round_error
         try:

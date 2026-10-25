@@ -20,7 +20,40 @@ def task_summary(task):
         'associated_thread_ids', 'steps', 'acceptance')}
 
 
-def projection(controller, branches=None):
+def _needs_observation(task):
+    return any(c['kind'] == 'manual' and c['required'] and c['status'] in {'passed', 'waived'}
+               for c in task.get('acceptance', []))
+
+
+async def projection_async(controller):
+    """Observe filesystem inputs off the GUI thread, then project fresh state."""
+    from nailong.core.verification import _owned_worker, current_evidence
+    identity = controller._project_identity()
+    observations = {}
+    try:
+        tasks = task_store(controller).list_work_items()[:128]
+    except (ValueError, OSError):
+        # The synchronous projection preserves the authority-read diagnostic.
+        return projection(controller, observations={})
+    # Tasks with identical exclusions can share the same current observation.
+    fingerprints = {}
+    for task in tasks:
+        if not _needs_observation(task):
+            continue
+        generated = (tuple(task.get('verification_generated_paths', [])),
+                     json.dumps(task.get('verification_manifest'), sort_keys=True))
+        if generated not in fingerprints:
+            try:
+                fingerprints[generated] = await _owned_worker(current_evidence, identity[0], task, controller.sessions.root)
+            except (ValueError, OSError):
+                fingerprints[generated] = None
+            controller._check_project_identity(identity)
+        observations[task['task_id']] = (task, fingerprints[generated])
+    controller._check_project_identity(identity)
+    return projection(controller, observations=observations)
+
+
+def projection(controller, branches=None, *, observations=None):
     branches = controller.branches.branches() if branches is None else branches
     by_thread = {branch['thread_id']: branch for branch in branches}
     items, attention, diagnostics = [], [], []
@@ -28,7 +61,13 @@ def projection(controller, branches=None):
     try:
         for task in tasks.list_work_items()[:128]:
             row = task_summary(task)
-            branch = next((by_thread[t] for t in task.get('associated_thread_ids', [task['thread_id']]) if t in by_thread), None)
+            associated = task.get('associated_thread_ids', [task['thread_id']])
+            owner = task.get('owner_thread_id') or task['thread_id']
+            # Association order does not identify the recorded task source.
+            # An owner that moved to a new task is no longer an active route.
+            branch = by_thread.get(owner) if owner in associated else None
+            if branch is None:
+                branch = next((by_thread[t] for t in associated if t in by_thread), None)
             row['branch_id'] = branch['id'] if branch else None
             items.append(row)
             origin = {'branch_id': row['branch_id'], 'task_id': task['task_id'], 'expected_revision': task['revision']}
@@ -37,13 +76,18 @@ def projection(controller, branches=None):
                 attention.append({**origin, 'id': f"wait:{task['task_id']}:{task['revision']}", 'kind': 'wait',
                     'title': wait['reason'], 'reason': wait['condition'], 'action': 'clear_wait'})
             assessment = None
-            if any(c['kind'] == 'manual' and c['required'] and c['status'] in {'passed', 'waived'} for c in task.get('acceptance', [])):
+            if _needs_observation(task):
                 from nailong.core.delivery import build_delivery_report
-                from nailong.core.verification import input_fingerprint
-                try:
-                    fingerprint = input_fingerprint(controller.project, task.get('verification_generated_paths', []))
-                except (ValueError, OSError):
-                    fingerprint = None
+                from nailong.core.verification import current_evidence
+                if observations is None:
+                    try:
+                        fingerprint = current_evidence(controller.project, task, controller.sessions.root)
+                    except (ValueError, OSError):
+                        fingerprint = None
+                else:
+                    observed_task, fingerprint = observations.get(task['task_id'], (None, None))
+                    if observed_task != task:
+                        fingerprint = None
                 assessment = build_delivery_report(task, current_input_fingerprint=fingerprint)
             for criterion in task.get('acceptance', []):
                 if criterion['kind'] != 'manual' or not criterion['required']:
@@ -92,30 +136,123 @@ def projection(controller, branches=None):
         'truncated': len(attention) > 256})
 
 
+def _check_control_task(task, payload):
+    if task is None or 'task_id' in payload and payload['task_id'] != task['task_id']:
+        raise ValueError('任务身份已变化，请重新核对。')
+
+
 async def execute(controller, payload):
+    """Keep locks around state reads/writes, never around input scanning."""
+    operation = payload.get('operation')
+    if operation in {None, 'status'}:
+        async with controller.command_lock:
+            controller._validate_command_payload(payload)
+        return await projection_async(controller)
+    async with controller.command_lock:
+        controller._validate_command_payload(payload)
+        if operation not in {'confirm_acceptance', 'feedback_stage', 'feedback_confirm'}:
+            return _execute(controller, payload)
+        if controller.current_task or controller.queue:
+            raise ValueError('请等待当前运行与队列结束后修改工作控制状态。')
+        identity = controller._project_identity()
+        branch = controller.branches.branch(payload['branch_id'])
+        tasks = task_store(controller)
+        task = tasks.snapshot(branch['thread_id'])
+        _check_control_task(task, payload)
+        if task is None or operation != 'feedback_confirm' and task['revision'] != payload.get('expected_revision'):
+            raise ValueError('任务版本已变化，请重新核对。')
+        source = None
+        generated = None
+        feedback_store = None
+        feedback_context = None
+        if operation == 'feedback_stage':
+            source, source_task = _feedback_source(controller, branch, task, payload)
+            if source_task.get('input_fingerprint'):
+                generated = source_task
+            feedback_store = FeedbackStore(controller.sessions)
+            feedback_context = feedback_store._prepare_proposal(task=task, request_id=payload['request_id'])
+        elif operation == 'feedback_confirm':
+            feedback_store = FeedbackStore(controller.sessions)
+            feedback_context = feedback_store._prepare_confirmation(payload['id'], task=task)
+        else:
+            generated = task
+    from nailong.core.verification import _owned_worker, current_evidence
+    fingerprint = None
+    if generated is not None:
+        fingerprint = await _owned_worker(current_evidence, identity[0], generated, controller.sessions.root)
+        controller._check_project_identity(identity)
+    feedback_observation = None
+    if feedback_context is not None:
+        observed = None
+        if feedback_context.needs_scan:
+            try:
+                observed = await _owned_worker(current_evidence, feedback_context.project,
+                    feedback_context.task, feedback_context.boundary, feedback_context.generated)
+            except (ValueError, OSError):
+                if operation != 'feedback_stage':
+                    raise
+            controller._check_project_identity(identity)
+        feedback_observation = feedback_context.observed(observed)
+    async with controller.command_lock:
+        controller._check_project_identity(identity)
+        controller._validate_command_payload(payload)
+        if controller.branches.branch(branch['id']) != branch:
+            raise ValueError('来源会话已变化，请重新核对。')
+        if source is not None and controller.branches.node(source['id']) != source:
+            raise ValueError('来源回合已变化，请重新核对。')
+        with tasks.bound_task(branch['thread_id'], task['task_id'], task['revision']) as bound:
+            # State changes need not increment the requirements revision. Bind
+            # the observation to all inputs, exclusions and acceptance details.
+            if bound != task:
+                raise ValueError('任务状态已变化，请重新核对。')
+            return _execute(controller, payload, tasks=tasks, fingerprint=fingerprint,
+                            feedback_store=feedback_store, feedback_observation=feedback_observation)
+
+
+def _feedback_source(controller, branch, task, payload):
+    node = next((node for node in controller.branches.path(branch['id']) if node['id'] == payload.get('node_id')), None)
+    if node is None:
+        raise ValueError('请选择真实来源回合。')
+    node = controller.branches.node(node['id'])
+    source_task = json.loads(node.get('task_snapshot') or 'null') or {}
+    if (source_task.get('task_id'), source_task.get('revision')) != (task['task_id'], task['revision']):
+        raise ValueError('来源回合的任务或要求版本与当前任务不一致。')
+    return node, source_task
+
+
+def _execute(controller, payload, *, tasks=None, fingerprint=None, feedback_store=None, feedback_observation=None):
     operation = payload.get('operation')
     if operation in {None, 'status'}:
         return projection(controller)
     if controller.current_task or controller.queue:
         raise ValueError('请等待当前运行与队列结束后修改工作控制状态。')
     branch = controller.branches.branch(payload['branch_id'])
-    tasks = task_store(controller)
+    # Reuse the observation owner under its reentrant native task lock.
+    # A lazy controller would otherwise create a second file-lock owner.
+    if tasks is None:
+        tasks = task_store(controller)
     thread = branch['thread_id']
     task = tasks.snapshot(thread)
     revision = payload.get('expected_revision')
+    if operation in {'set_wait', 'clear_wait', 'confirm_acceptance', 'feedback_stage', 'feedback_confirm'}:
+        _check_control_task(task, payload)
     if operation == 'link_task':
         result = tasks.link_work_item(thread, payload['task_id'], expected_revision=revision)
     elif operation == 'set_wait':
-        result = tasks.set_wait(thread, reason=payload['reason'], condition=payload['condition'], expected_revision=revision)
+        with tasks.bound_task(thread, task['task_id'], revision) as bound:
+            if bound is None:
+                raise ValueError('任务身份或版本已变化，请重新核对。')
+            result = tasks.set_wait(thread, reason=payload['reason'], condition=payload['condition'], expected_revision=revision)
     elif operation == 'clear_wait':
-        if 'expected_wait_condition' in payload and payload['expected_wait_condition'] != (task or {}).get('wait_condition'):
-            raise ValueError('等待条件已变化，请重新核对。')
-        result = tasks.clear_wait(thread, expected_revision=revision)
+        with tasks.bound_task(thread, task['task_id'], revision) as bound:
+            if bound is None:
+                raise ValueError('任务身份或版本已变化，请重新核对。')
+            if 'expected_wait_condition' in payload and payload['expected_wait_condition'] != bound.get('wait_condition'):
+                raise ValueError('等待条件已变化，请重新核对。')
+            result = tasks.clear_wait(thread, expected_revision=revision)
     elif operation == 'confirm_acceptance':
         if task is None or task['revision'] != revision:
             raise ValueError('人工事项任务版本已变化。')
-        from nailong.core.verification import input_fingerprint
-        fingerprint = input_fingerprint(controller.project, task.get('verification_generated_paths', []))
         with tasks.bound_task(thread, task['task_id'], revision) as bound:
             if bound is None:
                 raise ValueError('人工事项已失效。')
@@ -123,32 +260,27 @@ async def execute(controller, payload):
     elif operation == 'feedback_stage':
         if task is None or task['revision'] != revision:
             raise ValueError('反馈来源任务版本已变化。')
-        node = next((node for node in controller.branches.path(branch['id']) if node['id'] == payload.get('node_id')), None)
-        if node is None:
-            raise ValueError('请选择真实来源回合。')
-        source_task = json.loads(controller.branches.node(node['id']).get('task_snapshot') or 'null') or {}
-        if (source_task.get('task_id'), source_task.get('revision')) != (task['task_id'], task['revision']):
-            raise ValueError('来源回合的任务或要求版本与当前任务不一致。')
+        node, source_task = _feedback_source(controller, branch, task, payload)
         with tasks.bound_task(thread, task['task_id'], task['revision']) as bound:
             if bound is None:
                 raise ValueError('反馈来源任务已变化。')
             source_input = source_task.get('input_fingerprint') or None
             if source_input:
-                from nailong.core.verification import input_fingerprint
-                if source_input != input_fingerprint(controller.project, source_task.get('verification_generated_paths', [])):
+                if source_input != fingerprint:
                     raise ValueError('来源回合的输入版本已变化，请选择当前来源重新整理。')
-            result = FeedbackStore(controller.sessions).propose(task=bound,
+            result = (feedback_store or FeedbackStore(controller.sessions)).propose(task=bound,
                 source_ref=f"session:{node['thread_id']}#node:{node['id']}",
                 source_input_fingerprint=source_input,
                 context=payload['context'], outcome=payload['outcome'], behavior=payload['behavior'],
-                boundary=payload['boundary'], request_id=payload['request_id'])
+                boundary=payload['boundary'], request_id=payload['request_id'], _observation=feedback_observation)
     elif operation == 'feedback_confirm':
         if task is None:
             raise ValueError('当前会话没有反馈来源任务。')
         with tasks.bound_task(thread, task['task_id'], task['revision']) as bound:
             if bound is None:
                 raise ValueError('反馈来源任务已变化。')
-            result = FeedbackStore(controller.sessions).confirm(payload['id'], task=bound, expected_revision=revision)
+            result = (feedback_store or FeedbackStore(controller.sessions)).confirm(payload['id'], task=bound,
+                expected_revision=revision, _observation=feedback_observation)
     elif operation == 'feedback_revoke':
         result = FeedbackStore(controller.sessions).revoke(payload['id'], expected_revision=revision)
     else:

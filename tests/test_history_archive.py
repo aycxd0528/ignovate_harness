@@ -118,26 +118,31 @@ class HistoryArchiveTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.archive.read("thread-1", reference, **options)
 
-    def test_archive_limit_is_explicit_and_preserves_a_valid_snapshot(self):
+    def test_large_archive_keeps_bounded_manifest_and_complete_snapshot(self):
         content = "长" * 800_000
         reference = self.archive.save("thread-1", HumanMessage(content=content, id="long-1"))
         archive_file = self.archive_file(reference)
         self.assertLessEqual(archive_file.stat().st_size, 2 * 1024 * 1024)
         stored = json.loads(archive_file.read_text(encoding="utf-8"))
         result = self.archive.read("thread-1", reference)
-        self.assertTrue(result["archive_truncated"])
+        self.assertFalse(result["archive_truncated"])
         self.assertEqual(result["original_content_chars"], 800_000)
         self.assertEqual(result["content"], "长" * 6000)
-        self.assertLess(len(stored["message"]["data"]["content"]), 800_000)
+        self.assertEqual(stored['schema_version'],2)
+        self.assertEqual(self.archive.load('thread-1',reference)['message']['data']['content'],content)
         self.assertEqual(result["version"]["content_sha256"], hashlib.sha256(content.encode("utf-8")).hexdigest())
 
-    def test_large_arguments_and_metadata_are_bounded_with_a_truncation_flag(self):
+    def test_large_arguments_and_metadata_are_complete_with_bounded_preview(self):
         message = HumanMessage(content="kept text", additional_kwargs={"untrusted": "m" * 3_000_000})
         reference = self.archive.save("thread-1", message, {"content": "a" * 3_000_000})
         self.assertLessEqual(self.archive_file(reference).stat().st_size, 2 * 1024 * 1024)
         result = self.archive.read("thread-1", reference)
-        self.assertTrue(result["archive_truncated"])
+        self.assertFalse(result["archive_truncated"])
         self.assertEqual(result["content"], "kept text")
+        stored=self.archive.load('thread-1',reference)
+        self.assertEqual(stored['arguments']['content'],'a'*3_000_000)
+        self.assertEqual(stored['message']['data']['additional_kwargs']['untrusted'],'m'*3_000_000)
+        self.assertTrue(result['arguments_truncated'])
 
     def test_read_bounds_identifiers_and_argument_descriptions(self):
         message = ToolMessage(

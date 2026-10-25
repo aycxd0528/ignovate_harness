@@ -46,8 +46,8 @@ class BatchApprovalTests(unittest.IsolatedAsyncioTestCase):
                             'deepseek-flash', self.root, reasoning_effort='max')
         with patch('agent.ChatDeepSeek', return_value=model):
             self.factory = AgentRuntimeFactory(settings, session_store=self.store)
-        self.addAsyncCleanup(self.factory.aclose)
         self.addCleanup(self.factory.close)
+        self.addAsyncCleanup(self.factory.aclose)
         self.service = AgentService(self.factory, api_key='offline-key')
 
     async def approve(self, action, index, total):
