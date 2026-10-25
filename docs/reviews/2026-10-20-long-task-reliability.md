@@ -1202,3 +1202,11 @@ PR5 最终12个合并前检查成功后，已按用户要求合并为 main `bd8f
 唯一fresh review 0C/0I/0M，原文 `2026-10-25-mcp-guardian-lifetime-review.md` SHA256 `aa56dd0a346b350aca6ce5195c445cc83554b4ee54868e08d350ea0b74e1cd8d`，三路径冻结diff `77a746410c91de2400c19a2360fe5977b010ec43b21caf43e75c736491019d36`。作者一次无补修；全部R1–R6/D1–D12及成本见 `2026-10-25-mcp-guardian-lifetime.md`。两版源码2233/54和55skip/388.183s与390.408s、工作区外实装相关两版167/4skip/80.249s与80.466s全部terminal0。新wheel `ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9`，159Python+39GUI字节、10实际安装origin一致，CLI smoke通过；实装范围按实际167报告，非旧844。原始日志SHA索引 `2026-10-25-mcp-guardian-lifetime-validation.json`。最终门后两冻结diff一致。新确定性缺口已修，不将每次历史失败法证归因。
 
 合并后main的Tests/distribution、Windows desktop及native installer/313成功，但native311在1254.881s的2230/99skip中有1FAIL：conversation delivery随后普通问答观察仍是“正在推理”，未到“普通回答”；run40179640612。合并前12绿不冒充合并后全绿，main运行也不是本轮新POSIX修复的Windows验证；该UI观察另行定位。新分支未合并/未发布，整个goal继续active。
+
+## Phase 43：合并后 conversation 实际答案观察
+
+fe5814f已保存两项POSIX/MCP修复与完整证据。合并后main唯一native311失败的conversation fixture仍仅pause一次；runner.wait_idle只join pump，实际final缓存仍call_after_refresh排队。真实Textual probe建立CI中已绘制任务回答前提，再gate第二轮普通final实际绘制，旧fixture四状态均在“普通回答”缺失断言FAIL，0.476s；候选复用同类既有三秒条件helper等待唯一第二轮正文后，全部原报告count1/四状态标签/顺序/回答/脱敏断言不变，同probe0.667sGREEN。永不释放四状态各原三秒超时，12.264s明确FAIL，不为时序放宽原验收。首probe误重绘已卸载log等诊断错误保留并更正，不作为产品缺陷。
+
+唯一fresh review 0C/0I/0M，原文 `2026-10-25-conversation-render-ready-review.md` SHA256 `30e9a5c4eca086f9e880a31659b4efe7223072e47ec6b6562ce5bd50db29768c`，冻结两路径diff `6099c6830fb3820afbd807496970c0f5d9cac29ef9e733fa37f49b76f8839f0e`。作者完整阅读一次无补修处置，R1–R5及全部12项D裁决/成本见 `2026-10-25-conversation-render-ready.md`。native先行门新增完整六项module114→120，YAML/折叠Python compile/实际loader已核对，完整discovery/单项120s/job45m保持。正常模块6项2.016s，最终工作区外两版实装新增完整module后各173项/4skip/82.338s与82.643s通过，产品wheel仍ee025；最终两版全量与新head实际CI另记。不以mac probe测量或认证Windows调度，goal继续active。
+
+最终phase43代码门：源码两版2233项/54和55skip/393.573s及396.254s全部terminal0；实装相关两版173项/4skip/82.338s及82.643s全部terminal0。冻结diff未变，159Python+39GUI字节/10origin确认；完整日志SHA索引 `2026-10-25-post-merge-validation.json`。已确认未修复P0为0，两项新增条件性P1本地关闭；新head平台CI待推送观察，不合并新PR、不发布或改用户IDE/CSS。
