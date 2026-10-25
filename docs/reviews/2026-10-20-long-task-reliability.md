@@ -1164,3 +1164,9 @@ I1/M1修正后的最终wheel SHA256 `302156ef206f211505f60c51008439641feccc632ff
 93cb259已在原生对照后修正shell设备前缀短名；当前产品wheel `e1f7753f1922e32938e7c8d9ed3b0e7ec1ae229ee240ebd76497925af0021971`。本地两版2228全量和821实装通过，Linux两版全量/Windows installer及desktop CI通过，但Windows完整2228两版均剩2FAIL/99skip（1094.761s/1097.072s），原生相关64项已经通过。长任务复合helper误用shlex.join，Windows验证命令失败，核心正确拒绝完成。实际长Git仓库能力仍有限：完整身份或明确拒绝、不允许空身份；这不是长Git路径读写认证。详情及native原始对照和所有成本见shell-location brief最终作者处置。
 
 两处测试helper改为既有platform_fixtures.shell_join，保留正文和全部修复/压缩/重启/交付/外部变更断言；增加构造连线回归，native先行门扩为77项，完整suite保留，生产代码和制品不变。唯一fresh review 0C/0I/0M，原文 `2026-10-25-windows-long-fixture-review.md`；全部R1–R4和D1–D7作者裁决/成本见 `2026-10-25-windows-long-scenario-fixtures.md`。RED两个子场景命令断言FAIL，GREEN13项10.944s；最终本地源码/实装及当前head实际CI仍待完成，未合并。最终绿色及merge由PR5和merge commit记录，goal不因合并而完成。
+
+## Phase 38：TUI测试实际渲染就绪
+
+d7完整Windows2229的push两版和PR313成功，PR311仅TUI drag在鼠标操作前找不到尚未渲染文字；四份最终native日志均未出现旧branches.sqlite/WinError32/Exception ignored。生产call_after_refresh异步调度与锁定Textual Pilot.pause实现证明单次pause不是特定文字就绪契约。drag改用既有三秒条件等待同viewport实际文字，新增RED/GREEN夹具回归，全部原选择/高亮/clipboard断言保留。先行门扩为85项，完整discovery不减；健康311已耗34分17秒，job35到45分钟保留120秒单项watchdog。
+
+唯一fresh review 0C/0I/0必修M，冻结diff SHA256 `91c87e44fb1c2cb8ffb1bf2d84fa3481934168c9804d768bc89e640e7b5c18ac`；原文 `2026-10-25-tui-render-ready-review.md` SHA256 `0ac050909ddf19ff32ec6182281df4bde3ad330db38c4bd8e4fe158f799a33e0`。作者一次处置额外采纳两个Escape后文字观察的同三秒语义等待并保留原assertIn，未改生产代码。全部R1–R4、相邻建议、D1–D8裁决及成本见 `2026-10-25-tui-selection-render-ready.md`。产品wheel仍e1f7753轮；当前head最终平台门和merge身份由PR5记录，不把审查或旧head通过当新head实际Windows证据，整个goal继续active。

@@ -30,9 +30,9 @@ jobs:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
     runs-on: windows-2025
-    # The full native suite exceeded the old job limit on Python 3.13.
+    # Healthy preflight + full-suite runs approached 35 minutes on Windows.
     # Individual native/async tests retain their 120-second watchdogs.
-    timeout-minutes: 35
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -64,7 +64,7 @@ jobs:
           python -c "import sys,unittest; sys.path.insert(0,'tests');
           from scripts.run_native_tests import NativeTestResult,install_async_diagnostics;
           install_async_diagnostics();
-          suite=unittest.defaultTestLoader.loadTestsFromNames(['test_windows_verification_compatibility','test_output_provenance','test_verification_artifact_evidence','test_long_scenario_commands','test_long_goal_driver','test_long_task_continuation']);
+          suite=unittest.defaultTestLoader.loadTestsFromNames(['test_windows_verification_compatibility','test_output_provenance','test_verification_artifact_evidence','test_long_scenario_commands','test_long_goal_driver','test_long_task_continuation','test_tui_readability']);
           result=unittest.TextTestRunner(verbosity=2,resultclass=NativeTestResult).run(suite);
           sys.exit(not result.wasSuccessful())"
       - name: Native runtime tests

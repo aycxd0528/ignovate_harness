@@ -22,6 +22,24 @@ from agent_service import TurnEvent
 
 
 class DirectSelectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_drag_waits_for_actual_render_before_sending_mouse_events(self):
+        state={'text':'pending','pauses':0}
+        actions=[]
+        async def pause():
+            state['pauses']+=1
+            state['text']='a选中的文字'
+        async def mouse_down(selector,*,offset):actions.append(('down',selector,offset))
+        async def hover(selector,*,offset):actions.append(('hover',selector,offset))
+        async def mouse_up(selector,*,offset):actions.append(('up',selector,offset))
+        pilot=SimpleNamespace(pause=pause,mouse_down=mouse_down,hover=hover,mouse_up=mouse_up,
+            app=SimpleNamespace(focused=None))
+        log=SimpleNamespace(scrollable_content_region=SimpleNamespace(height=1),
+            gutter=SimpleNamespace(left=2,top=1),render_line=lambda y:SimpleNamespace(text=state['text']))
+        await self.drag(pilot,log,'选中的文字')
+        self.assertEqual(actions,[('down','#transcript',(3,1)),
+            ('hover','#transcript',(11,1)),('up','#transcript',(11,1))])
+        self.assertGreaterEqual(state['pauses'],2)
+
     def app(self, root):
         return TerminalAgentApp(SimpleNamespace(runtime_factory=None, session_store=None),
             Settings('private-key', 'https://api.invalid', 'deepseek-chat', Path(root)))
@@ -39,19 +57,23 @@ class DirectSelectionTests(unittest.IsolatedAsyncioTestCase):
                       f'focus={getattr(pilot.app.focused, "id", None)!r}')
 
     async def drag(self, pilot, log, text):
-        for y in range(log.scrollable_content_region.height):
-            line = log.render_line(y).text
-            if text in line:
-                prefix = cell_len(line[:line.index(text)])
-                origin = (log.gutter.left + prefix, log.gutter.top + y)
-                await pilot.mouse_down('#transcript', offset=origin)
-                # Screen selections include the character under the end cell.
-                end = (origin[0] + cell_len(text[:-1]), origin[1])
-                await pilot.hover('#transcript', offset=end)
-                await pilot.mouse_up('#transcript', offset=end)
-                await pilot.pause()
-                return
-        self.fail(f'{text!r} is not visible in the transcript')
+        origin = None
+        def visible():
+            nonlocal origin
+            for y in range(log.scrollable_content_region.height):
+                line = log.render_line(y).text
+                if text in line:
+                    prefix = cell_len(line[:line.index(text)])
+                    origin = (log.gutter.left + prefix, log.gutter.top + y)
+                    return True
+            return False
+        await self.wait_for_condition(pilot, visible, f'{text!r} to be visible in the transcript')
+        await pilot.mouse_down('#transcript', offset=origin)
+        # Screen selections include the character under the end cell.
+        end = (origin[0] + cell_len(text[:-1]), origin[1])
+        await pilot.hover('#transcript', offset=end)
+        await pilot.mouse_up('#transcript', offset=end)
+        await pilot.pause()
 
     async def test_select_arbitrary_chinese_and_english_fields_in_transcript(self):
         with tempfile.TemporaryDirectory() as root, patch('shutil.which', return_value=None):
@@ -95,7 +117,9 @@ class DirectSelectionTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.clipboard, '选中的文字')
                 await pilot.press('escape')
-                await pilot.pause()
+                await self.wait_for_condition(pilot,
+                    lambda: '更新后的文字' in '\n'.join(line.text for line in log.lines),
+                    'updated text to render after clearing selection')
                 self.assertIn('更新后的文字', '\n'.join(line.text for line in log.lines))
 
     async def test_model_choice_uses_only_the_space_needed_for_options(self):
@@ -171,7 +195,9 @@ class DirectSelectionTests(unittest.IsolatedAsyncioTestCase):
                     await pilot.pause()
                     self.assertIn('生成中的正文', '\n'.join(line.text for line in log.lines))
                     await pilot.press('escape')
-                    await pilot.pause()
+                    await self.wait_for_condition(pilot,
+                        lambda: '最终回复' in '\n'.join(line.text for line in log.lines),
+                        'final reply to render after clearing selection')
                     self.assertIn('最终回复', '\n'.join(line.text for line in log.lines))
                     self.assertEqual(app.completed_turns, 1)
                 finally:
