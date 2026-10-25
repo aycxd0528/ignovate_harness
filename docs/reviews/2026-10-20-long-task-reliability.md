@@ -1188,3 +1188,17 @@ d7完整Windows2229的push两版和PR313成功，PR311仅TUI drag在鼠标操作
 唯一fresh review因transport中断未产报告，恢复同一review完成0C/0I/0M，非第二轮；原文 `2026-10-25-execution-render-ready-review.md` SHA256 `0f2eedf6e16d73836daba6bfe6953bab590d18664da9f8bc2175d4a6717e49e6`，冻结两路径diff SHA256 `5df25e81893a7e8a138039dd3c2bae94f67663bbcf5ee127a9632c02993a8ecc`。作者完整阅读一次处置，无代码补修；全部R1–R4及D1–D16裁决/成本见 `2026-10-25-execution-render-ready.md`。最终当前head本地/实际CI门和merge身份由PR5记录，产品wheel仍e1f7753，整体goal继续active。
 
 最终phase40本地门：源码两版2230项/54和55skip/389.312s及393.954s，工作区外实装两版844项/10skip/240.773s及245.506s全部terminal0；159发行Python字节和49安装origin匹配。作者没有在review后改变冻结代码，本轮完整门对应最终代码；新head实际Windows/Linux/installer/desktop及关闭日志继续由PR5记录，全部齐全才合并。
+
+## Phase 41：POSIX 直接子进程先回收再确认
+
+PR5 最终12个合并前检查成功后，已按用户要求合并为 main `bd8fa20b208482a340c4254f73ada27c753307ca`，tree 等于已验证4351b9e，原用户IDE暂存/CSS保留。继续审查发现监护器在关闭时未wait直接子进程就发stopping并杀包含自身的组；真实waitpid确认边界稳定观测running，新增两项RED后最小kill/wait4秒→确认，失败不确认但最终组kill仍无条件执行。条件性P1，不虚构永久zombie/P0。
+
+唯一fresh review 0C/0I/0M，原文 `2026-10-25-posix-direct-child-reaping-review.md` SHA256 `7d2d91018326c42c4cd62735303cc932acc4b8a07a09930fe3f8f15a737f77d5`，冻结diff `a099bb70bb1e4f02c9305874a7f59e23fcd2f805a056f2ceb13f83477fc17742`。作者一次无补修处置，全部R1–R6及D1–D10/成本见 `2026-10-25-posix-direct-child-reaping.md`。此候选94聚焦/2232两版全量/166两版实装各仍有原MCP取消存活断言FAIL；未称通过，未放宽原断言。缺PYTHONPATH导致的首轮5个导入错误也保留。旧MCP历史失败没有PID状态，仍不事后定性为zombie/复用/仍执行。
+
+## Phase 42：MCP 真实监护器持有健康通道
+
+进一步原生证明：SDK直接SIGKILL外层launcher后socket EOF早于独立guardian清理结束。真实launcher/guardian在lifeline EOF gate下，旧代码MSG_PEEK未得BlockingIOError稳定RED；仅传入已认证socket的keepalive fd到现有guardian，实际服务仍close_fds，外层仍唯一能发C。EOF随guardian退出才到达，丢失launcher仍unknown，不增加进程/relay/延时重试或修改存活断言。新回归与原SDK取消回归2项GREEN，相关167项/4skip/78.388s通过。
+
+唯一fresh review 0C/0I/0M，原文 `2026-10-25-mcp-guardian-lifetime-review.md` SHA256 `aa56dd0a346b350aca6ce5195c445cc83554b4ee54868e08d350ea0b74e1cd8d`，三路径冻结diff `77a746410c91de2400c19a2360fe5977b010ec43b21caf43e75c736491019d36`。作者一次无补修；全部R1–R6/D1–D12及成本见 `2026-10-25-mcp-guardian-lifetime.md`。两版源码2233/54和55skip/388.183s与390.408s、工作区外实装相关两版167/4skip/80.249s与80.466s全部terminal0。新wheel `ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9`，159Python+39GUI字节、10实际安装origin一致，CLI smoke通过；实装范围按实际167报告，非旧844。原始日志SHA索引 `2026-10-25-mcp-guardian-lifetime-validation.json`。最终门后两冻结diff一致。新确定性缺口已修，不将每次历史失败法证归因。
+
+合并后main的Tests/distribution、Windows desktop及native installer/313成功，但native311在1254.881s的2230/99skip中有1FAIL：conversation delivery随后普通问答观察仍是“正在推理”，未到“普通回答”；run40179640612。合并前12绿不冒充合并后全绿，main运行也不是本轮新POSIX修复的Windows验证；该UI观察另行定位。新分支未合并/未发布，整个goal继续active。

@@ -18,6 +18,7 @@ def own(lifeline,status,shell,restore_signals,ignored,release_stdio,arguments):
     # Never signal an inherited group if the bootstrap is invoked incorrectly.
     if os.getpgrp()!=os.getpid() or os.getsid(0)!=os.getpid():os._exit(125)
     os.set_inheritable(lifeline,False);os.set_inheritable(status,False)
+    child=None
     try:
         for number in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP):
             signal.signal(number,signal.SIG_IGN)
@@ -67,11 +68,19 @@ def own(lifeline,status,shell,restore_signals,ignored,release_stdio,arguments):
                 notify(status,type='exit',returncode=code)
                 return
     finally:
-        try:notify(status,type='stopping')
-        except OSError:pass
-        # The live owner is the group leader, so this ID cannot be recycled.
-        # Closing the parent's pipe is enough even after SIGKILL/os._exit there.
-        os.killpg(os.getpgrp(),signal.SIGKILL)
+        try:
+            if child is not None:
+                # Reap our direct child before killing its parent (this owner).
+                # Otherwise successful close can leave reaping to an unrelated
+                # init process. A failed wait must not acknowledge cleanup.
+                child.kill()
+                child.wait(timeout=4)
+            try:notify(status,type='stopping')
+            except OSError:pass
+        finally:
+            # The live owner is the group leader, so this ID cannot be recycled.
+            # Closing the parent's pipe is enough even after SIGKILL/os._exit there.
+            os.killpg(os.getpgrp(),signal.SIGKILL)
 
 
 if __name__=='__main__':

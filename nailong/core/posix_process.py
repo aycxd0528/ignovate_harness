@@ -39,7 +39,7 @@ class _OwnedPopen:
 
 
 class PosixProcessGuard:
-    def __init__(self,command,*,cwd=None,env=None,shell=False,release_stdio=False,**kwargs):
+    def __init__(self,command,*,cwd=None,env=None,shell=False,release_stdio=False,keepalive_fds=(),**kwargs):
         self.raw=None;self.process=None;self.lifeline=None;self.status=None
         self._lock=threading.RLock();self._buffer=bytearray();self._result=None
         self._admitted=False;self._result_error=None
@@ -61,7 +61,9 @@ class PosixProcessGuard:
             bootstrap=[sys.executable,'-I','-S',str(CHILD),str(life_read),str(status_write),
                 '1' if shell else '0','1' if kwargs.get('restore_signals',True) else '0',policy,*arguments]
             self.raw=subprocess.Popen(bootstrap,cwd=cwd,env=env,start_new_session=True,
-                pass_fds=(life_read,status_write),**kwargs)
+                # Private liveness handles survive the outer launcher's death
+                # until this guardian exits. Its user child closes extra fds.
+                pass_fds=(life_read,status_write,*keepalive_fds),**kwargs)
             self.raw.args=command;self.process=_OwnedPopen(self)
             for descriptor in (life_read,status_write):
                 os.close(descriptor);descriptors.remove(descriptor)

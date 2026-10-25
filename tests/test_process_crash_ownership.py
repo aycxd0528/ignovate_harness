@@ -190,6 +190,88 @@ OwnedProcess([sys.executable,'-c',"from pathlib import Path;Path('unowned-user-c
             # Its finite user command self-exits; no historical PID is killed.
             time.sleep(.7)
 
+    def test_cleanup_acknowledgement_requires_direct_child_to_be_reaped(self):
+        from nailong.core import posix_process
+        bootstrap=self.root/'audited-owner.py'
+        pid_file=self.root/'direct-child.pid'
+        audit_file=self.root/'cleanup-audit.json'
+        # Observe the real waitpid state at the public cleanup acknowledgement.
+        # The wrapper leaves native process creation and group teardown intact.
+        bootstrap.write_text(f'''import json,os,runpy,sys
+from pathlib import Path
+native_write=os.write
+def audited_write(fd,data):
+    if fd==int(sys.argv[2]) and json.loads(data).get('type')=='stopping':
+        pid=int(Path({str(pid_file)!r}).read_text())
+        try:
+            reaped,status=os.waitpid(pid,os.WNOHANG)
+            state='unreaped' if reaped else 'running'
+        except ChildProcessError:
+            state='already-reaped'
+        Path({str(audit_file)!r}).write_text(json.dumps({{'state':state}}))
+    return native_write(fd,data)
+os.write=audited_write
+runpy.run_path({str(posix_process.CHILD)!r},run_name='__main__')
+''')
+        command=(f"import os,time;from pathlib import Path;"
+            f"Path({str(pid_file)!r}).write_text(str(os.getpid()));time.sleep(10)")
+        with patch.object(posix_process,'CHILD',bootstrap):
+            owner=posix_process.PosixProcessGuard([sys.executable,'-c',command],cwd=self.root,
+                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        try:
+            limit=time.monotonic()+3
+            while not pid_file.exists() and time.monotonic()<limit:time.sleep(.01)
+            self.assertTrue(pid_file.exists(),'test requires a running native child')
+            owner.close()
+            self.assertEqual(json.loads(audit_file.read_text()),{'state':'already-reaped'})
+        finally:
+            owner.close()
+            owner.raw.stderr.close()
+
+    def test_failed_direct_child_wait_cannot_acknowledge_cleanup(self):
+        from nailong.core import posix_process
+        bootstrap=self.root/'failed-wait-owner.py'
+        pid_file=self.root/'direct-child.pid'
+        attempted=self.root/'wait-attempted'
+        acknowledgement=self.root/'cleanup-acknowledged'
+        bootstrap.write_text(f'''import json,os,runpy,subprocess,sys
+from pathlib import Path
+native_write=os.write
+def audited_write(fd,data):
+    if fd==int(sys.argv[2]) and json.loads(data).get('type')=='stopping':
+        Path({str(acknowledgement)!r}).touch()
+    return native_write(fd,data)
+def failed_wait(self,timeout=None):
+    Path({str(attempted)!r}).touch()
+    raise subprocess.TimeoutExpired(self.args,timeout)
+os.write=audited_write
+subprocess.Popen.wait=failed_wait
+runpy.run_path({str(posix_process.CHILD)!r},run_name='__main__')
+''')
+        grandchild="from pathlib import Path;import time;time.sleep(.6);Path('wait-failure-grandchild-late').touch()"
+        command=(f"import os,subprocess,sys,time;from pathlib import Path;"
+            f"subprocess.Popen([sys.executable,'-c',{grandchild!r}]);"
+            f"Path({str(pid_file)!r}).write_text(str(os.getpid()));"
+            "time.sleep(.6);Path('wait-failure-child-late').touch()")
+        with patch.object(posix_process,'CHILD',bootstrap):
+            owner=posix_process.PosixProcessGuard([sys.executable,'-c',command],cwd=self.root,
+                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        try:
+            limit=time.monotonic()+3
+            while not pid_file.exists() and time.monotonic()<limit:time.sleep(.01)
+            self.assertTrue(pid_file.exists(),'test requires a running native child')
+            with self.assertRaisesRegex(RuntimeError,'清理.*核实'):owner.close()
+            self.assertTrue(attempted.exists(),'real command wait must be attempted')
+            self.assertFalse(acknowledgement.exists(),'failed reaping cannot claim clean shutdown')
+            time.sleep(.8)
+            self.assertFalse((self.root/'wait-failure-child-late').exists())
+            self.assertFalse((self.root/'wait-failure-grandchild-late').exists(),
+                'failed direct-child wait must still kill the remaining group')
+        finally:
+            try:owner.close()
+            except RuntimeError:pass
+            owner.raw.stderr.close()
+
     def test_queued_public_stop_cannot_suspend_the_cleanup_owner(self):
         from nailong.core.process_io import OwnedProcess
         owner=OwnedProcess([sys.executable,'-c','import time;time.sleep(3)'],cwd=self.root)

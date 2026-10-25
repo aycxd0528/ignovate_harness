@@ -1,0 +1,27 @@
+{
+  "base": "bd8fa20b208482a340c4254f73ada27c753307ca",
+  "wheel_sha256": "ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9",
+  "logs": {
+    "full311": {
+      "path": "/tmp/ignovate-mcp-lifetime-full311.log",
+      "sha256": "87396ca36a90a4ff7cda4f161d7ad5e5057a96acbd61b77f26a8fae373555cff",
+      "terminal_exit": 0
+    },
+    "full313": {
+      "path": "/tmp/ignovate-mcp-lifetime-full313.log",
+      "sha256": "f62823426ef94e72322a86ed86d220be1d6d1578249a7f638720857186ecd862",
+      "terminal_exit": 0
+    },
+    "installed311": {
+      "path": "/tmp/ignovate-mcp-lifetime-installed311.log",
+      "sha256": "6316f09dab0c7961a870d0a447c5a6934fd11cdfd20c976eafbbdb56d5853e6d",
+      "terminal_exit": 0
+    },
+    "installed313": {
+      "path": "/tmp/ignovate-mcp-lifetime-installed313.log",
+      "sha256": "ad84afe5b8b9ab696dc8f2476323ae95ecb27b54259d268557b303bcb51c97e6",
+      "terminal_exit": 0
+    }
+  },
+  "scope_note": "Source: 2233 full tests each; installed: 167 affected tests each, 198 Python/static file bytes, 10 module origins."
+}
