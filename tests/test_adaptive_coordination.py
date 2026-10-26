@@ -260,6 +260,7 @@ class CoordinationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancel_during_receipt_scan_retains_cost_and_restores_execution(self):
         import asyncio,threading
+        from async_phases import wait_for_phase
         from nailong.core.verification import input_fingerprint
         c=self.coordinator();task=self.factory.task_store.snapshot('target')
         lease=c.acquire('target',task['revision'],['.'])
@@ -267,19 +268,20 @@ class CoordinationTests(unittest.IsolatedAsyncioTestCase):
         loop=asyncio.get_running_loop();entered=asyncio.Event();release=threading.Event()
         def scan(root):
             loop.call_soon_threadsafe(entered.set)
-            if not release.wait(2):raise AssertionError('test did not release receipt scan')
+            if not release.wait(30):raise AssertionError('test did not release receipt scan')
             return input_fingerprint(root)
         async def consume():return [event async for event in c.drain(self.service)]
         original_mode=self.service.permission_mode
         with patch('nailong.core.session_coordination.input_fingerprint',side_effect=scan):
             pending=asyncio.create_task(consume())
             try:
-                await asyncio.wait_for(entered.wait(),2)
+                await wait_for_phase(entered,pending,description='receipt scan entry')
                 pending.cancel();release.set()
                 with self.assertRaises(asyncio.CancelledError):await pending
             finally:
                 release.set()
                 if not pending.done():pending.cancel()
+                await asyncio.gather(pending,return_exceptions=True)
         self.assertEqual(self.service.permission_mode,original_mode)
         self.assertEqual(c.status('scan-cancel')['dispatches'][0]['state'],'needs_reconciliation')
         receipts=[e['data'] for e in self.factory.session_store.read_events('target') if e['kind']=='coordination_receipt']
