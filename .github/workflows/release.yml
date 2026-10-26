@@ -78,56 +78,9 @@ jobs:
     uses: ./.github/workflows/windows-desktop.yml
   macos-desktop:
     needs: build
-    runs-on: macos-15
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
-        with:
-          python-version: '3.11'
-      - uses: actions/setup-node@v7.0.0
-        with:
-          node-version: '22'
-      - uses: actions/download-artifact@v8.0.2
-        with:
-          name: release-assets
-          path: release-assets
-      - name: Install packaging and smoke dependencies
-        env:
-          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
-        run: |
-          npm ci --prefix desktop
-          npm install --prefix "$RUNNER_TEMP/mac-smoke" playwright@1.62.1
-      - name: Download pinned official runtime and tools
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/mac-python" "$RUNNER_TEMP/mac-rg" "$RUNNER_TEMP/mac-electron"
-          gh release download 20260510 --repo astral-sh/python-build-standalone --pattern 'cpython-3.11.15+20260510-aarch64-apple-darwin-install_only.tar.gz' --dir "$RUNNER_TEMP/mac-python"
-          echo '03bcedae9b19a48888d7dc8ba064f73f6efaaf2b13f6a8e1a1bcc062df13e855  cpython-3.11.15+20260510-aarch64-apple-darwin-install_only.tar.gz' > "$RUNNER_TEMP/mac-python/SHA256SUMS"
-          (cd "$RUNNER_TEMP/mac-python" && shasum -a 256 -c SHA256SUMS)
-          tar -xzf "$RUNNER_TEMP/mac-python/"*.tar.gz -C "$RUNNER_TEMP/mac-python"
-          gh release download 15.2.0 --repo BurntSushi/ripgrep --pattern ripgrep-15.2.0-aarch64-apple-darwin.tar.gz --pattern ripgrep-15.2.0-aarch64-apple-darwin.tar.gz.sha256 --dir "$RUNNER_TEMP/mac-rg"
-          python - "$RUNNER_TEMP/mac-rg" <<'PY'
-          import hashlib, pathlib, sys
-          folder=pathlib.Path(sys.argv[1]); archive=folder/'ripgrep-15.2.0-aarch64-apple-darwin.tar.gz'
-          assert hashlib.sha256(archive.read_bytes()).hexdigest()==(folder/(archive.name+'.sha256')).read_text().split()[0]
-          PY
-          tar -xzf "$RUNNER_TEMP/mac-rg/"*.tar.gz -C "$RUNNER_TEMP/mac-rg"
-          gh release download v44.7.0 --repo electron/electron --pattern electron-v44.7.0-darwin-arm64.zip --dir "$RUNNER_TEMP/mac-electron"
-          echo 'e04e411b58a0a14375dd21b0ab4a378fd38930a702e4e20e322fee4849404c0b  electron-v44.7.0-darwin-arm64.zip' > "$RUNNER_TEMP/mac-electron/SHA256SUMS"
-          (cd "$RUNNER_TEMP/mac-electron" && shasum -a 256 -c SHA256SUMS)
-      - name: Build and validate installed macOS application
-        run: |
-          python scripts/build_macos.py --wheel release-assets/*.whl --output dist/macos --runtime-base "$RUNNER_TEMP/mac-python/python" --python-standalone-build 20260510 --ripgrep "$RUNNER_TEMP/mac-rg/ripgrep-15.2.0-aarch64-apple-darwin/rg" --electron-zip-dir "$RUNNER_TEMP/mac-electron"
-          node --test tests/desktop-runtime.test.cjs
-          IGNOVATE_APP="$PWD/dist/macos/Ignovate-darwin-arm64/Ignovate.app" NODE_PATH="$RUNNER_TEMP/mac-smoke/node_modules" node tests/gui-packaged.spec.cjs
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: macos-desktop-release
-          path: |
-            dist/macos/*.dmg
-            dist/macos/SHA256SUMS-macos
+    uses: ./.github/workflows/macos-desktop.yml
+    with:
+      release_wheel: true
   publish:
     if: github.ref_type == 'tag'
     needs: [install-smoke, windows-smoke, macos-desktop, windows-desktop]

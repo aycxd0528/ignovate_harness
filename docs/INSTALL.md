@@ -19,7 +19,7 @@ python scripts/build_macos.py \
   --ripgrep /path/to/ripgrep-15.2.0-aarch64-apple-darwin/rg
 ```
 
-可通过 `--electron-zip-dir` 指定官方 Electron ZIP 的缓存目录。脚本拒绝覆盖已有安装包，产物包含 DMG、应用 bundle 与 `SHA256SUMS-macos`。完整固定版本下载与校验流程见 `.github/workflows/release.yml`。
+可通过 `--electron-zip-dir` 指定官方 Electron ZIP 的缓存目录。脚本拒绝覆盖已有安装包，产物包含 DMG、应用 bundle 与 `SHA256SUMS-macos`。完整固定版本下载与校验流程见 `.github/workflows/macos-desktop.yml`。该工作流在 push、PR 和手动触发时构建当前提交的 DMG，再挂载实际 DMG，从镜像中复制应用到中文及含空格路径，检查内置 Python、桌面启动和退出后的签名。Actions 产物名为 `macos-desktop-release`，包含 DMG 和 `SHA256SUMS-macos`；tag 发布复用同一工作流。分支产物的版本号可能与已发布版本相同，实际源码提交以应用内 `Contents/Resources/release-manifest.json` 的 `source_commit` 为准。
 
 ## Windows 桌面版（Windows 11 x64）
 
