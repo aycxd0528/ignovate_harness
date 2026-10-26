@@ -161,28 +161,30 @@ asyncio.run(VerificationService(root,store,task_store=TaskStore(store)).run('thr
 
     async def test_repeated_cancellation_joins_native_head_publication_and_preserves_generation(self):
         import nailong.core.output_authority as authority
+        from async_phases import wait_for_phase
         self.build("from pathlib import Path;p=Path('bundle');p.mkdir(exist_ok=True);(p/'product').write_text('output')")
-        started,release=threading.Event(),threading.Event()
+        loop=asyncio.get_running_loop()
+        started,release=asyncio.Event(),threading.Event()
         native=authority.atomic_write_bytes
         def hold_head(path,data,**kwargs):
             if Path(path).name=='head.json' and json.loads(data).get('generation',0)>0:
-                started.set()
-                if not release.wait(5):raise RuntimeError('test did not release native publication')
+                loop.call_soon_threadsafe(started.set)
+                if not release.wait(30):raise RuntimeError('test did not release native publication')
             return native(path,data,**kwargs)
         with patch.object(authority,'atomic_write_bytes',side_effect=hold_head):
             pending=asyncio.create_task(self.verify())
             try:
-                async with asyncio.timeout(3):
-                    while not started.is_set():
-                        if pending.done():await pending
-                        await asyncio.sleep(.005)
+                await wait_for_phase(started,pending,description='native head publication entry')
                 for _ in range(2):
                     pending.cancel()
                     await asyncio.sleep(.01)
                     self.assertFalse(pending.done())
-            finally:
                 release.set()
                 with self.assertRaises(asyncio.CancelledError):await pending
+            finally:
+                release.set()
+                if not pending.done():pending.cancel()
+                await asyncio.gather(pending,return_exceptions=True)
         self.assertEqual(self.store.read_events('thread')[-1]['data']['status'],'cancelled')
         self.assertFalse(self.goals.active().verification_succeeded)
         self.assertEqual((await self.verify())['status'],'passed')

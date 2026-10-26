@@ -1,4 +1,6 @@
-Ignovate v1.2.4 汇总长任务可靠性修复，并更新 macOS 13+ Apple Silicon 桌面安装包。
+Ignovate v1.2.5 汇总长任务可靠性修复，并更新 macOS 13+ Apple Silicon 桌面安装包。
+
+v1.2.4 标签因原生发布验收未通过，未生成正式 Release；本版汇总自 v1.2.3 稳定版以来的修复。
 
 ## 本次更新
 
@@ -9,12 +11,14 @@ Ignovate v1.2.4 汇总长任务可靠性修复，并更新 macOS 13+ Apple Silic
 - Mac 桌面包内置 Python 3.11、锁定依赖及 ripgrep，无需预装 Python、Node.js 或克隆源码。Mac 打包现已接入 push / PR 检查，正式发布复用同一流程，并从实际 DMG 验证中文路径安装、内置运行时启动和退出后的签名。
 - 继续提供 Windows 11 x64 桌面 ZIP、Unix/Windows CLI 安装包、Python wheel 与各平台 SHA-256 清单。
 
+- 改进 Windows 原生验收的阶段等待与取消收尾，保留重复取消、发布阻塞、费用、权限及回执断言；使用扫描释放顺序检查目标控制的锁独立性。
+
 ## 下载与安装
 
-- **Apple Silicon Mac（macOS 13+）**：下载 `Ignovate-1.2.4-macos-arm64.dmg`，将 `Ignovate.app` 拖入 Applications 后打开。Intel Mac 可使用 Unix CLI 安装包。
-- **Windows 11 x64**：下载 `Ignovate-1.2.4-windows-x64.zip`，完整解压后双击 `Ignovate.exe`，保留旁边的 resources 和 DLL。
-- **macOS / Linux CLI**：下载 `ignovate-1.2.4-unix.tar.gz`，解压后执行 `install.sh`。
-- **Windows CLI**：下载 `ignovate-1.2.4-windows.zip`，解压后按安装文档运行 PowerShell 安装器。
+- **Apple Silicon Mac（macOS 13+）**：下载 `Ignovate-1.2.5-macos-arm64.dmg`，将 `Ignovate.app` 拖入 Applications 后打开。Intel Mac 可使用 Unix CLI 安装包。
+- **Windows 11 x64**：下载 `Ignovate-1.2.5-windows-x64.zip`，完整解压后双击 `Ignovate.exe`，保留旁边的 resources 和 DLL。
+- **macOS / Linux CLI**：下载 `ignovate-1.2.5-unix.tar.gz`，解压后执行 `install.sh`。
+- **Windows CLI**：下载 `ignovate-1.2.5-windows.zip`，解压后按安装文档运行 PowerShell 安装器。
 
 Mac 包采用 ad hoc 本地签名，尚未取得 Developer ID 签名和 Apple 公证；macOS 可能阻止首次打开。Windows 桌面包当前未签名。
 
@@ -24,4 +28,4 @@ Mac 包采用 ad hoc 本地签名，尚未取得 Developer ID 签名和 Apple �
 
 离线验收覆盖了 200 轮任务、201 条要求、7 次压缩、4 次关闭重开和 1400 个快照的恢复，以及桌面与浏览器场景。这些是已验证样本，不代表任意任务规模、远端模型质量或永久 I/O 停滞下的无限运行保证。
 
-详见 [安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.2.4/docs/INSTALL.md) 与仓库内可靠性审查记录。
+详见 [安装文档](https://github.com/aycxd0528/ignovate_harness/blob/v1.2.5/docs/INSTALL.md) 与仓库内可靠性审查记录。
