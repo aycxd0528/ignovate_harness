@@ -45,11 +45,17 @@ class ReviewVerificationTests(VerificationTests):
         self.assertNotIn('test-only-sentinel',result['steps'][0]['output'])
 
     async def test_repeated_cancel_cleans_process_and_preserves_step(self):
-        self.config([{'name':'cancel','kind':'test','command':self.command("import os,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); open('pid','w').write(str(os.getpid())); print('started'); time.sleep(30)")}])
+        self.config([{'name':'cancel','kind':'test','command':self.command("import os,pathlib,signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); pathlib.Path('pid.pending').write_text(str(os.getpid())); os.replace('pid.pending','pid'); print('started'); time.sleep(30)")}])
         task=asyncio.create_task(self.run_steps())
-        while not (self.root/'pid').exists(): await asyncio.sleep(.01)
-        pid=int((self.root/'pid').read_text())
+        pid=None
+        async def wait_started():
+            while not (self.root/'pid').exists():
+                if task.done():
+                    self.fail(f'Verification finished before publishing PID: {await task}')
+                await asyncio.sleep(.01)
         try:
+            await asyncio.wait_for(wait_started(),30)
+            pid=int((self.root/'pid').read_text())
             task.cancel(); await asyncio.sleep(.05); task.cancel()
             with self.assertRaises(asyncio.CancelledError): await task
             self.assertFalse(process_exists(pid))
@@ -57,7 +63,9 @@ class ReviewVerificationTests(VerificationTests):
             self.assertEqual(record['status'],'cancelled'); self.assertEqual(record['steps'][0]['name'],'cancel')
             self.assertIsNotNone(record['steps'][0]['exit_code'])
         finally:
-            kill_process_if_alive(pid)
+            if not task.done():task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
+            if pid is not None:kill_process_if_alive(pid)
 
 
 class ReviewAccountingTests(unittest.IsolatedAsyncioTestCase):
