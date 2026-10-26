@@ -222,8 +222,12 @@ class NaturalIntakeTests(GoalStreamTests):
             branch=await controller.command('create',{'name':'自然持续任务'})
             await controller.command('permission',{'branch_id':branch['id'],'mode':'bypassPermissions'})
             queued=await controller.command('send',{'branch_id':branch['id'],'message':'请创建 output.txt 并持续推进','request_id':'natural','permission_mode':'bypassPermissions'})
-            async with asyncio.timeout(10):
-                while controller.runs[queued['run_id']]['status'] in {'queued','running','waiting_approval'}:await asyncio.sleep(.01)
+            # This covers real graph, filesystem and SQLite work, not a UI
+            # latency SLA. Join checkpoint/ledger closeout as well as the turn.
+            try:
+                await asyncio.wait_for(asyncio.shield(controller.worker), 30)
+            except TimeoutError:
+                self.fail(f"Natural GUI worker did not finish: {controller.runs[queued['run_id']]!r}")
             run=controller.runs[queued['run_id']]
             self.assertEqual(run['status'],'completed',run.get('error'))
             self.assertEqual((self.root/'output.txt').read_text(),'native surface')

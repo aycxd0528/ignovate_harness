@@ -486,7 +486,7 @@ wheels = [
 
 [[package]]
 name = "ignovate-harness"
-version = "1.0.2"
+version = "1.2.4"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
