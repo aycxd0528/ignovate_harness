@@ -1,0 +1,43 @@
+{
+  "code_base": "fe5814f139125ddeea32f89c56ecae910c31f132",
+  "main_base": "bd8fa20b208482a340c4254f73ada27c753307ca",
+  "wheel_sha256": "ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9",
+  "frozen_conversation_diff_sha256": "6099c6830fb3820afbd807496970c0f5d9cac29ef9e733fa37f49b76f8839f0e",
+  "logs": {
+    "full311": {
+      "path": "/tmp/ignovate-postmerge-final-full311.log",
+      "sha256": "079f53c27667f54c1d8458175fbdb0066a5c3152ca4c13ea65689d5bce6fc5af",
+      "tests": 2233,
+      "skips": 54,
+      "seconds": 393.573,
+      "terminal_exit": 0
+    },
+    "full313": {
+      "path": "/tmp/ignovate-postmerge-final-full313.log",
+      "sha256": "cc9e8f53c3763fb7b317d52c2210f9ac523f2873d721e383b265c7473d57fc90",
+      "tests": 2233,
+      "skips": 55,
+      "seconds": 396.254,
+      "terminal_exit": 0
+    },
+    "installed311": {
+      "path": "/tmp/ignovate-postmerge-final-installed311.log",
+      "sha256": "9e9c31aa5b93994afd4c0ca8c6ed841f6657cf18f85fd8959083260419fc3779",
+      "tests": 173,
+      "skips": 4,
+      "seconds": 82.338,
+      "terminal_exit": 0
+    },
+    "installed313": {
+      "path": "/tmp/ignovate-postmerge-final-installed313.log",
+      "sha256": "92126deef79632855d6b13c95dd5803aed5ae7b76a4ad8a8e0ebb0d6cc4ed224",
+      "tests": 173,
+      "skips": 4,
+      "seconds": 82.643,
+      "terminal_exit": 0
+    }
+  },
+  "installed_scope": "13 affected modules; 159 Python + 39 GUI bytes; 10 module origins; not previous 844-test scope",
+  "native_head_ci": "pending after push; local macOS is not native Windows certification",
+  "confirmed_open_p0": 0
+}

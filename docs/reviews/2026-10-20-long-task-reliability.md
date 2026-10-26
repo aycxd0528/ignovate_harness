@@ -1188,3 +1188,35 @@ d7完整Windows2229的push两版和PR313成功，PR311仅TUI drag在鼠标操作
 唯一fresh review因transport中断未产报告，恢复同一review完成0C/0I/0M，非第二轮；原文 `2026-10-25-execution-render-ready-review.md` SHA256 `0f2eedf6e16d73836daba6bfe6953bab590d18664da9f8bc2175d4a6717e49e6`，冻结两路径diff SHA256 `5df25e81893a7e8a138039dd3c2bae94f67663bbcf5ee127a9632c02993a8ecc`。作者完整阅读一次处置，无代码补修；全部R1–R4及D1–D16裁决/成本见 `2026-10-25-execution-render-ready.md`。最终当前head本地/实际CI门和merge身份由PR5记录，产品wheel仍e1f7753，整体goal继续active。
 
 最终phase40本地门：源码两版2230项/54和55skip/389.312s及393.954s，工作区外实装两版844项/10skip/240.773s及245.506s全部terminal0；159发行Python字节和49安装origin匹配。作者没有在review后改变冻结代码，本轮完整门对应最终代码；新head实际Windows/Linux/installer/desktop及关闭日志继续由PR5记录，全部齐全才合并。
+
+## Phase 41：POSIX 直接子进程先回收再确认
+
+PR5 最终12个合并前检查成功后，已按用户要求合并为 main `bd8fa20b208482a340c4254f73ada27c753307ca`，tree 等于已验证4351b9e，原用户IDE暂存/CSS保留。继续审查发现监护器在关闭时未wait直接子进程就发stopping并杀包含自身的组；真实waitpid确认边界稳定观测running，新增两项RED后最小kill/wait4秒→确认，失败不确认但最终组kill仍无条件执行。条件性P1，不虚构永久zombie/P0。
+
+唯一fresh review 0C/0I/0M，原文 `2026-10-25-posix-direct-child-reaping-review.md` SHA256 `7d2d91018326c42c4cd62735303cc932acc4b8a07a09930fe3f8f15a737f77d5`，冻结diff `a099bb70bb1e4f02c9305874a7f59e23fcd2f805a056f2ceb13f83477fc17742`。作者一次无补修处置，全部R1–R6及D1–D10/成本见 `2026-10-25-posix-direct-child-reaping.md`。此候选94聚焦/2232两版全量/166两版实装各仍有原MCP取消存活断言FAIL；未称通过，未放宽原断言。缺PYTHONPATH导致的首轮5个导入错误也保留。旧MCP历史失败没有PID状态，仍不事后定性为zombie/复用/仍执行。
+
+## Phase 42：MCP 真实监护器持有健康通道
+
+进一步原生证明：SDK直接SIGKILL外层launcher后socket EOF早于独立guardian清理结束。真实launcher/guardian在lifeline EOF gate下，旧代码MSG_PEEK未得BlockingIOError稳定RED；仅传入已认证socket的keepalive fd到现有guardian，实际服务仍close_fds，外层仍唯一能发C。EOF随guardian退出才到达，丢失launcher仍unknown，不增加进程/relay/延时重试或修改存活断言。新回归与原SDK取消回归2项GREEN，相关167项/4skip/78.388s通过。
+
+唯一fresh review 0C/0I/0M，原文 `2026-10-25-mcp-guardian-lifetime-review.md` SHA256 `aa56dd0a346b350aca6ce5195c445cc83554b4ee54868e08d350ea0b74e1cd8d`，三路径冻结diff `77a746410c91de2400c19a2360fe5977b010ec43b21caf43e75c736491019d36`。作者一次无补修；全部R1–R6/D1–D12及成本见 `2026-10-25-mcp-guardian-lifetime.md`。两版源码2233/54和55skip/388.183s与390.408s、工作区外实装相关两版167/4skip/80.249s与80.466s全部terminal0。新wheel `ee0250e546cb9a9bbf5fa4288d438c3d2fd1e842c27ade154d42b325a8c7f4c9`，159Python+39GUI字节、10实际安装origin一致，CLI smoke通过；实装范围按实际167报告，非旧844。原始日志SHA索引 `2026-10-25-mcp-guardian-lifetime-validation.json`。最终门后两冻结diff一致。新确定性缺口已修，不将每次历史失败法证归因。
+
+合并后main的Tests/distribution、Windows desktop及native installer/313成功，但native311在1254.881s的2230/99skip中有1FAIL：conversation delivery随后普通问答观察仍是“正在推理”，未到“普通回答”；run40179640612。合并前12绿不冒充合并后全绿，main运行也不是本轮新POSIX修复的Windows验证；该UI观察另行定位。新分支未合并/未发布，整个goal继续active。
+
+## Phase 43：合并后 conversation 实际答案观察
+
+fe5814f已保存两项POSIX/MCP修复与完整证据。合并后main唯一native311失败的conversation fixture仍仅pause一次；runner.wait_idle只join pump，实际final缓存仍call_after_refresh排队。真实Textual probe建立CI中已绘制任务回答前提，再gate第二轮普通final实际绘制，旧fixture四状态均在“普通回答”缺失断言FAIL，0.476s；候选复用同类既有三秒条件helper等待唯一第二轮正文后，全部原报告count1/四状态标签/顺序/回答/脱敏断言不变，同probe0.667sGREEN。永不释放四状态各原三秒超时，12.264s明确FAIL，不为时序放宽原验收。首probe误重绘已卸载log等诊断错误保留并更正，不作为产品缺陷。
+
+唯一fresh review 0C/0I/0M，原文 `2026-10-25-conversation-render-ready-review.md` SHA256 `30e9a5c4eca086f9e880a31659b4efe7223072e47ec6b6562ce5bd50db29768c`，冻结两路径diff `6099c6830fb3820afbd807496970c0f5d9cac29ef9e733fa37f49b76f8839f0e`。作者完整阅读一次无补修处置，R1–R5及全部12项D裁决/成本见 `2026-10-25-conversation-render-ready.md`。native先行门新增完整六项module114→120，YAML/折叠Python compile/实际loader已核对，完整discovery/单项120s/job45m保持。正常模块6项2.016s，最终工作区外两版实装新增完整module后各173项/4skip/82.338s与82.643s通过，产品wheel仍ee025；最终两版全量与新head实际CI另记。不以mac probe测量或认证Windows调度，goal继续active。
+
+最终phase43代码门：源码两版2233项/54和55skip/393.573s及396.254s全部terminal0；实装相关两版173项/4skip/82.338s及82.643s全部terminal0。冻结diff未变，159Python+39GUI字节/10origin确认；完整日志SHA索引 `2026-10-25-post-merge-validation.json`。已确认未修复P0为0，两项新增条件性P1本地关闭；新head平台CI待推送观察，不合并新PR、不发布或改用户IDE/CSS。
+
+## Phase 44：整体完成审计与当前发行包长场景证据
+
+PR6已提交9842ba1；工作树无代码/测试变更。按原整个目标的10个职责域逐项核对当前源、实际断言、旧最终证据和发行字节，审计表更新于 `2026-10-24-project-acceptance-audit.md` 顶部。与已验收phase31/phase33包逐字节比较，容量/历史/费用核心未变、GUI Python及39静态资源相同；这只桥接实现身份，不代替行为证明。
+
+为直接覆盖当前产品组合，ee025 wheel重新离线安装到临时site-packages，159Python/39GUI与当前source一致。复用原200轮生产探针，无prototype/serializer patch：200模型边界、201active要求、7L2、4重开，每轮要求完整；maxinput122635≤122880，全部1400checkpoint再次原生解码，FD4→4/post-loop无线程。当前三组Chrome实际并行命令/停止、审批/产物预览/刷新、模型关闭长回答恢复全部通过，服务/浏览器exit0，三组FD5→5，无新threads/后代/自有目录遗留，无非服务网络；最终临时安装已删除。终端15432 exit0，原始结果/各日志SHA及源包字节桥接记录 `2026-10-25-long-task-final-scenarios.json`。此有限重复样本不升级成无限规模、远端模型或每次历史PID故障法证证明。
+
+发现项目说明仍把v1.1.0称当前版本、开发smoke使用旧文件名；GitHub真实最新发布v1.2.3及Unix/Windows安装归档内路径已核对，修正链接/目录/main源码分支/当前wheel示例，明确开发分支修复未必属于已发布tag。补充本轮MCP内层保留健康通道至退出/直接child回收/unknown语义。checkpoint reader升级限制原本完整，保留原文，不添加同义重复。本轮仅作者文档与证据更新，没有新增产品实现、回滚用户数据库或重开前三份冻结review；旧本机全量对应完全相同产品/测试字节，未重跑无变化源码。
+
+PR5已按用户要求合并；PR6新head平台CI仍需实际终态，整体完成尚未证实。后续若追加本次文档commit，只终止由新head替代且仍运行的旧head CI，不把cancel当通过，不因观察超时重启。最终CI与集成状态以PR6为准，不自动合并或发布。

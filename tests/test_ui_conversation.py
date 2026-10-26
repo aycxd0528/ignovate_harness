@@ -129,7 +129,9 @@ class ConversationLayoutTests(unittest.IsolatedAsyncioTestCase):
                     await app.session_runner.wait_idle()
                     app._dispatch('你好')
                     await app.session_runner.wait_idle()
-                    await pilot.pause()
+                    await self.wait_for_condition(pilot,
+                        lambda: '普通回答' in transcript(app),
+                        'plain answer to render after delivery')
                     text = transcript(app)
                     self.assertEqual(text.count('交付状态：'), 1)
                     self.assertIn(label, text)

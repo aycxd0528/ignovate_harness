@@ -30,7 +30,11 @@ def run(parent,arguments,channel=None):
             if channel[0].recv(1)!=b'G':return 125
         namespace=runpy.run_path(str(Path(__file__).with_name('posix_process.py')))
         if os.getppid()!=parent:return 125
-        guard=namespace['PosixProcessGuard'](arguments,release_stdio=True)
+        # SDK cancellation can SIGKILL this launcher directly. Keep the health
+        # socket open in the independent guardian until its cleanup has ended;
+        # EOF from this launcher alone must not let disconnect return early.
+        keepalive=() if channel is None else (channel[0].fileno(),)
+        guard=namespace['PosixProcessGuard'](arguments,release_stdio=True,keepalive_fds=keepalive)
         # Neither monitor consumes the protocol. Keeping a spare read/write end
         # open would hide the actual server closing stdin/stdout from the SDK.
         for descriptor in (0,1,2):
