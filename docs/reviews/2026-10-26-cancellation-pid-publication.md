@@ -14,6 +14,6 @@ The same child writes and closes `pid.pending`, then atomically replaces `pid` i
 
 The existing test owns its verification task before waiting or parsing. Phase entry has a finite 30-second observation bound and surfaces early task completion/exception; every exit cancels if needed and gathers the verification task before fallback PID cleanup. Both cancellations and their original spacing, expected CancelledError, process-absence assertion before fallback killing, cancelled receipt, exact step name and non-null exit-code assertions remain.
 
-No test case, skip, product code, dependency or workflow is added or changed. No local test suite was run. Complete CI for the new head and the eventual tag remains required. This note does not claim permanent-I/O or repeated external cancellation recovery beyond existing owners/watchdogs.
+No test case is added; no skip, product code, dependency or workflow is changed. No local test suite was run. Complete CI for the new head and the eventual tag remains required. This note does not claim permanent-I/O or repeated external cancellation recovery beyond existing owners/watchdogs.
 
 Decoded failed-job log SHA-256: `a98e6de808db014920abf1768619649e9fb77bb4f5020f31af531e2a3c301cce` (`/tmp/ignovate-release126-push-linux311-failed.log`).
