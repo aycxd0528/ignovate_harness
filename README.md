@@ -25,10 +25,10 @@
 
 | 平台 | 安装包 | 说明 |
 | --- | --- | --- |
-| macOS 13+（Apple Silicon） | [桌面版 DMG](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/Ignovate-1.2.3-macos-arm64.dmg) | 拖入 Applications 后打开 |
-| Windows 11 x64 | [桌面版 ZIP](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/Ignovate-1.2.3-windows-x64.zip) | 解压后双击 `Ignovate.exe` |
-| macOS / Linux | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-unix.tar.gz) | 解压后运行 `install.sh` |
-| Windows 11 x64 | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.3/ignovate-1.2.3-windows.zip) | PowerShell 原生安装，无需 WSL |
+| macOS 13+（Apple Silicon） | [桌面版 DMG](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.4/Ignovate-1.2.4-macos-arm64.dmg) | 拖入 Applications 后打开 |
+| Windows 11 x64 | [桌面版 ZIP](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.4/Ignovate-1.2.4-windows-x64.zip) | 解压后双击 `Ignovate.exe` |
+| macOS / Linux | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.4/ignovate-1.2.4-unix.tar.gz) | 解压后运行 `install.sh` |
+| Windows 11 x64 | [CLI 安装包](https://github.com/aycxd0528/ignovate_harness/releases/download/v1.2.4/ignovate-1.2.4-windows.zip) | PowerShell 原生安装，无需 WSL |
 
 CLI 安装完成后，在要处理的项目目录运行：
 
