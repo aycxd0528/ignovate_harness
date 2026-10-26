@@ -64,7 +64,7 @@ jobs:
           python -c "import sys,unittest; sys.path.insert(0,'tests');
           from scripts.run_native_tests import NativeTestResult,install_async_diagnostics;
           install_async_diagnostics();
-          suite=unittest.defaultTestLoader.loadTestsFromNames(['test_windows_verification_compatibility','test_output_provenance','test_verification_artifact_evidence','test_long_scenario_commands','test_long_goal_driver','test_long_task_continuation','test_tui_readability','test_gui_async_scans','test_execution_display','test_ui_conversation','test_adaptive_task_flow.NaturalIntakeTests.test_native_gui_runs_natural_goal_through_shared_outer_adapter','test_adaptive_coordination.CoordinationTests.test_cancel_during_receipt_scan_retains_cost_and_restores_execution']);
+          suite=unittest.defaultTestLoader.loadTestsFromNames(['test_windows_verification_compatibility','test_output_provenance','test_verification_artifact_evidence','test_long_scenario_commands','test_long_goal_driver','test_long_task_continuation','test_tui_readability','test_gui_async_scans','test_execution_display','test_ui_conversation','test_adaptive_task_flow.NaturalIntakeTests.test_native_gui_runs_natural_goal_through_shared_outer_adapter','test_adaptive_coordination.CoordinationTests.test_cancel_during_receipt_scan_retains_cost_and_restores_execution','test_goal_completion_observation.GoalCompletionObservationTests.test_goal_reads_and_user_pause_do_not_wait_for_completion_scan']);
           result=unittest.TextTestRunner(verbosity=2,resultclass=NativeTestResult).run(suite);
           sys.exit(not result.wasSuccessful())"
       - name: Native runtime tests

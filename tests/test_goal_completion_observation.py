@@ -7,7 +7,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -20,8 +19,9 @@ import local_tools
 
 
 class PausedCompletionFingerprint:
-    def __init__(self):
+    def __init__(self,release_timeout=2):
         self.entered=threading.Event();self.release=threading.Event()
+        self.release_timeout=release_timeout
         self._lock=threading.Lock();self.calls=0
 
     def __call__(self,root,generated=()):
@@ -30,7 +30,7 @@ class PausedCompletionFingerprint:
             self.calls+=1;first=self.calls==1
         if first:
             self.entered.set()
-            if not self.release.wait(2):raise AssertionError('completion scan was not released')
+            if not self.release.wait(self.release_timeout):raise AssertionError('completion scan was not released')
         return value
 
 
@@ -60,19 +60,21 @@ class GoalCompletionObservationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.record['status'],'passed')
 
     async def test_goal_reads_and_user_pause_do_not_wait_for_completion_scan(self):
-        gate=PausedCompletionFingerprint()
+        gate=PausedCompletionFingerprint(release_timeout=30)
         with patch('nailong.core.verification.input_fingerprint',gate):
             pending=await start_completion(self,self.goals,self.goal.id,'thread',gate)
-            watchdog=threading.Timer(.4,gate.release.set);watchdog.start()
+            # A lock regression is released eventually, but cannot pass by
+            # waiting for that release. File I/O latency is not the contract.
+            watchdog=threading.Timer(15,gate.release.set);watchdog.start()
             try:
-                started=time.monotonic()
                 current=self.goals.active()
                 paused,reason,_=self.goals.update(self.goal.id,state='paused',summary='user paused',thread_id='thread')
-                elapsed=time.monotonic()-started
-                self.assertLess(elapsed,.2,'goal lock blocked the event loop while scanning')
+                self.assertFalse(gate.release.is_set(),'goal control waited for completion scan release')
+                self.assertFalse(pending.done(),'completion observation must remain pending while held')
                 self.assertEqual(current.id,self.goal.id);self.assertTrue(paused,reason)
             finally:
                 watchdog.cancel();watchdog.join();gate.release.set()
+                await asyncio.gather(pending,return_exceptions=True)
             completed,_,_=await pending
         self.assertFalse(completed)
         self.assertEqual(self.goals.get(self.goal.id).pause_reason,'user paused')
